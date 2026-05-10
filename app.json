@@ -4,7 +4,7 @@
     "slug": "ootd",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -13,14 +13,24 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.medi_freymann.ootd",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.medi_freymann.ootd",
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -29,6 +39,15 @@
       "eas": {
         "projectId": "4efa34fb-675c-4892-a67a-44f6d1b4d759"
       }
-    }
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "color": "#ED93B1",
+          "defaultChannel": "default"
+        }
+      ]
+    ]
   }
 }

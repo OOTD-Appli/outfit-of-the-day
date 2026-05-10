@@ -1,7 +1,9 @@
+import { registerForPushNotifications, savePushToken } from './lib/notifications';
 import { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
+import Constants from 'expo-constants';
 import { supabase } from './lib/supabase';
 
 import AuthScreen from './screens/AuthScreen';
@@ -17,13 +19,35 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    let isMounted = true;
+
+    const syncSession = async (nextSession) => {
+      if (!isMounted) return;
+      setSession(nextSession);
       setLoading(false);
+
+      if (!nextSession) return;
+      try {
+        if (Constants.appOwnership === 'expo') return;
+        const token = await registerForPushNotifications();
+        if (token) await savePushToken(token);
+      } catch (error) {
+        console.log('Push setup error:', error?.message || error);
+      }
+    };
+
+    supabase.auth.getSession().then(({ data }) => {
+      syncSession(data.session);
     });
-    supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      syncSession(nextSession);
     });
+
+    return () => {
+      isMounted = false;
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   if (loading) return null;
