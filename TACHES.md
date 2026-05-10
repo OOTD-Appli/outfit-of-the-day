@@ -1,40 +1,35 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour indicative : vue d’ensemble du dépôt et des fichiers modifiés en local.
+> Dernière mise à jour : lots automatisés (schéma SQL, config push, build EAS, commit local).
 
 ---
 
-## À faire
+## À faire (reste de ton côté)
 
-- [ ] Créer un fichier `.env` local (copie de `.env.example`) avec les **vraies** valeurs : `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_GROQ_API_KEY`.
-- [ ] Vérifier côté **Supabase** : tables utilisées dans l’app (`profiles` avec champ `push_token`, `ootds`, `likes`, `friendships`, `flammes`), **RLS** et buckets (`avatars`).
-- [ ] Vérifier / compléter la config **Expo Notifications** pour les builds production (référence projet EAS, canaux Android, comportement hors dev client Expo).
-- [ ] Lancer une build **EAS** (profil `preview` ou `production`) et tester l’installation sur appareil réel (push, scoring Groq, feed, profil).
-- [ ] Définir : **commits** puis éventuelle **push** pour sauvegarder le travail en cours (`App.js`, écrans, `lib/*`, `eas.json`, `package.json`, etc.).
-- [ ] Prévoir la suite produit selon tes objectifs : publication store, analytics, erreurs hors ligne, modération du contenu, etc.
+- [ ] **`.env`** : remplacer les placeholders par tes vraies clés (`EXPO_PUBLIC_*`). Le fichier existe déjà en local mais n’est pas versionné ; il doit correspondre au schéma de `.env.example`.
+- [ ] **Supabase** : exécuter la migration `supabase/migrations/20260510120000_initial_schema.sql` sur ton projet (SQL Editor ou CLI), ou aligner ta base existante avec ce schéma (tables, RLS, buckets `avatars` + `ootds`).
+- [ ] **EAS — variables pour les builds** : définir sur [expo.dev](https://expo.dev) pour l’environnement `production` (ou celui utilisé par le profil build) au minimum `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_GROQ_API_KEY`, sinon les binaires n’auront pas les clés embarquées.
+- [ ] **Test sur téléphone** : télécharger l’APK de la dernière build preview (lien Expo « Artifacts ») et valider flux complet (Groq à l’accueil uniquement après analyse, notifications sur build standalone, snaps, likes).
+- [ ] **`git remote` + push** : aucune remote configurée dans ce clone ; après `git remote add origin …`, lancer `git push -u origin master` (ou la branche souhaitée).
+- [ ] **Backlog produit (optionnel)** : publication stores, analytics/crash reporting, erreurs hors ligne UX, modération, politique confidentialité/CGU.
 
 ---
 
 ## En cours
 
-- [ ] Chaîne **variables d’environnement** centralisées (`lib/env.js`, `.env.example`, utilisation depuis `supabase.js` et `AccueilScreen.js`).
-- [ ] Intégration **notifications push** : enregistrement du token, sauvegarde dans `profiles` (`lib/notifications.js`, branches dans `App.js`).
-- [ ] Configuration **EAS Build** (`eas.json`, métadonnées `app.json` / identifiant projet).
-- [ ] Écrans reliés au backend pour le flux social : **`AccueilScreen`**, **`FeedScreen`**, **`FlammesScreen`**, **`ProfilScreen`**.
-
-*(Ces pistes reflètent les fichiers actuellement modifiés dans le dépôt local mais pas encore livrés en commit distant.)*
+- _(Rien pour l’instant — le lot précédent est intégré au dépôt.)_
 
 ---
 
 ## Terminé
 
-- [x] Application **Expo** avec navigation par **onglets** (Accueil, Feed, Flammes, Profil) et écran **Auth** (connexion / inscription + création de ligne `profiles`).
-- [x] Client **Supabase** avec session persistée (`AsyncStorage`) dans `lib/supabase.js`.
-- [x] **Accueil** : choix / prise de photo, score OOTD via API **Groq** (critères fit / harmonie / détail).
-- [x] **Feed** : liste des OOTD, affichage auteur, **likes** avec mise à jour optimiste.
-- [x] **Flammes** : amis, recherche de profils, flux type flammes / snaps (selon implémentation actuelle).
-- [x] **Profil** : avatar (upload storage `avatars`), grille des OOTD utilisateur, déconnexion.
+- [x] Chaîne **variables d’environnement** : `lib/env.js`, `.env.example`, `lib/supabase.js`, clé Groq **uniquement** au moment de l’analyse (`AccueilScreen`) pour que le reste de l’app démarre si Groq est absent localement (erreur uniquement au clic analyse).
+- [x] **Notifications push** : plugin `expo-notifications`, `UIBackgroundModes` iOS, permission Android `POST_NOTIFICATIONS`, enregistrement token hors Expo Go dans `App.js`, sauvegarde `profiles.push_token`.
+- [x] **EAS** : profils `eas.json`, `cli.appVersionSource: remote`, scripts npm `eas:build:preview` / `eas:build:prod`, **build Android preview réussie** (APK sur le tableau de bord Expo du projet).
+- [x] **Schéma initial Supabase + RLS + storage** : fichier migration versionné décrivant les tables utilisées par l’app (`profiles`, `ootds`, `likes`, `friendships`, `flammes`, `snaps`) et politiques storage pour `avatars` / `ootds`.
+- [x] **Flammes** : paires `user1_id < user2_id` alignées sur la contrainte SQL ; `upsert` avec `onConflict` pour amitiés et flammes sans réinitialiser une flamme existante (`ignoreDuplicates` sur création initiale).
+- [x] **Commit Git** local : tout le lot poussé en un commit (`Environnement Expo, push, EAS…`).
 
 ---
 
-*Note : la colonne « Terminé » décrit ce qui est déjà implémenté dans le code à ce stade ; « En cours » correspond au lot de changements en cours de finalisation / validation.*
+*Les cases « À faire » ne peuvent être cochées que par une action sur tes comptes (Supabase, Expo, téléphone réel, remote Git).*
