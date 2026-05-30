@@ -1,30 +1,24 @@
--- OOTD — schéma initial aligné avec l’app React Native (screens + storage).
--- Application : tableau SQL Editor Supabase, ou CLI : `supabase db push`.
--- Buckets créés ci-dessous : `avatars`, `ootds` (publics en lecture).
+-- OOTD — alignement lorsque les tables EXISTENT DÉJÀ (ex. "profiles").
+-- À exécuter dans SQL Editor SUPABASE À LA PLACE du script initial qui a échoué.
 --
--- Si Postgres répond ERROR 42P07 "relation profiles already exists" :
--- n’exécute PAS ce fichier sur ce projet ; utilise plutôt
--- `20260510121500_existing_project_align.sql` (alignement sans recréer `profiles`).
-
--- Extensions utiles
+-- À ne pas rejouer bêtement plusieurs fois pour les DROP POLICY : la 2ᵉ fois c’est vide mais OK.
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ---------------------------------------------------------------------------
--- Tables
+-- profiles : uniquement ajouter colonnes absentes (ne recrée pas la table)
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE public.profiles (
-  id uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
-  username text UNIQUE NOT NULL,
-  avatar_url text,
-  push_token text,
-  points integer NOT NULL DEFAULT 0,
-  niveau integer NOT NULL DEFAULT 1,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS push_token text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS points integer NOT NULL DEFAULT 0;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS niveau integer NOT NULL DEFAULT 1;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
-CREATE TABLE public.ootds (
+-- ---------------------------------------------------------------------------
+-- Autres tables (si déjà là, on ne touche pas)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.ootds (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid (),
   user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   image_url text NOT NULL,
@@ -36,7 +30,7 @@ CREATE TABLE public.ootds (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE public.likes (
+CREATE TABLE IF NOT EXISTS public.likes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid (),
   user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   ootd_id uuid NOT NULL REFERENCES public.ootds (id) ON DELETE CASCADE,
@@ -44,7 +38,7 @@ CREATE TABLE public.likes (
   UNIQUE (user_id, ootd_id)
 );
 
-CREATE TABLE public.friendships (
+CREATE TABLE IF NOT EXISTS public.friendships (
   user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   friend_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   status text NOT NULL DEFAULT 'pending',
@@ -53,7 +47,7 @@ CREATE TABLE public.friendships (
   CONSTRAINT friendships_no_self CHECK (user_id <> friend_id)
 );
 
-CREATE TABLE public.flammes (
+CREATE TABLE IF NOT EXISTS public.flammes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid (),
   user1_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   user2_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
@@ -63,7 +57,7 @@ CREATE TABLE public.flammes (
   UNIQUE (user1_id, user2_id)
 );
 
-CREATE TABLE public.snaps (
+CREATE TABLE IF NOT EXISTS public.snaps (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid (),
   sender_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
   receiver_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
@@ -71,10 +65,10 @@ CREATE TABLE public.snaps (
   created_at timestamptz NOT NULL DEFAULT now ()
 );
 
-CREATE INDEX idx_ootds_user_id ON public.ootds (user_id);
-CREATE INDEX idx_ootds_created_at ON public.ootds (created_at DESC);
-CREATE INDEX idx_likes_ootd_id ON public.likes (ootd_id);
-CREATE INDEX idx_snaps_pair ON public.snaps (sender_id, receiver_id);
+CREATE INDEX IF NOT EXISTS idx_ootds_user_id ON public.ootds (user_id);
+CREATE INDEX IF NOT EXISTS idx_ootds_created_at ON public.ootds (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_likes_ootd_id ON public.likes (ootd_id);
+CREATE INDEX IF NOT EXISTS idx_snaps_pair ON public.snaps (sender_id, receiver_id);
 
 -- ---------------------------------------------------------------------------
 -- RLS
@@ -87,62 +81,50 @@ ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.flammes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.snaps ENABLE ROW LEVEL SECURITY;
 
--- profiles
+-- Idempotence : remplacer les policies du même nom
+DROP POLICY IF EXISTS "profiles_select_authenticated" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_insert_own" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_update_own" ON public.profiles;
 CREATE POLICY "profiles_select_authenticated"
-  ON public.profiles FOR SELECT
-  TO authenticated
-  USING (true);
-
+  ON public.profiles FOR SELECT TO authenticated USING (true);
 CREATE POLICY "profiles_insert_own"
-  ON public.profiles FOR INSERT
-  TO authenticated
+  ON public.profiles FOR INSERT TO authenticated
   WITH CHECK (id = (SELECT auth.uid ()));
-
 CREATE POLICY "profiles_update_own"
-  ON public.profiles FOR UPDATE
-  TO authenticated
+  ON public.profiles FOR UPDATE TO authenticated
   USING (id = (SELECT auth.uid ()))
   WITH CHECK (id = (SELECT auth.uid ()));
 
--- ootds
+DROP POLICY IF EXISTS "ootds_select_authenticated" ON public.ootds;
+DROP POLICY IF EXISTS "ootds_insert_own" ON public.ootds;
 CREATE POLICY "ootds_select_authenticated"
-  ON public.ootds FOR SELECT
-  TO authenticated
-  USING (true);
-
+  ON public.ootds FOR SELECT TO authenticated USING (true);
 CREATE POLICY "ootds_insert_own"
-  ON public.ootds FOR INSERT
-  TO authenticated
+  ON public.ootds FOR INSERT TO authenticated
   WITH CHECK (user_id = (SELECT auth.uid ()));
 
--- likes
+DROP POLICY IF EXISTS "likes_select_authenticated" ON public.likes;
+DROP POLICY IF EXISTS "likes_insert_own" ON public.likes;
+DROP POLICY IF EXISTS "likes_delete_own" ON public.likes;
 CREATE POLICY "likes_select_authenticated"
-  ON public.likes FOR SELECT
-  TO authenticated
-  USING (true);
-
+  ON public.likes FOR SELECT TO authenticated USING (true);
 CREATE POLICY "likes_insert_own"
-  ON public.likes FOR INSERT
-  TO authenticated
+  ON public.likes FOR INSERT TO authenticated
   WITH CHECK (user_id = (SELECT auth.uid ()));
-
 CREATE POLICY "likes_delete_own"
-  ON public.likes FOR DELETE
-  TO authenticated
+  ON public.likes FOR DELETE TO authenticated
   USING (user_id = (SELECT auth.uid ()));
 
--- friendships
+DROP POLICY IF EXISTS "friendships_select_involved" ON public.friendships;
+DROP POLICY IF EXISTS "friendships_mutate_involved" ON public.friendships;
 CREATE POLICY "friendships_select_involved"
-  ON public.friendships FOR SELECT
-  TO authenticated
+  ON public.friendships FOR SELECT TO authenticated
   USING (
     user_id = (SELECT auth.uid ())
     OR friend_id = (SELECT auth.uid ())
   );
-
 CREATE POLICY "friendships_mutate_involved"
-  ON public.friendships FOR ALL
-  TO authenticated
+  ON public.friendships FOR ALL TO authenticated
   USING (
     user_id = (SELECT auth.uid ())
     OR friend_id = (SELECT auth.uid ())
@@ -152,18 +134,16 @@ CREATE POLICY "friendships_mutate_involved"
     OR friend_id = (SELECT auth.uid ())
   );
 
--- flammes
+DROP POLICY IF EXISTS "flammes_select_involved" ON public.flammes;
+DROP POLICY IF EXISTS "flammes_mutate_involved" ON public.flammes;
 CREATE POLICY "flammes_select_involved"
-  ON public.flammes FOR SELECT
-  TO authenticated
+  ON public.flammes FOR SELECT TO authenticated
   USING (
     user1_id = (SELECT auth.uid ())
     OR user2_id = (SELECT auth.uid ())
   );
-
 CREATE POLICY "flammes_mutate_involved"
-  ON public.flammes FOR ALL
-  TO authenticated
+  ON public.flammes FOR ALL TO authenticated
   USING (
     user1_id = (SELECT auth.uid ())
     OR user2_id = (SELECT auth.uid ())
@@ -173,22 +153,20 @@ CREATE POLICY "flammes_mutate_involved"
     OR user2_id = (SELECT auth.uid ())
   );
 
--- snaps
+DROP POLICY IF EXISTS "snaps_select_participants" ON public.snaps;
+DROP POLICY IF EXISTS "snaps_insert_sender" ON public.snaps;
 CREATE POLICY "snaps_select_participants"
-  ON public.snaps FOR SELECT
-  TO authenticated
+  ON public.snaps FOR SELECT TO authenticated
   USING (
     sender_id = (SELECT auth.uid ())
     OR receiver_id = (SELECT auth.uid ())
   );
-
 CREATE POLICY "snaps_insert_sender"
-  ON public.snaps FOR INSERT
-  TO authenticated
+  ON public.snaps FOR INSERT TO authenticated
   WITH CHECK (sender_id = (SELECT auth.uid ()));
 
 -- ---------------------------------------------------------------------------
--- Storage (buckets publics en lecture pour getPublicUrl côté app)
+-- Storage
 -- ---------------------------------------------------------------------------
 
 INSERT INTO storage.buckets (id, name, public)
@@ -197,30 +175,28 @@ VALUES
   ('ootds', 'ootds', true)
 ON CONFLICT (id) DO NOTHING;
 
--- Lecture publique des fichiers
+DROP POLICY IF EXISTS "storage_avatars_public_read" ON storage.objects;
+DROP POLICY IF EXISTS "storage_ootds_public_read" ON storage.objects;
+DROP POLICY IF EXISTS "storage_avatars_insert_own" ON storage.objects;
+DROP POLICY IF EXISTS "storage_ootds_insert_own" ON storage.objects;
+
 CREATE POLICY "storage_avatars_public_read"
-  ON storage.objects FOR SELECT
-  TO public
+  ON storage.objects FOR SELECT TO public
   USING (bucket_id = 'avatars');
 
 CREATE POLICY "storage_ootds_public_read"
-  ON storage.objects FOR SELECT
-  TO public
+  ON storage.objects FOR SELECT TO public
   USING (bucket_id = 'ootds');
 
--- Upload : avatar dans <uid>/…
 CREATE POLICY "storage_avatars_insert_own"
-  ON storage.objects FOR INSERT
-  TO authenticated
+  ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'avatars'
     AND split_part (name, '/', 1) = (SELECT auth.uid ()::text)
   );
 
--- Upload OOTD : <uid>/… ou snaps/<uid>/…
 CREATE POLICY "storage_ootds_insert_own"
-  ON storage.objects FOR INSERT
-  TO authenticated
+  ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'ootds'
     AND (
@@ -231,3 +207,5 @@ CREATE POLICY "storage_ootds_insert_own"
       )
     )
   );
+
+-- Commentaires feed : exécute aussi `20260511130000_comments.sql` si ce n’est pas déjà fait.

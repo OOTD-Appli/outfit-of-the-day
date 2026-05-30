@@ -4,7 +4,7 @@
     "slug": "ootd",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo.png",
+    "icon": "./assets/adaptive-icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.medi_freymann.ootd",
+      "bundleIdentifier": "com.medifreymann.ootd",
       "infoPlist": {
         "UIBackgroundModes": [
           "remote-notification"
@@ -27,13 +27,21 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.medi_freymann.ootd",
+      "package": "com.medifreymann.ootd",
       "permissions": [
         "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single",
+      "name": "OOTD",
+      "shortName": "OOTD",
+      "description": "Outfit of the Day — partage et analyse tes tenues",
+      "themeColor": "#ED93B1",
+      "backgroundColor": "#0a0a0a",
+      "display": "standalone"
     },
     "extra": {
       "eas": {
@@ -47,7 +55,7 @@
           "color": "#ED93B1",
           "defaultChannel": "default"
         }
-      ]
+      ],
     ]
   }
 }
