@@ -11,7 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { ENV } from '../lib/env';
@@ -102,7 +102,10 @@ export default function FlammesScreen() {
   const lastReadRef = useRef({});
   const { showToast } = useToast();
   const { theme } = useTheme();
+  const navigation = useNavigation();
   const firstFocus = useRef(true);
+  const [restoreModal, setRestoreModal] = useState({ visible: false, friend: null });
+  const [restoring, setRestoring] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem('@ootd_unread_last_read').then(raw => {
@@ -117,6 +120,9 @@ export default function FlammesScreen() {
     setUserId(user?.id);
     if (!user) { if (!silent) setLoading(false); return; }
 
+    // Verse les gels gratuits du mois si dû (idempotent côté serveur)
+    try { await supabase.rpc('claim_monthly_freezes'); } catch (_) {}
+
     const [{ data: fd1 }, { data: fd2 }] = await Promise.all([
       supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'accepted'),
       supabase.from('friendships').select('user_id').eq('friend_id', user.id).eq('status', 'accepted'),
@@ -126,7 +132,7 @@ export default function FlammesScreen() {
     let profileById = {};
     let merged = [];
     {
-      const { data: plist } = await supabase.from('profiles').select('id, username, avatar_url, active_logo').in('id', [user.id, ...friendIds]);
+      const { data: plist } = await supabase.from('profiles').select('id, username, avatar_url, active_logo, flame_freezes').in('id', [user.id, ...friendIds]);
       profileById = Object.fromEntries((plist || []).map(p => [p.id, p]));
       merged = friendIds.map(id => ({ id, ...profileById[id] })).filter(r => r.username != null);
     }
@@ -298,12 +304,93 @@ export default function FlammesScreen() {
     );
   };
 
-  const getStreak = (friendId) => {
-    const flamme = flammes.find(f =>
-      (f.user1_id === userId && f.user2_id === friendId) ||
-      (f.user1_id === friendId && f.user2_id === userId),
+  // ── État d'une flamme (dérivé de last_snap_at) ─────────────────────────────
+  //   âge <= 24h        → active
+  //   24h < âge <= 72h  → expired (grisée, restaurable via gel, fenêtre 48h)
+  //   âge > 72h         → dead (définitivement à 0)
+  const FLAME_EXPIRE_MS  = 24 * 3600 * 1000;
+  const FLAME_RESTORE_MS = 72 * 3600 * 1000;
+
+  const getFlamme = (friendId) => flammes.find(f =>
+    (f.user1_id === userId && f.user2_id === friendId) ||
+    (f.user1_id === friendId && f.user2_id === userId),
+  );
+
+  const getFlammeInfo = (friendId) => {
+    const flamme = getFlamme(friendId);
+    if (!flamme || !flamme.streak) return { flamme: flamme || null, streak: 0, state: 'none' };
+    const age = Date.now() - (flamme.last_snap_at ? new Date(flamme.last_snap_at).getTime() : 0);
+    if (age <= FLAME_EXPIRE_MS)  return { flamme, streak: flamme.streak, state: 'active' };
+    if (age <= FLAME_RESTORE_MS) return { flamme, streak: flamme.streak, state: 'expired' };
+    return { flamme, streak: 0, state: 'dead' };
+  };
+
+  // ── Restauration manuelle d'une flamme éteinte via un Gel de Flamme ────────
+  const openRestore = (friend) => setRestoreModal({ visible: true, friend });
+
+  const goToShop = () => { try { navigation.navigate('Shop'); } catch (_) {} };
+
+  const doRestore = async () => {
+    const friend = restoreModal.friend;
+    if (!friend || restoring) return;
+    const info = getFlammeInfo(friend.id);
+    if (!info.flamme) { setRestoreModal({ visible: false, friend: null }); return; }
+    setRestoring(true);
+    try {
+      const { data, error } = await supabase.rpc('restore_flamme', { p_flamme_id: info.flamme.id });
+      if (error) throw error;
+      if (!data?.ok) {
+        if (data?.error === 'no_freeze') { setRestoring(false); return; }
+        throw new Error(data?.error === 'window_closed'
+          ? 'Trop tard : la fenêtre de 48h est passée'
+          : (data?.error || 'Restauration impossible'));
+      }
+      showToast('🔥 Flamme ranimée !', { type: 'success' });
+      setRestoreModal({ visible: false, friend: null });
+      await fetchData({ silent: true });
+    } catch (e) {
+      showToast(e?.message || 'Erreur', { type: 'error' });
+    }
+    setRestoring(false);
+  };
+
+  const renderRestoreModal = () => {
+    const friend  = restoreModal.friend;
+    const freezes = myProfile?.flame_freezes || 0;
+    const info    = friend ? getFlammeInfo(friend.id) : { streak: 0 };
+    return (
+      <Modal visible={restoreModal.visible} transparent animationType="fade" onRequestClose={() => setRestoreModal({ visible: false, friend: null })}>
+        <TouchableOpacity activeOpacity={1} style={styles.restoreOverlay} onPress={() => setRestoreModal({ visible: false, friend: null })}>
+          <TouchableOpacity activeOpacity={1} style={[styles.restoreCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={styles.restoreEmoji}>🥶</Text>
+            <Text style={[styles.restoreTitle, { color: theme.textPri }]}>Flamme éteinte</Text>
+            <Text style={[styles.restoreSub, { color: theme.textSub }]}>
+              Ta série de {info.streak} jour{info.streak > 1 ? 's' : ''}{friend ? ` avec ${friend.username}` : ''} s'est éteinte. Tu peux la ranimer dans les 48h.
+            </Text>
+            {freezes > 0 ? (
+              <>
+                <TouchableOpacity style={[styles.restoreBtn, { backgroundColor: theme.accent }]} onPress={doRestore} disabled={restoring}>
+                  {restoring
+                    ? <ActivityIndicator color="#fff" />
+                    : <Text style={styles.restoreBtnTxt}>❄️ Utilisez mon gel de flammes</Text>}
+                </TouchableOpacity>
+                <Text style={[styles.restoreHint, { color: theme.textSub }]}>{freezes} gel{freezes > 1 ? 's' : ''} en stock</Text>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.restoreSub, { color: theme.textSub }]}>Tu n'as plus de gel de flamme.</Text>
+                <TouchableOpacity style={[styles.restoreBtn, { backgroundColor: theme.accent }]} onPress={() => { setRestoreModal({ visible: false, friend: null }); goToShop(); }}>
+                  <Text style={styles.restoreBtnTxt}>Acheter un gel · 0,99€</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            <TouchableOpacity onPress={() => setRestoreModal({ visible: false, friend: null })}>
+              <Text style={[styles.restoreCancel, { color: theme.textSub }]}>Plus tard</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     );
-    return flamme?.streak || 0;
   };
 
   const loadMessages = useCallback(async (friend) => {
@@ -369,6 +456,8 @@ export default function FlammesScreen() {
         const nowDay = now.toISOString().split('T')[0];
         const lastSnapDay = lastSnap.toISOString().split('T')[0];
         const daysDiff = Math.round((new Date(nowDay) - new Date(lastSnapDay)) / 86400000);
+        // Restauration d'une série éteinte = action manuelle via le Gel de Flamme
+        // (clic sur la flamme grisée dans le chat). Ici, simple progression / reset.
         const newStreak = daysDiff <= 1 ? flamme.streak + 1 : 1;
         await supabase.from('flammes').update({ streak: newStreak, last_snap_at: now.toISOString() }).eq('id', flamme.id);
       } else {
@@ -475,9 +564,9 @@ export default function FlammesScreen() {
   /* ── Vue CHAT ── */
   if (view === 'chat' && selectedFriend) {
     const chatLogoConfig = getLogoConfig(selectedFriend.active_logo);
-    const streak = getStreak(selectedFriend.id);
+    const chatFlamme = getFlammeInfo(selectedFriend.id);
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={['top']}>
         {/* Header chat */}
         <View style={[styles.chatHeader, { borderBottomColor: theme.border }]}>
           <TouchableOpacity onPress={() => { setView('list'); setMessages([]); }} style={styles.backBtn}>
@@ -498,7 +587,14 @@ export default function FlammesScreen() {
                 <Text style={[styles.chatUsername, { color: theme.textPri }]}>{selectedFriend.username}</Text>
                 {chatLogoConfig.badge ? <Text style={styles.convNameBadge}>{chatLogoConfig.badge}</Text> : null}
               </View>
-              {streak > 0 && <Text style={[styles.chatStreak, { color: theme.accent }]}>🔥 {streak} j</Text>}
+              {chatFlamme.state === 'active' && chatFlamme.streak > 0 && (
+                <Text style={[styles.chatStreak, { color: theme.accent }]}>🔥 {chatFlamme.streak} j</Text>
+              )}
+              {chatFlamme.state === 'expired' && (
+                <TouchableOpacity onPress={() => openRestore(selectedFriend)}>
+                  <Text style={[styles.chatStreak, styles.flammeDim, { color: theme.textSub }]}>🔥 {chatFlamme.streak} j · ranimer</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
           <TouchableOpacity style={styles.photoMsgBtn} onPress={sendPhotoMessage} disabled={sendingMessage}>
@@ -556,6 +652,7 @@ export default function FlammesScreen() {
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+        {renderRestoreModal()}
       </SafeAreaView>
     );
   }
@@ -563,6 +660,7 @@ export default function FlammesScreen() {
   /* ── Vue LISTE ── */
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
+      {renderRestoreModal()}
       {/* Modals story viewer / story preview */}
       <Modal visible={storyViewer.visible} transparent animationType="fade" onRequestClose={() => setStoryViewer({ visible: false, story: null })}>
         <View style={styles.viewerOverlay}>
@@ -616,11 +714,11 @@ export default function FlammesScreen() {
         </View>
       </Modal>
 
-      <SafeAreaView style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={[styles.title, { color: theme.textPri }]}>Chat</Text>
-          <TouchableOpacity onPress={() => setShowSearch(!showSearch)} hitSlop={10}>
+          <TouchableOpacity onPress={() => setShowSearch(!showSearch)} hitSlop={10} style={styles.headerSearchBtn}>
             <Feather name={showSearch ? 'x' : 'search'} size={22} color={theme.textPri} />
           </TouchableOpacity>
         </View>
@@ -746,7 +844,7 @@ export default function FlammesScreen() {
               </>
             }
             renderItem={({ item }) => {
-              const streak = getStreak(item.id);
+              const fi = getFlammeInfo(item.id);
               const lc = getLogoConfig(item.active_logo);
               const lastMsg = lastMessages[item.id];
               const hasStory = stories.some(s => s.user_id === item.id);
@@ -779,10 +877,15 @@ export default function FlammesScreen() {
                         </Text>
                       </View>
                     )}
-                    {streak > 0 && (
+                    {fi.state === 'active' && fi.streak > 0 && (
                       <View style={styles.streakRow}>
-                        <Text style={[styles.streakText, { color: theme.accent }]}>🔥 {streak}</Text>
+                        <Text style={[styles.streakText, { color: theme.accent }]}>🔥 {fi.streak}</Text>
                       </View>
+                    )}
+                    {fi.state === 'expired' && (
+                      <TouchableOpacity style={styles.streakRow} onPress={() => openRestore(item)}>
+                        <Text style={[styles.streakText, styles.flammeDim, { color: theme.textSub }]}>🔥 {fi.streak}</Text>
+                      </TouchableOpacity>
                     )}
                   </View>
                 </TouchableOpacity>
@@ -821,10 +924,11 @@ const styles = StyleSheet.create({
 
   /* Header */
   header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
     paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10,
   },
   title: { fontSize: 22, fontWeight: '800' },
+  headerSearchBtn: { position: 'absolute', right: 20, top: 6 },
 
   /* Barre recherche */
   searchBarWrap: { paddingHorizontal: 16, marginBottom: 10 },
@@ -875,6 +979,18 @@ const styles = StyleSheet.create({
   convTime:     { fontSize: 12 },
   streakRow:    { flexDirection: 'row', alignItems: 'center' },
   streakText:   { fontWeight: '700', fontSize: 13 },
+  flammeDim:    { opacity: 0.4 },
+
+  // Modal de restauration de flamme
+  restoreOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 28 },
+  restoreCard:    { width: '100%', borderRadius: 22, borderWidth: 1, padding: 24, alignItems: 'center', gap: 10 },
+  restoreEmoji:   { fontSize: 44 },
+  restoreTitle:   { fontSize: 19, fontWeight: '900' },
+  restoreSub:     { fontSize: 13, textAlign: 'center', lineHeight: 19 },
+  restoreBtn:     { borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, alignItems: 'center', alignSelf: 'stretch', marginTop: 6 },
+  restoreBtnTxt:  { color: '#fff', fontWeight: '800', fontSize: 14 },
+  restoreHint:    { fontSize: 11, marginTop: 2 },
+  restoreCancel:  { fontSize: 13, fontWeight: '600', marginTop: 8, paddingVertical: 4 },
 
   /* Demandes */
   incomingWrap: { paddingHorizontal: 16, paddingBottom: 4, paddingTop: 4 },

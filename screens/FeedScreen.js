@@ -416,11 +416,11 @@ export default function FeedScreen() {
         <BlurView intensity={28} tint="dark" style={{ backgroundColor: 'rgba(0,0,0,0.15)', overflow: 'hidden' }}>
           <View style={[styles.topBarRow, { paddingTop: tabTop }]}>
             <TouchableOpacity onPress={() => setFeedTab('ootd')} style={styles.tabBtn}>
-              <Text style={[styles.tabText, feedTab === 'ootd' && styles.tabTextActive]}>OOTD</Text>
+              <Text style={[styles.tabText, feedTab === 'ootd' && styles.tabTextActive, feedTab === 'ootd' && { color: theme.accent }]}>OOTD</Text>
               {feedTab === 'ootd' && <View style={[styles.tabUnderline, { backgroundColor: theme.accent }]} />}
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setFeedTab('pourtoi')} style={styles.tabBtn}>
-              <Text style={[styles.tabText, feedTab === 'pourtoi' && styles.tabTextActive]}>POUR TOI</Text>
+              <Text style={[styles.tabText, feedTab === 'pourtoi' && styles.tabTextActive, feedTab === 'pourtoi' && { color: theme.accent }]}>POUR TOI</Text>
               {feedTab === 'pourtoi' && <View style={[styles.tabUnderline, { backgroundColor: theme.accent }]} />}
             </TouchableOpacity>
             <TouchableOpacity style={styles.searchBtn}>

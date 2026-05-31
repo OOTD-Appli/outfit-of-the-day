@@ -15,6 +15,7 @@ import { getLogoConfig } from '../lib/logoConfig';
 
 export default function ProfilScreen() {
   const [profile, setProfile] = useState(null);
+  const [subscription, setSubscription] = useState(null);
   const [ootds, setOotds] = useState([]);
   const [loading, setLoading] = useState(true);
   const { width: ww } = useWindowDimensions();
@@ -50,8 +51,15 @@ export default function ProfilScreen() {
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
+      const { data: subData } = await supabase
+        .from('subscriptions')
+        .select('status, plan_type')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
       setProfile(profileData);
       setOotds(ootdsData || []);
+      setSubscription(subData);
     } finally {
       setLoading(false);
     }
@@ -118,6 +126,10 @@ export default function ProfilScreen() {
 
   const levelInfo = computeLevelInfo(profile?.points || 0);
   const logoConfig = getLogoConfig(profile?.active_logo);
+  const subActive = subscription && ['active', 'trialing'].includes(subscription.status);
+  const premiumLabel = subActive
+    ? (subscription.plan_type === 'elite' ? '💎 Elite' : '⭐ Plus')
+    : null;
 
   if (loading) return (
     <View style={[styles.center, { backgroundColor: theme.bg }]}>
@@ -126,7 +138,7 @@ export default function ProfilScreen() {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={['top']}>
       <FlatList
         data={ootds}
         keyExtractor={item => item.id}
@@ -168,6 +180,11 @@ export default function ProfilScreen() {
                 <Text style={[styles.username, { color: theme.textPri }]}>{profile?.username || 'Anonyme'}</Text>
                 {logoConfig.badge && <Text style={styles.usernameBadge}>{logoConfig.badge}</Text>}
               </View>
+              {premiumLabel && (
+                <View style={[styles.premiumBadge, { backgroundColor: theme.accent + '1A', borderColor: theme.accent }]}>
+                  <Text style={[styles.premiumBadgeText, { color: theme.accent }]}>{premiumLabel}</Text>
+                </View>
+              )}
 
               <View style={[styles.stats, { backgroundColor: theme.card }]}>
                 <View style={styles.statItem}>
@@ -231,6 +248,8 @@ const styles = StyleSheet.create({
   username:       { fontWeight: '700', fontSize: 20 },
   usernameRow:    { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 20 },
   usernameBadge:  { fontSize: 18 },
+  premiumBadge:   { alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, borderWidth: 1, marginTop: -12, marginBottom: 14 },
+  premiumBadgeText: { fontSize: 12, fontWeight: '800' },
 
   stats:          { flexDirection: 'row', alignItems: 'center', borderRadius: 16, padding: 16, width: '100%' },
   statItem:       { flex: 1, alignItems: 'center' },

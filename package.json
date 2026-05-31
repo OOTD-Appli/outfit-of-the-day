@@ -7,10 +7,14 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "build:web": "expo export --platform web",
+    "build": "npm run build:web",
+    "vercel-build": "npm run build:web",
     "eas:build:preview": "eas build --platform android --profile preview --non-interactive",
     "eas:build:prod": "eas build --platform android --profile production --non-interactive"
   },
   "dependencies": {
+    "@expo/metro-runtime": "~6.1.2",
     "@expo/vector-icons": "15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.15.11",
@@ -33,6 +37,7 @@
     "react-native": "0.81.5",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
+    "react-native-svg": "15.12.1",
     "react-native-url-polyfill": "^3.0.0",
     "react-native-web": "^0.21.0"
   },

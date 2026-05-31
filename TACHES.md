@@ -1,6 +1,36 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-05-29 — Garbage collector stories + compression images/vidéos + migration GC.
+> Dernière mise à jour : 2026-05-31 — Refonte boutique : abonnements Stripe (test), grille tarifaire points par rareté, Pass Analyse 24h, Gel de Flamme.
+
+---
+
+## Refonte boutique & abonnements — 2026-05-31
+
+### Premium (Stripe) — configuré en mode TEST
+- [x] Intégration Stripe complète (Edge Functions, webhook, Customer Portal, secrets) — cf. `STRIPE_SETUP.md`.
+- [x] Nouvelle grille : **OOTD Plus 2,99€/mois**, **OOTD Elite 4,99€/mois** (prix Stripe recréés, secrets `STRIPE_PRICE_*` mis à jour, affichage `ShopScreen` aligné).
+- [ ] Passage en **live** (clés `sk_live_…`) : à refaire produits/webhook/portal + secrets quand prêt.
+
+### Achats Express (Stripe one-time 0,99€) — migration `20260531140000_shop_express.sql`
+- [x] **Gel de Flamme** `0,99€` et **Pack 2 000 Points** `0,99€` : paiement Stripe unique (mode `payment`).
+- [x] Edge Function `create-payment-session` (mode payment) + traitement webhook `checkout.session.completed`.
+- [x] RPC `apply_one_time_purchase` (service_role) + table `processed_payments` (idempotence par session). Crédit posé UNIQUEMENT par le webhook.
+- [x] Secrets `STRIPE_PRICE_FLAME_FREEZE` / `STRIPE_PRICE_POINTS_2000` ; event `checkout.session.completed` ajouté au webhook.
+
+### Boutique Points — grille FINALE (migration `…140000` ; `…130000` superseded)
+- [x] **Prix cosmétiques par rareté** (appliqués côté serveur dans `buy_cosmetic`) :
+  - Thèmes : Midnight/Émeraude `1000 pts`, Or Prestige/Sakura `1500 pts`.
+  - Logos : Flamme `150 pts`, Diamond/Étoile Pro/Couronne `200 pts`.
+- [x] **Gel de Flamme** : acquisition désormais en euros (cf. Achats Express). Colonne `profiles.flame_freezes` + consommation auto via `use_flame_freeze` dans `FlammesScreen` quand un oubli briserait le streak. `flame_freezes` protégé par `profiles_guard_sensitive`.
+- [~] `buy_pass_24h` / `buy_flame_freeze` (points) : RPC créées en `…130000` puis **retirées de l'UI** (Pass 24h supprimé, Gel de Flamme passé en euros). RPC laissées en base, inutilisées.
+- [x] Logique boutons `ShopScreen` : Elite = tout gratuit (Équiper/Équipé), sinon prix points → pop-up confirmation → achat → Équiper → Équipé.
+- [x] `ShopScreen` rangé en **3 sections** : Premium · Achats Express · Boutique Points.
+
+### Flammes : expiration grisée + restauration + distribution mensuelle — migration `20260531150000_flamme_restore.sql`
+- [x] **Expiration dérivée** de `flammes.last_snap_at` : ≤24h active · 24–72h éteinte (grisée, restaurable) · >72h perdue (0). Affichage grisé + tappable dans la liste de conversations ET le header de chat (`FlammesScreen`).
+- [x] **Restauration manuelle** : clic sur la flamme grisée → modal « Utilisez mon gel de flammes ». RPC `restore_flamme(flamme_id)` (fenêtre 48h, consomme 1 gel, ranime `last_snap_at`). Si 0 gel → bouton vers le Shop (0,99€). Auto-consommation précédente (`use_flame_freeze` au snap) **retirée**.
+- [x] **Distribution mensuelle** : `claim_monthly_freezes` (Free 1 / Elite 2), claim paresseux appelé au focus de Shop et Flammes (colonne `last_freeze_grant`, idempotent/mois). *(Pas de cron : grant à l'ouverture de l'app.)*
+- [x] `profiles_guard_sensitive` étend la protection à `last_freeze_grant`. Compteur ❄️ affiché en haut du Shop.
 
 ---
 
@@ -104,6 +134,35 @@
 ## En cours
 
 - _(Rien pour l’instant.)_
+
+---
+
+## Abonnements Premium Stripe (2026-05-31)
+
+> Économie séparée : **points** (cosmétiques, inchangé) vs **abonnement Stripe** (Premium). Voir `STRIPE_SETUP.md` pour la configuration complète (secrets, price IDs, webhook, déploiement).
+
+- [x] **Migration** `20260531120000_subscriptions_stripe.sql` : table `subscriptions` (RLS lecture seule), helper `is_elite()`, RPC webhook-only `apply_subscription_change()` (EXECUTE réservé `service_role`), `consume_daily_credit()` v2 (Elite illimité / Plus 20 / Free 2), `equip_cosmetic()` v2 (Elite débloque tous les cosmétiques). ⚠️ À exécuter dans Supabase.
+- [x] **Edge Functions** (Deno + SDK Stripe officiel) : `create-checkout-session` (Checkout abonnement), `stripe-webhook` (events subscription → RPC, déployer `--no-verify-jwt`), `create-portal-session` (Customer Portal). Commentaires de config des secrets en tête de chaque fichier.
+- [x] **ShopScreen** refondu (thème clair/rose via `useTheme`) : section **Premium** (Plus 4,99€ / Elite 9,99€, boutons S'abonner → `Linking` vers Stripe, statut + date de renouvellement + Gérer via portail) ; section **Points** (pass + cosmétiques, RPC inchangées, accès Elite affiché).
+- [x] **AccueilScreen** : `fetchCredits` lit l'abonnement → Elite = illimité (pas de blocage), Plus/pass = 20, sinon 2. Pastille « Analyses illimitées » + gestion sentinelle `-1` renvoyée par `consume_daily_credit`.
+- [x] **ProfilScreen** : badge `💎 Elite` / `⭐ Plus` sous le pseudo (abonnement actif).
+- [x] **app.json** : `"scheme": "ootd"` pour le retour deep-link Stripe.
+
+---
+
+## Mise au pixel des maquettes (2026-05-31)
+
+- [x] **Écran Analyse refondu** (`AccueilScreen.js`) pour coller aux maquettes `AnalysePage.png` / `AnalysePageResult.png`. Logique inchangée (analyse Groq, crédits, publication feed, envoi flammes, top OOTDs).
+  - État AVANT : en-tête centré + cloche déco, carte upload à **bordure pointillée**, cercle caméra en dégradé (`expo-linear-gradient` + icône `Ionicons`), sous-titres « Place-toi bien… » / « Sélectionne une photo existante », carte conseil « Conseil 🤍 », section « Comment ça marche ? » à 3 cartes avec icônes rondes.
+  - État APRÈS : 3 jauges en **arc partiel coloré** (Fit rose, Harmonie mauve, Détails camel) via nouveau composant `components/Gauge.js` (react-native-svg), note globale + badge étoile, conseil avec personnage, « Tes OOTD les plus performants » + compteurs ❤️ (ajout `likes(count)` au fetch), boutons Publier/Flammes conservés.
+- [x] **Nouvelle dépendance** : `react-native-svg` (via `npx expo install`) pour les jauges. ⚠️ Rebuild EAS requis ; fonctionne déjà dans Expo Go.
+- [x] **Feed** (`FeedScreen.js`) : onglet actif (OOTD/POUR TOI) en **rose accent** au lieu de blanc (cf. `StyleAppliAccueil.png`).
+- [x] **Chat** (`FlammesScreen.js`) : titre « Chat » **centré** (loupe en absolu à droite), cf. `StyleAppliChat.png`.
+
+### Correctifs UI (2026-05-31)
+
+- [x] **Photo persistante après analyse** (`AccueilScreen.js`) : l'image analysée (`image.uri`, state local) reste affichée en haut de l'état résultat, sous le titre et au-dessus des blocs de score (dans le `ScrollView` existant, style `resultPhoto`). Aucune modif de la logique IA.
+- [x] **Suppression barre vierge au-dessus de la tab bar** : double inset bas corrigé. Tous les écrans à onglets passent en `SafeAreaView edges={['top']}` (AccueilScreen, FlammesScreen liste + chat, ProfilScreen, ShopScreen ×2) — la tab bar gère déjà l'inset bas. AuthScreen (hors tab bar) inchangé.
 
 ---
 
