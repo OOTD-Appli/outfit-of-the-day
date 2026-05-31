@@ -14,9 +14,9 @@ Le build web est piloté par `vercel.json` (lu automatiquement par Vercel) :
    ```
    EXPO_PUBLIC_SUPABASE_URL
    EXPO_PUBLIC_SUPABASE_ANON_KEY
-   EXPO_PUBLIC_GROQ_API_KEY
    ```
-   Sans elles, le site se compile mais ne se connecte ni à Supabase ni à Groq.
+   Sans elles, le site se compile mais ne se connecte pas à Supabase.
+   > **Ne PAS ajouter `EXPO_PUBLIC_GROQ_API_KEY`** : l'analyse passe par l'Edge Function `analyze-outfit`, qui lit le secret Supabase `GROQ_API_KEY` côté serveur. La clé Groq ne doit jamais être dans le bundle (web ou mobile).
 4. **Deploy**.
 
 ### Build local (test avant push)
@@ -24,7 +24,7 @@ Le build web est piloté par `vercel.json` (lu automatiquement par Vercel) :
 npm run build:web        # = expo export --platform web → dossier dist/
 ```
 
-> ⚠️ Sécurité : sur le web, toutes les variables `EXPO_PUBLIC_*` sont **visibles publiquement** dans le bundle. La clé Supabase anon est faite pour ça (protégée par RLS). En revanche `EXPO_PUBLIC_GROQ_API_KEY` serait exposée — pour le web, préférer router l'analyse via l'Edge Function `analyze-outfit` (déjà déployée) plutôt qu'un appel Groq direct depuis le navigateur.
+> ⚠️ Sécurité : sur le web, les variables `EXPO_PUBLIC_*` sont **visibles publiquement** dans le bundle. C'est sans risque ici : seule la clé Supabase **anon** y figure (faite pour ça, protégée par RLS). La clé **Groq reste serveur** (secret Supabase `GROQ_API_KEY` utilisé par l'Edge Function `analyze-outfit`) — ne jamais l'exposer en `EXPO_PUBLIC_*`.
 
 ## 2. Android APK (Expo EAS)
 
