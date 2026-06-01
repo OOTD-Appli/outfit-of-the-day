@@ -13,14 +13,14 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import { getLogoConfig } from '../lib/logoConfig';
-import { canInstallPwa, promptInstall } from '../lib/pwa';
+import { isPwaStandalone, promptInstall } from '../lib/pwa';
 
 export default function ProfilScreen() {
   const [profile, setProfile] = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [ootds, setOotds] = useState([]);
   const [loading, setLoading] = useState(true);
-  const { width: ww } = useWindowDimensions();
+  const { width: ww, height: wh } = useWindowDimensions();
   const avatarSize = Math.min(Math.round(ww * 0.22), 90);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarLoadError, setAvatarLoadError] = useState(false);
@@ -33,13 +33,18 @@ export default function ProfilScreen() {
     setAvatarLoadError(false);
   }, [profile]);
 
-  // Bouton « Télécharger l'app » : visible seulement si installable (web, non installé)
+  // Bouton « Télécharger l'application » : affiché dès qu'on est sur le web et que
+  // l'app n'est pas déjà installée (standalone) — indépendamment de beforeinstallprompt.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const update = () => setInstallable(canInstallPwa());
+    const update = () => setInstallable(!isPwaStandalone());
     update();
     window.addEventListener('ootd-pwa-change', update);
-    return () => window.removeEventListener('ootd-pwa-change', update);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('ootd-pwa-change', update);
+      window.removeEventListener('resize', update);
+    };
   }, []);
 
   const fetchProfil = useCallback(async () => {
@@ -90,45 +95,60 @@ export default function ProfilScreen() {
 
   const handleInstall = async () => {
     const ok = await promptInstall();
-    if (ok) setInstallable(false);
+    if (ok) { setInstallable(false); return; }
+    // Pas de prompt natif disponible (Safari iOS, ou prompt déjà consommé)
+    const msg = "Pour installer l'application, ouvre le menu de partage de ton navigateur puis « Sur l'écran d'accueil ».";
+    if (typeof window !== 'undefined' && window.alert) window.alert(msg);
+    else showToast(msg, { type: 'info' });
   };
 
   const openLightbox = (index) => setLightbox({ visible: true, index });
   const closeLightbox = () => setLightbox({ visible: false, index: 0 });
 
-  // Supprime l'outfit : ligne `ootds` (→ disparaît du feed et du profil) + fichier Storage
+  // Suppression effective : ligne `ootds` (→ disparaît du feed et du profil) + fichier Storage
+  const doDeleteOotd = async (item) => {
+    try {
+      const { error } = await supabase.from('ootds').delete().eq('id', item.id);
+      if (error) throw error;
+      // Nettoyage du fichier image dans le Storage (best-effort)
+      try {
+        const marker = '/storage/v1/object/public/';
+        const idx = (item.image_url || '').indexOf(marker);
+        if (idx !== -1) {
+          const rest = item.image_url.slice(idx + marker.length);
+          const bucket = rest.split('/')[0];
+          const path = rest.split('/').slice(1).join('/');
+          if (bucket && path) await supabase.storage.from(bucket).remove([decodeURIComponent(path)]);
+        }
+      } catch (storageErr) {
+        console.error('[deleteOotd] storage cleanup', storageErr);
+      }
+      setOotds((prev) => prev.filter((o) => o.id !== item.id));
+      closeLightbox();
+      showToast('Outfit supprimé', { type: 'success' });
+      fetchProfil(); // resync (le feed se rafraîchit aussi à son focus)
+    } catch (e) {
+      console.error('[deleteOotd] suppression échouée (RLS / requête ?) :', e);
+      showToast(e.message || 'Suppression impossible', { type: 'error' });
+    }
+  };
+
+  // Confirmation : Alert.alert n'a pas de boutons sur react-native-web → window.confirm
   const deleteOotd = (item) => {
+    if (!item) return;
+    if (Platform.OS === 'web') {
+      const ok = typeof window !== 'undefined' && window.confirm
+        ? window.confirm('Voulez-vous vraiment supprimer cet outfit ?')
+        : true;
+      if (ok) doDeleteOotd(item);
+      return;
+    }
     Alert.alert(
       'Supprimer',
       'Voulez-vous vraiment supprimer cet outfit ?',
       [
         { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Supprimer',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const { error } = await supabase.from('ootds').delete().eq('id', item.id);
-              if (error) throw error;
-              // Nettoyage du fichier image dans le Storage (best-effort)
-              try {
-                const marker = '/storage/v1/object/public/';
-                const idx = (item.image_url || '').indexOf(marker);
-                if (idx !== -1) {
-                  const rest = item.image_url.slice(idx + marker.length);
-                  const bucket = rest.split('/')[0];
-                  const path = rest.split('/').slice(1).join('/');
-                  if (bucket && path) await supabase.storage.from(bucket).remove([decodeURIComponent(path)]);
-                }
-              } catch (_) {}
-              setOotds((prev) => prev.filter((o) => o.id !== item.id));
-              closeLightbox();
-              showToast('Outfit supprimé', { type: 'success' });
-            } catch (e) {
-              showToast(e.message || 'Suppression impossible', { type: 'error' });
-            }
-          },
-        },
+        { text: 'Supprimer', style: 'destructive', onPress: () => doDeleteOotd(item) },
       ],
     );
   };
@@ -206,6 +226,14 @@ export default function ProfilScreen() {
             <View style={styles.header}>
               <Text style={[styles.title, { color: theme.textPri }]}>Profil</Text>
               <View style={styles.headerActions}>
+                <TouchableOpacity
+                  style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                  onPress={handleLogout}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="log-out-outline" size={16} color={theme.accent} />
+                  <Text style={[styles.logoutText, { color: theme.accent }]}>Se déconnecter</Text>
+                </TouchableOpacity>
                 {installable && (
                   <TouchableOpacity
                     style={[styles.installBtn, { backgroundColor: theme.accent }]}
@@ -213,17 +241,9 @@ export default function ProfilScreen() {
                     activeOpacity={0.85}
                   >
                     <Ionicons name="download-outline" size={15} color="#fff" />
-                    <Text style={styles.installBtnText}>Télécharger l'app</Text>
+                    <Text style={styles.installBtnText}>Télécharger l'application</Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                  onPress={handleLogout}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="log-out-outline" size={16} color={theme.accent} />
-                  <Text style={[styles.logoutText, { color: theme.accent }]}>Déconnexion</Text>
-                </TouchableOpacity>
               </View>
             </View>
 
@@ -306,7 +326,7 @@ export default function ProfilScreen() {
 
       {/* Lightbox plein écran : défilement horizontal page par page */}
       <Modal visible={lightbox.visible} animationType="fade" onRequestClose={closeLightbox} statusBarTranslucent>
-        <View style={styles.lbContainer}>
+        <View style={[styles.lbContainer, { width: ww, height: wh }]}>
           <FlatList
             data={ootds}
             horizontal
@@ -319,8 +339,8 @@ export default function ProfilScreen() {
               setLightbox((prev) => ({ ...prev, index: Math.round(e.nativeEvent.contentOffset.x / ww) }))
             }
             renderItem={({ item }) => (
-              <View style={[styles.lbPage, { width: ww }]}>
-                <Image source={{ uri: item.image_url }} style={styles.lbImage} resizeMode="contain" />
+              <View style={[styles.lbPage, { width: ww, height: wh }]}>
+                <Image source={{ uri: item.image_url }} style={{ width: ww, height: wh }} resizeMode="contain" />
               </View>
             )}
           />
@@ -350,15 +370,14 @@ const styles = StyleSheet.create({
   logout:         { fontSize: 13 },
   list:           { paddingBottom: 40 },
 
-  headerActions:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerActions:  { flexDirection: 'column', alignItems: 'flex-end', gap: 8 },
   installBtn:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10 },
   installBtnText: { color: '#fff', fontWeight: '800', fontSize: 11.5 },
   logoutBtn:      { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10, borderWidth: 1.5 },
   logoutText:     { fontWeight: '800', fontSize: 11.5 },
 
-  lbContainer:    { flex: 1, backgroundColor: '#000' },
-  lbPage:         { height: '100%', alignItems: 'center', justifyContent: 'center' },
-  lbImage:        { width: '100%', height: '100%' },
+  lbContainer:    { backgroundColor: '#000' },
+  lbPage:         { alignItems: 'center', justifyContent: 'center' },
   lbBar:          { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 6 },
   lbBtn:          { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', marginTop: 8 },
 
