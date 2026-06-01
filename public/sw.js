@@ -1,5 +1,5 @@
 /* OOTD — Service Worker : offline (app shell) + notifications push. */
-const CACHE = 'ootd-cache-v1';
+const CACHE = 'ootd-cache-v2';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
