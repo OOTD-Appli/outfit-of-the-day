@@ -180,7 +180,48 @@ export default function AccueilScreen({ navigation }) {
     fetchTopOotds();
   }, [fetchCredits, fetchTopOotds]));
 
+  const applyPickedImage = (asset) => {
+    setScore(null);
+    cachedPublicUrlRef.current = null;
+    setPublishedToFeed(false);
+    setSentFlammesToAll(false);
+    setImage(asset);
+  };
+
+  // Web : capture via <input type=file>. `capture="environment"` ouvre l'appareil
+  // photo (arrière) sur mobile. On compresse via canvas et on renvoie le base64
+  // BRUT (analyzeOutfit reconstruit la data-URL `data:image/jpeg;base64,...`).
+  const pickImageWeb = (useCamera) => {
+    if (typeof document === 'undefined') return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    if (useCamera) input.setAttribute('capture', 'environment');
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const objectUrl = URL.createObjectURL(file);
+      const img = new window.Image();
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const maxDim = 1280;
+        let { width, height } = img;
+        if (width >= height && width > maxDim) { height = Math.round((height * maxDim) / width); width = maxDim; }
+        else if (height > width && height > maxDim) { width = Math.round((width * maxDim) / height); height = maxDim; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+        applyPickedImage({ uri: dataUrl, base64: dataUrl.split(',')[1] || null, width, height });
+      };
+      img.onerror = () => { URL.revokeObjectURL(objectUrl); showToast('Image illisible, réessaie', { type: 'error' }); };
+      img.src = objectUrl;
+    };
+    input.click();
+  };
+
   const pickImageFromLibrary = async () => {
+    if (Platform.OS === 'web') { pickImageWeb(false); return; }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       showToast('Permission refusée pour accéder à la galerie', { type: 'warning' });
@@ -193,16 +234,12 @@ export default function AccueilScreen({ navigation }) {
       base64: true,
     });
     if (!result.canceled) {
-      setScore(null);
-      cachedPublicUrlRef.current = null;
-      setPublishedToFeed(false);
-      setSentFlammesToAll(false);
-      setImage(result.assets[0]);
+      applyPickedImage(result.assets[0]);
     }
   };
 
   const takePicture = async () => {
-    if (Platform.OS === 'web') { await pickImageFromLibrary(); return; }
+    if (Platform.OS === 'web') { pickImageWeb(true); return; }
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
       showToast('Permission refusée pour accéder à la caméra', { type: 'warning' });
@@ -216,11 +253,7 @@ export default function AccueilScreen({ navigation }) {
       cameraType: ImagePicker.CameraType.back,
     });
     if (!result.canceled) {
-      setScore(null);
-      cachedPublicUrlRef.current = null;
-      setPublishedToFeed(false);
-      setSentFlammesToAll(false);
-      setImage(result.assets[0]);
+      applyPickedImage(result.assets[0]);
     }
   };
 
