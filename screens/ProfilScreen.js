@@ -3,15 +3,17 @@ import { computeLevelInfo } from '../lib/utils';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   FlatList, Image, ActivityIndicator,
-  useWindowDimensions,
+  useWindowDimensions, Modal, Alert, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import { getLogoConfig } from '../lib/logoConfig';
+import { canInstallPwa, promptInstall } from '../lib/pwa';
 
 export default function ProfilScreen() {
   const [profile, setProfile] = useState(null);
@@ -24,10 +26,21 @@ export default function ProfilScreen() {
   const [avatarLoadError, setAvatarLoadError] = useState(false);
   const { showToast } = useToast();
   const { theme } = useTheme();
+  const [lightbox, setLightbox] = useState({ visible: false, index: 0 });
+  const [installable, setInstallable] = useState(false);
 
   useEffect(() => {
     setAvatarLoadError(false);
   }, [profile]);
+
+  // Bouton « Télécharger l'app » : visible seulement si installable (web, non installé)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const update = () => setInstallable(canInstallPwa());
+    update();
+    window.addEventListener('ootd-pwa-change', update);
+    return () => window.removeEventListener('ootd-pwa-change', update);
+  }, []);
 
   const fetchProfil = useCallback(async () => {
     setLoading(true);
@@ -73,6 +86,51 @@ export default function ProfilScreen() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+  };
+
+  const handleInstall = async () => {
+    const ok = await promptInstall();
+    if (ok) setInstallable(false);
+  };
+
+  const openLightbox = (index) => setLightbox({ visible: true, index });
+  const closeLightbox = () => setLightbox({ visible: false, index: 0 });
+
+  // Supprime l'outfit : ligne `ootds` (→ disparaît du feed et du profil) + fichier Storage
+  const deleteOotd = (item) => {
+    Alert.alert(
+      'Supprimer',
+      'Voulez-vous vraiment supprimer cet outfit ?',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { error } = await supabase.from('ootds').delete().eq('id', item.id);
+              if (error) throw error;
+              // Nettoyage du fichier image dans le Storage (best-effort)
+              try {
+                const marker = '/storage/v1/object/public/';
+                const idx = (item.image_url || '').indexOf(marker);
+                if (idx !== -1) {
+                  const rest = item.image_url.slice(idx + marker.length);
+                  const bucket = rest.split('/')[0];
+                  const path = rest.split('/').slice(1).join('/');
+                  if (bucket && path) await supabase.storage.from(bucket).remove([decodeURIComponent(path)]);
+                }
+              } catch (_) {}
+              setOotds((prev) => prev.filter((o) => o.id !== item.id));
+              closeLightbox();
+              showToast('Outfit supprimé', { type: 'success' });
+            } catch (e) {
+              showToast(e.message || 'Suppression impossible', { type: 'error' });
+            }
+          },
+        },
+      ],
+    );
   };
 
   const changeAvatar = async () => {
@@ -147,9 +205,26 @@ export default function ProfilScreen() {
           <View>
             <View style={styles.header}>
               <Text style={[styles.title, { color: theme.textPri }]}>Profil</Text>
-              <TouchableOpacity onPress={handleLogout}>
-                <Text style={[styles.logout, { color: theme.accent }]}>Déconnexion</Text>
-              </TouchableOpacity>
+              <View style={styles.headerActions}>
+                {installable && (
+                  <TouchableOpacity
+                    style={[styles.installBtn, { backgroundColor: theme.accent }]}
+                    onPress={handleInstall}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="download-outline" size={15} color="#fff" />
+                    <Text style={styles.installBtnText}>Télécharger l'app</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                  onPress={handleLogout}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="log-out-outline" size={16} color={theme.accent} />
+                  <Text style={[styles.logoutText, { color: theme.accent }]}>Déconnexion</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             <View style={styles.profileCard}>
@@ -215,8 +290,10 @@ export default function ProfilScreen() {
             <Text style={[styles.galerieTitle, { color: theme.textPri }]}>Mes tenues</Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <Image source={{ uri: item.image_url }} style={styles.gridPhoto} />
+        renderItem={({ item, index }) => (
+          <TouchableOpacity style={styles.gridCell} activeOpacity={0.85} onPress={() => openLightbox(index)}>
+            <Image source={{ uri: item.image_url }} style={styles.gridPhoto} />
+          </TouchableOpacity>
         )}
         ListEmptyComponent={
           <View style={styles.emptyGalerie}>
@@ -226,6 +303,41 @@ export default function ProfilScreen() {
         }
         contentContainerStyle={styles.list}
       />
+
+      {/* Lightbox plein écran : défilement horizontal page par page */}
+      <Modal visible={lightbox.visible} animationType="fade" onRequestClose={closeLightbox} statusBarTranslucent>
+        <View style={styles.lbContainer}>
+          <FlatList
+            data={ootds}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item) => item.id}
+            initialScrollIndex={lightbox.index}
+            getItemLayout={(_, i) => ({ length: ww, offset: ww * i, index: i })}
+            onMomentumScrollEnd={(e) =>
+              setLightbox((prev) => ({ ...prev, index: Math.round(e.nativeEvent.contentOffset.x / ww) }))
+            }
+            renderItem={({ item }) => (
+              <View style={[styles.lbPage, { width: ww }]}>
+                <Image source={{ uri: item.image_url }} style={styles.lbImage} resizeMode="contain" />
+              </View>
+            )}
+          />
+          <SafeAreaView style={styles.lbBar} edges={['top']} pointerEvents="box-none">
+            <TouchableOpacity style={styles.lbBtn} onPress={closeLightbox} activeOpacity={0.8}>
+              <Ionicons name="close" size={28} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.lbBtn}
+              onPress={() => ootds[lightbox.index] && deleteOotd(ootds[lightbox.index])}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="trash-outline" size={24} color="#fff" />
+            </TouchableOpacity>
+          </SafeAreaView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -237,6 +349,18 @@ const styles = StyleSheet.create({
   title:          { fontSize: 24, fontWeight: '700' },
   logout:         { fontSize: 13 },
   list:           { paddingBottom: 40 },
+
+  headerActions:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  installBtn:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10 },
+  installBtnText: { color: '#fff', fontWeight: '800', fontSize: 11.5 },
+  logoutBtn:      { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10, borderWidth: 1.5 },
+  logoutText:     { fontWeight: '800', fontSize: 11.5 },
+
+  lbContainer:    { flex: 1, backgroundColor: '#000' },
+  lbPage:         { height: '100%', alignItems: 'center', justifyContent: 'center' },
+  lbImage:        { width: '100%', height: '100%' },
+  lbBar:          { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 6 },
+  lbBtn:          { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', marginTop: 8 },
 
   profileCard:    { alignItems: 'center', padding: 20 },
   avatarContainer:{ position: 'relative', marginBottom: 12 },
@@ -264,7 +388,8 @@ const styles = StyleSheet.create({
   niveauSub:      { fontSize: 11 },
 
   galerieTitle:   { fontWeight: '700', fontSize: 16, padding: 16, paddingBottom: 8 },
-  gridPhoto:      { width: '33.33%', aspectRatio: 1 },
+  gridCell:       { width: '33.33%', aspectRatio: 1 },
+  gridPhoto:      { width: '100%', height: '100%' },
 
   emptyGalerie:   { alignItems: 'center', padding: 40 },
   emptyText:      { fontSize: 16, fontWeight: '600' },
