@@ -416,6 +416,14 @@ export default function FlammesScreen() {
     await loadMessages(friend);
   };
 
+  // Notifie le destinataire via web push (best-effort, ne bloque jamais l'envoi).
+  const notifyFriend = (friendId, title, body) => {
+    if (!friendId) return;
+    supabase.functions
+      .invoke('send-web-push', { body: { recipient_id: friendId, title, body, url: '/' } })
+      .catch(() => {});
+  };
+
   const sendTextMessage = async () => {
     if (!messageText.trim() || !selectedFriend || sendingMessage) return;
     setSendingMessage(true);
@@ -425,6 +433,7 @@ export default function FlammesScreen() {
       const { error } = await supabase.from('messages').insert({ sender_id: userId, receiver_id: selectedFriend.id, content: text });
       if (error) throw error;
       await loadMessages(selectedFriend);
+      notifyFriend(selectedFriend.id, myProfile?.username || 'Nouveau message', text.slice(0, 120));
     } catch (e) { showToast(e?.message || 'Envoi impossible', { type: 'error' }); }
     setSendingMessage(false);
   };
@@ -446,6 +455,7 @@ export default function FlammesScreen() {
       const { error } = await supabase.from('messages').insert({ sender_id: userId, receiver_id: selectedFriend.id, image_url: urlData.publicUrl });
       if (error) throw error;
       await loadMessages(selectedFriend);
+      notifyFriend(selectedFriend.id, myProfile?.username || 'OOTD', '📸 t\'a envoyé une photo');
       const flamme = flammes.find(f =>
         (f.user1_id === userId && f.user2_id === selectedFriend.id) ||
         (f.user1_id === selectedFriend.id && f.user2_id === userId),

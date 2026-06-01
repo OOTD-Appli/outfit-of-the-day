@@ -1,4 +1,5 @@
 import { registerForPushNotifications, savePushToken } from './lib/notifications';
+import { registerWebPush } from './lib/webPush';
 import { useState, useEffect } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -168,7 +169,11 @@ export default function App() {
       }
 
       try {
-        if (Platform.OS === 'web' || Constants.appOwnership === 'expo') return;
+        if (Platform.OS === 'web') {
+          await registerWebPush();
+          return;
+        }
+        if (Constants.appOwnership === 'expo') return;
         const token = await registerForPushNotifications();
         if (token) await savePushToken(token);
       } catch (error) {
