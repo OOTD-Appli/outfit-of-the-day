@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Animated,
   TouchableOpacity, ActivityIndicator,
-  RefreshControl, Modal, FlatList, Pressable, useWindowDimensions,
+  RefreshControl, Modal, FlatList, useWindowDimensions,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { BlurView } from 'expo-blur';
@@ -45,6 +45,7 @@ function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpen
   const overlayHeartScale = useRef(new Animated.Value(0.1)).current;
   const overlayHeartOpacity = useRef(new Animated.Value(0)).current;
   const lastTapRef = useRef(0);
+  const touchStartY = useRef(0);
 
   const handleLike = () => {
     Animated.sequence([
@@ -121,8 +122,15 @@ function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpen
         </View>
       </LinearGradient>
 
-      {/* Zone double-tap (sous side actions) */}
-      <Pressable style={StyleSheet.absoluteFillObject} onPress={handleDoubleTap} />
+      {/* Zone double-tap — View passif (pas de preventDefault → scroll non bloqué) */}
+      <View
+        style={StyleSheet.absoluteFillObject}
+        onTouchStart={e => { touchStartY.current = e.nativeEvent.pageY; }}
+        onTouchEnd={e => {
+          if (Math.abs(e.nativeEvent.pageY - touchStartY.current) > 8) return;
+          handleDoubleTap();
+        }}
+      />
 
       {/* Overlay cœur feedback double-tap */}
       <Animated.View
@@ -480,10 +488,8 @@ export default function FeedScreen() {
           keyExtractor={item => item.id}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
-          snapToInterval={pageH > 0 ? pageH : undefined}
-          snapToAlignment="start"
+          pagingEnabled
           decelerationRate="fast"
-          disableIntervalMomentum
           bounces={false}
           nestedScrollEnabled={false}
           overScrollMode="never"
