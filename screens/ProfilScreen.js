@@ -268,9 +268,13 @@ export default function ProfilScreen() {
             <View style={styles.header}>
               <View>
                 <Text style={[styles.title, { color: theme.textPri }]}>Profil</Text>
-                <TouchableOpacity style={styles.settingsBtn} onPress={openSettings} activeOpacity={0.75}>
-                  <Ionicons name="settings-outline" size={14} color={theme.accent} />
-                  <Text style={[styles.settingsBtnText, { color: theme.accent }]}>Paramètres</Text>
+                <TouchableOpacity
+                  style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                  onPress={openSettings}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="settings-outline" size={16} color={theme.accent} />
+                  <Text style={[styles.logoutText, { color: theme.accent }]}>Paramètres</Text>
                 </TouchableOpacity>
               </View>
               <View style={styles.headerActions}>
@@ -296,7 +300,7 @@ export default function ProfilScreen() {
             </View>
 
             <View style={styles.profileCard}>
-              <TouchableOpacity onPress={changeAvatar} style={styles.avatarContainer}>
+              <View style={styles.avatarContainer}>
                 {uploadingAvatar ? (
                   <View style={[styles.avatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2, backgroundColor: theme.accent, borderWidth: logoConfig.frameBorderColor ? 3 : 0, borderColor: logoConfig.frameBorderColor || 'transparent' }]}>
                     <ActivityIndicator color="#3a0d1e" />
@@ -314,10 +318,7 @@ export default function ProfilScreen() {
                     </Text>
                   </View>
                 )}
-                <View style={[styles.avatarEdit, { backgroundColor: theme.bg, borderColor: theme.border }]}>
-                  <Text style={styles.avatarEditText}>📷</Text>
-                </View>
-              </TouchableOpacity>
+              </View>
 
               <View style={styles.usernameRow}>
                 <Text style={[styles.username, { color: theme.textPri }]}>{profile?.username || 'Anonyme'}</Text>
@@ -353,25 +354,6 @@ export default function ProfilScreen() {
                 <View style={[styles.niveauFill, { width: `${levelInfo.percent}%`, backgroundColor: theme.accent }]} />
               </View>
               <Text style={[styles.niveauSub, { color: theme.textSub }]}>{levelInfo.progressInLevel} / {levelInfo.threshold} points pour le prochain niveau</Text>
-            </View>
-
-            <View style={[styles.privacyRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
-              <View style={styles.privacyLeft}>
-                <Text style={[styles.privacyLabel, { color: theme.textPri }]}>
-                  {profile?.is_private ? '🔒 Compte privé' : '🌍 Compte public'}
-                </Text>
-                <Text style={[styles.privacySub, { color: theme.textSub }]}>
-                  {profile?.is_private
-                    ? 'Tes tenues ne sont visibles que par tes amis'
-                    : 'Tes tenues sont visibles par toute la communauté'}
-                </Text>
-              </View>
-              <Switch
-                value={!!profile?.is_private}
-                onValueChange={togglePrivacy}
-                trackColor={{ false: '#ddd', true: theme.accent + '88' }}
-                thumbColor={profile?.is_private ? theme.accent : '#f4f3f4'}
-              />
             </View>
 
             <Text style={[styles.galerieTitle, { color: theme.textPri }]}>Mes tenues</Text>
