@@ -72,45 +72,39 @@ serve(async (req: Request) => {
       return json({ error: msg, credits: creditResult?.credits ?? 0 }, 403);
     }
 
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
-    if (!geminiApiKey) {
-      return json({ error: 'Clé API Gemini non configurée sur le serveur (GEMINI_API_KEY)' }, 500);
+    const groqApiKey = Deno.env.get('GROQ_API_KEY');
+    if (!groqApiKey) {
+      return json({ error: 'Clé API Groq non configurée sur le serveur' }, 500);
     }
 
-    // Sépare le préfixe data-URL du base64 brut
-    const mimeMatch = base64Image.match(/^data:(image\/[^;]+);base64,/);
-    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-    const base64Data = base64Image.replace(/^data:image\/[^;]+;base64,/, '');
-
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { inline_data: { mime_type: mimeType, data: base64Data } },
-              { text: PROMPT },
-            ],
-          }],
-          generationConfig: {
-            temperature: 0.8,
-            maxOutputTokens: 600,
-            responseMimeType: 'application/json',
-          },
-        }),
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${groqApiKey}`,
       },
-    );
+      body: JSON.stringify({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        max_tokens: 500,
+        temperature: 0.8,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: base64Image } },
+            { type: 'text', text: PROMPT },
+          ],
+        }],
+      }),
+    });
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      return json({ error: `Gemini ${geminiRes.status}: ${errText}` }, 502);
+    if (!groqRes.ok) {
+      const errText = await groqRes.text();
+      return json({ error: `Groq ${groqRes.status}: ${errText}` }, 502);
     }
 
-    const geminiData = await geminiRes.json();
-    const text = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return json({ error: 'Réponse Gemini invalide ou vide' }, 502);
+    const groqData = await groqRes.json();
+    const text = groqData?.choices?.[0]?.message?.content;
+    if (!text) return json({ error: 'Réponse IA invalide' }, 502);
 
     const clean = text.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
