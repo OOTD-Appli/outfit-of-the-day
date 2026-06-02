@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Animated,
   TouchableOpacity, ActivityIndicator,
-  RefreshControl, Modal, FlatList, useWindowDimensions,
+  RefreshControl, Modal, FlatList, Pressable, useWindowDimensions,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { BlurView } from 'expo-blur';
@@ -42,6 +42,9 @@ function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpen
   const avatarInitial = item.profiles?.username?.[0]?.toUpperCase() || '?';
 
   const heartScale = useRef(new Animated.Value(1)).current;
+  const overlayHeartScale = useRef(new Animated.Value(0.1)).current;
+  const overlayHeartOpacity = useRef(new Animated.Value(0)).current;
+  const lastTapRef = useRef(0);
 
   const handleLike = () => {
     Animated.sequence([
@@ -49,6 +52,29 @@ function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpen
       Animated.spring(heartScale, { toValue: 1.0,  useNativeDriver: true, speed: 20, bounciness: 8  }),
     ]).start();
     onToggleLike(item.id, isLiked, likeObj?.id);
+  };
+
+  const playOverlayHeart = () => {
+    overlayHeartScale.setValue(0.1);
+    overlayHeartOpacity.setValue(1);
+    Animated.parallel([
+      Animated.spring(overlayHeartScale, { toValue: 1.0, useNativeDriver: true, speed: 20, bounciness: 8 }),
+      Animated.sequence([
+        Animated.delay(350),
+        Animated.timing(overlayHeartOpacity, { toValue: 0, duration: 280, useNativeDriver: true }),
+      ]),
+    ]).start();
+  };
+
+  const handleDoubleTap = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      lastTapRef.current = 0;
+      playOverlayHeart();
+      if (!isLiked) onToggleLike(item.id, false, null);
+    } else {
+      lastTapRef.current = now;
+    }
   };
 
   const infoPadBottom = Math.max(insets.bottom + 18, 24);
@@ -94,6 +120,19 @@ function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpen
           <Text style={styles.musicText} numberOfLines={1}> Original Sound</Text>
         </View>
       </LinearGradient>
+
+      {/* Zone double-tap (sous side actions) */}
+      <Pressable style={StyleSheet.absoluteFillObject} onPress={handleDoubleTap} />
+
+      {/* Overlay cœur feedback double-tap */}
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFillObject, styles.heartOverlayWrap, { opacity: overlayHeartOpacity }]}
+      >
+        <Animated.Text style={[styles.heartOverlayIcon, { transform: [{ scale: overlayHeartScale }] }]}>
+          ❤️
+        </Animated.Text>
+      </Animated.View>
 
       {/* Logo badge */}
       {logoConfig.postIcon ? (
@@ -441,8 +480,10 @@ export default function FeedScreen() {
           keyExtractor={item => item.id}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
-          pagingEnabled
+          snapToInterval={pageH > 0 ? pageH : undefined}
+          snapToAlignment="start"
           decelerationRate="fast"
+          disableIntervalMomentum
           bounces={false}
           nestedScrollEnabled={false}
           overScrollMode="never"
@@ -540,6 +581,10 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   postLogoIcon: { fontSize: 16 },
+
+  /* Overlay cœur double-tap */
+  heartOverlayWrap: { alignItems: 'center', justifyContent: 'center' },
+  heartOverlayIcon: { fontSize: 96 },
 
   /* Actions droite */
   sideCol: { position: 'absolute', right: 12, alignItems: 'center', gap: 24 },
