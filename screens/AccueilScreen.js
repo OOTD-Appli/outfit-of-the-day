@@ -10,7 +10,7 @@ import { decode } from 'base64-arraybuffer';
 import {
   View, Text, StyleSheet, ScrollView, Animated, Easing,
   Alert, TouchableOpacity, ActivityIndicator, Image, TextInput,
-  useWindowDimensions, Platform,
+  FlatList, Modal, useWindowDimensions, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -94,6 +94,7 @@ export default function AccueilScreen({ navigation }) {
   const [sentFlammesToAll, setSentFlammesToAll] = useState(false);
   const [postingFeed, setPostingFeed] = useState(false);
   const [sendingFlammesAll, setSendingFlammesAll] = useState(false);
+  const [flammesPicker, setFlammesPicker] = useState({ visible: false, friends: [] });
   const [caption, setCaption] = useState('');
   const [credits, setCredits] = useState(null);
   const [maxCredits, setMaxCredits] = useState(2);
@@ -376,21 +377,44 @@ export default function AccueilScreen({ navigation }) {
     setPostingFeed(false);
   };
 
-  const sendOutfitToAllFlammes = async () => {
+  // Ouvre le sélecteur d'amis avant d'envoyer
+  const openFlammesPicker = async () => {
     if (!score || sentFlammesToAll || sendingFlammesAll) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const friendIds = await fetchAcceptedFriendIds(supabase, user.id);
+    if (!friendIds.length) {
+      Alert.alert('Aucun ami', "Accepte des amis dans l'onglet Chat pour leur envoyer ton outfit.");
+      return;
+    }
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, username, avatar_url')
+      .in('id', friendIds);
+    setFlammesPicker({
+      visible: true,
+      friends: (profiles || []).map(p => ({ ...p, selected: false })),
+    });
+  };
+
+  const toggleFlammesFriend = (id) => {
+    setFlammesPicker(prev => ({
+      ...prev,
+      friends: prev.friends.map(f => f.id === id ? { ...f, selected: !f.selected } : f),
+    }));
+  };
+
+  const sendOutfitToSelectedFlammes = async () => {
+    const selectedIds = flammesPicker.friends.filter(f => f.selected).map(f => f.id);
+    if (!selectedIds.length) {
+      showToast('Sélectionne au moins un ami', { type: 'warning' });
+      return;
+    }
+    setFlammesPicker(prev => ({ ...prev, visible: false }));
     setSendingFlammesAll(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Session expirée. Reconnecte-toi.');
-      const friendIds = await fetchAcceptedFriendIds(supabase, user.id);
-      if (!friendIds.length) {
-        Alert.alert(
-          'Aucun ami',
-          "Accepte des amis dans l'onglet Flammes pour leur envoyer ton outfit.",
-        );
-        setSendingFlammesAll(false);
-        return;
-      }
       const publicUrl = await uploadAnalyzedImageIfNeeded();
       const { data: myFlammes } = await supabase
         .from('flammes')
@@ -399,61 +423,37 @@ export default function AccueilScreen({ navigation }) {
       const flammesLocal = [...(myFlammes || [])];
       let sent = 0;
       let skipped = 0;
-      for (const friendId of friendIds) {
+      for (const friendId of selectedIds) {
         try {
-          if (await hasSnapUsedTodayForPair(supabase, user.id, friendId)) {
-            skipped += 1;
-            continue;
-          }
-          const { error: snapErr } = await supabase.from('snaps').insert({
-            sender_id: user.id,
-            receiver_id: friendId,
-            image_url: publicUrl,
-          });
+          if (await hasSnapUsedTodayForPair(supabase, user.id, friendId)) { skipped += 1; continue; }
+          const { error: snapErr } = await supabase.from('snaps').insert({ sender_id: user.id, receiver_id: friendId, image_url: publicUrl });
           if (snapErr) { console.error('snap insert failed:', snapErr); continue; }
-          const { error: msgErr } = await supabase.from('messages').insert({
-            sender_id: user.id,
-            receiver_id: friendId,
-            image_url: publicUrl,
-          });
-          if (msgErr) { console.error('messages insert failed:', msgErr); }
+          await supabase.from('messages').insert({ sender_id: user.id, receiver_id: friendId, image_url: publicUrl });
           sent += 1;
-          const flamme = flammesLocal.find(
-            (f) =>
-              (f.user1_id === user.id && f.user2_id === friendId) ||
-              (f.user1_id === friendId && f.user2_id === user.id),
+          const flamme = flammesLocal.find(f =>
+            (f.user1_id === user.id && f.user2_id === friendId) ||
+            (f.user1_id === friendId && f.user2_id === user.id),
           );
           const now = new Date();
           if (flamme) {
-            const lastSnap = flamme.last_snap_at ? new Date(flamme.last_snap_at) : new Date(0);
-            const diffHours = (now - lastSnap) / 3600000;
+            const diffHours = (now - (flamme.last_snap_at ? new Date(flamme.last_snap_at) : new Date(0))) / 3600000;
             const newStreak = diffHours < 24 ? flamme.streak + 1 : 1;
             await supabase.from('flammes').update({ streak: newStreak, last_snap_at: now.toISOString() }).eq('id', flamme.id);
-            flamme.streak = newStreak;
-            flamme.last_snap_at = now.toISOString();
+            flamme.streak = newStreak; flamme.last_snap_at = now.toISOString();
           } else {
             const { data: ins, error: insErr } = await supabase
-              .from('flammes')
-              .insert({ ...flammeOrderedIds(user.id, friendId), streak: 1, last_snap_at: now.toISOString() })
-              .select()
-              .single();
+              .from('flammes').insert({ ...flammeOrderedIds(user.id, friendId), streak: 1, last_snap_at: now.toISOString() }).select().single();
             if (!insErr && ins) flammesLocal.push(ins);
-            else if (insErr && insErr.code !== '23505') console.warn('flammes insert', insErr);
           }
-        } catch (loopErr) {
-          console.warn('flamme loop', loopErr);
-        }
+        } catch (loopErr) { console.warn('flamme loop', loopErr); }
       }
       if (sent > 0) setSentFlammesToAll(true);
-      const msg =
-        sent > 0
-          ? `${sent} ami(s) ont reçu ton outfit comme snap du jour.${skipped > 0 ? ` ${skipped} ignoré(s) (déjà un snap aujourd'hui).` : ''}`
-          : skipped > 0
-            ? "Aucun envoi : chaque ami avait déjà reçu ta photo flamme aujourd'hui (1 par jour)."
-            : 'Aucun snap envoyé.';
-      Alert.alert('Flammes', msg);
+      const msg = sent > 0
+        ? `${sent} ami(s) ont reçu ton outfit 🔥${skipped > 0 ? ` · ${skipped} ignoré(s) (déjà envoyé aujourd'hui)` : ''}`
+        : "Aucun envoi : snap déjà envoyé à ces amis aujourd'hui.";
+      showToast(msg, { type: sent > 0 ? 'success' : 'info' });
     } catch (e) {
-      Alert.alert('Flammes', e?.message || 'Erreur inconnue');
+      showToast(e?.message || 'Erreur inconnue', { type: 'error' });
     }
     setSendingFlammesAll(false);
   };
@@ -712,7 +712,7 @@ export default function AccueilScreen({ navigation }) {
 
               <TouchableOpacity
                 style={[s.actionSecondary, (sentFlammesToAll || sendingFlammesAll) && s.actionDisabled]}
-                onPress={sendOutfitToAllFlammes}
+                onPress={openFlammesPicker}
                 disabled={sentFlammesToAll || sendingFlammesAll}
                 activeOpacity={0.85}
               >
@@ -724,6 +724,61 @@ export default function AccueilScreen({ navigation }) {
                   </Text>
                 )}
               </TouchableOpacity>
+
+              {/* Sélecteur de destinataires flammes */}
+              <Modal
+                visible={flammesPicker.visible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setFlammesPicker(prev => ({ ...prev, visible: false }))}
+              >
+                <View style={s.pickerOverlay}>
+                  <View style={s.pickerSheet}>
+                    <View style={s.pickerHandle} />
+                    <Text style={s.pickerTitle}>Envoyer à...</Text>
+                    <Text style={s.pickerSub}>Sélectionne les amis qui recevront ton outfit 🔥</Text>
+                    <FlatList
+                      data={flammesPicker.friends}
+                      keyExtractor={f => f.id}
+                      style={s.pickerList}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          style={s.pickerRow}
+                          onPress={() => toggleFlammesFriend(item.id)}
+                          activeOpacity={0.75}
+                        >
+                          <View style={[s.pickerAvatar, { backgroundColor: ACCENT + 'BB' }]}>
+                            {item.avatar_url
+                              ? <Image source={{ uri: item.avatar_url }} style={s.pickerAvatarImg} />
+                              : <Text style={s.pickerAvatarText}>{item.username?.[0]?.toUpperCase()}</Text>}
+                          </View>
+                          <Text style={s.pickerName}>{item.username}</Text>
+                          <View style={[s.checkbox, item.selected && s.checkboxOn]}>
+                            {item.selected && <Text style={s.checkmark}>✓</Text>}
+                          </View>
+                        </TouchableOpacity>
+                      )}
+                    />
+                    <View style={s.pickerBtns}>
+                      <TouchableOpacity
+                        style={s.pickerCancel}
+                        onPress={() => setFlammesPicker(prev => ({ ...prev, visible: false }))}
+                      >
+                        <Text style={s.pickerCancelText}>Annuler</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.pickerConfirm, !flammesPicker.friends.some(f => f.selected) && s.actionDisabled]}
+                        onPress={sendOutfitToSelectedFlammes}
+                        disabled={!flammesPicker.friends.some(f => f.selected)}
+                      >
+                        <Text style={s.pickerConfirmText}>
+                          Envoyer ({flammesPicker.friends.filter(f => f.selected).length})
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
 
               <TouchableOpacity
                 style={s.retryBtn}
@@ -955,4 +1010,25 @@ const s = StyleSheet.create({
   actionDisabled: { opacity: 0.55 },
   retryBtn:  { alignItems: 'center', paddingVertical: 10 },
   retryText: { fontSize: 13, fontWeight: '600', color: TEXT_SEC },
+
+  /* Picker flammes */
+  pickerOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  pickerSheet:     { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '75%' },
+  pickerHandle:    { width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, alignSelf: 'center', marginBottom: 16 },
+  pickerTitle:     { fontWeight: '800', fontSize: 18, color: TEXT_PRI, textAlign: 'center', marginBottom: 4 },
+  pickerSub:       { fontSize: 13, color: TEXT_SEC, textAlign: 'center', marginBottom: 16 },
+  pickerList:      { maxHeight: 320 },
+  pickerRow:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12 },
+  pickerAvatar:    { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  pickerAvatarImg: { width: 44, height: 44, borderRadius: 22 },
+  pickerAvatarText:{ color: '#fff', fontWeight: '700', fontSize: 17 },
+  pickerName:      { flex: 1, fontWeight: '600', fontSize: 15, color: TEXT_PRI },
+  checkbox:        { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: BORDER, alignItems: 'center', justifyContent: 'center' },
+  checkboxOn:      { backgroundColor: ACCENT, borderColor: ACCENT },
+  checkmark:       { color: '#fff', fontWeight: '900', fontSize: 13 },
+  pickerBtns:      { flexDirection: 'row', gap: 10, marginTop: 16 },
+  pickerCancel:    { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: BORDER },
+  pickerCancelText:{ fontWeight: '600', fontSize: 15, color: TEXT_PRI },
+  pickerConfirm:   { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: ACCENT },
+  pickerConfirmText:{ fontWeight: '800', fontSize: 15, color: '#fff' },
 });

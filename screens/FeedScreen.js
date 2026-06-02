@@ -231,6 +231,8 @@ export default function FeedScreen() {
   const feedFirstFocus = useRef(true);
   const ootdsRef = useRef([]);
   const pageRef = useRef(0);
+  const friendIdsRef = useRef([]);
+  const userIdRef = useRef(null);
   const { showToast } = useToast();
   const { theme } = useTheme();
 
@@ -247,19 +249,32 @@ export default function FeedScreen() {
     }
     const { data: { user } } = await supabase.auth.getUser();
     setUserId(user?.id);
+    userIdRef.current = user?.id;
+
+    // Récupère les amis pour le filtre confidentialité
+    if (user) {
+      const [{ data: fd1 }, { data: fd2 }] = await Promise.all([
+        supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'accepted'),
+        supabase.from('friendships').select('user_id').eq('friend_id', user.id).eq('status', 'accepted'),
+      ]);
+      friendIdsRef.current = [...new Set([...(fd1 || []).map(r => r.friend_id), ...(fd2 || []).map(r => r.user_id)])];
+    }
+
     const { data, error } = await supabase
       .from('ootds')
-      .select(`*, profiles(username, avatar_url, active_logo), likes(id, user_id), comments(count)`)
+      .select(`*, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
       .order('created_at', { ascending: false })
       .range(0, PAGE_SIZE - 1);
     if (error) {
       if (!silent) setFetchError(error.message || 'Impossible de charger le feed.');
     } else {
-      const list = data ?? [];
+      const list = (data ?? []).filter(item =>
+        !item.profiles?.is_private || item.user_id === user?.id || friendIdsRef.current.includes(item.user_id),
+      );
       ootdsRef.current = list;
       setOotds(list);
       setFetchError(null);
-      setHasMore(list.length === PAGE_SIZE);
+      setHasMore((data ?? []).length === PAGE_SIZE);
       pageRef.current = 1;
     }
     if (!silent) { setLoading(false); setRefreshing(false); }
@@ -276,13 +291,15 @@ export default function FeedScreen() {
       .order('created_at', { ascending: false })
       .range(start, end);
     if (!error && data) {
-      const list = data ?? [];
+      const list = (data ?? []).filter(item =>
+        !item.profiles?.is_private || item.user_id === userIdRef.current || friendIdsRef.current.includes(item.user_id),
+      );
       setOotds(prev => {
         const next = [...prev, ...list];
         ootdsRef.current = next;
         return next;
       });
-      setHasMore(list.length === PAGE_SIZE);
+      setHasMore((data ?? []).length === PAGE_SIZE);
       pageRef.current += 1;
     }
     setLoadingMore(false);

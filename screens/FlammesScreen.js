@@ -532,9 +532,16 @@ export default function FlammesScreen() {
 
   const sendPhotoMessage = async () => {
     if (!selectedFriend || sendingMessage) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5, allowsEditing: true, aspect: [1, 1] });
+    // Tente la caméra en premier ; si refusé → repli galerie
+    const camPerm = await ImagePicker.requestCameraPermissionsAsync();
+    let result;
+    if (camPerm.granted) {
+      result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5, allowsEditing: true, aspect: [1, 1] });
+    } else {
+      const libPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!libPerm.granted) return;
+      result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5, allowsEditing: true, aspect: [1, 1] });
+    }
     if (result.canceled) return;
     setSendingMessage(true);
     try {

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { computeLevelInfo } from '../lib/utils';
 import {
-  View, Text, StyleSheet, TouchableOpacity,
+  View, Text, StyleSheet, TouchableOpacity, Switch,
   FlatList, Image, ActivityIndicator,
   useWindowDimensions, Modal, Alert, Platform,
 } from 'react-native';
@@ -100,6 +100,16 @@ export default function ProfilScreen() {
     const msg = "Pour installer l'application, ouvre le menu de partage de ton navigateur puis « Sur l'écran d'accueil ».";
     if (typeof window !== 'undefined' && window.alert) window.alert(msg);
     else showToast(msg, { type: 'info' });
+  };
+
+  const togglePrivacy = async () => {
+    const newVal = !profile?.is_private;
+    setProfile(prev => ({ ...prev, is_private: newVal }));
+    const { error } = await supabase.from('profiles').update({ is_private: newVal }).eq('id', profile.id);
+    if (error) {
+      setProfile(prev => ({ ...prev, is_private: !newVal }));
+      showToast('Erreur mise à jour confidentialité', { type: 'error' });
+    }
   };
 
   const openLightbox = (index) => setLightbox({ visible: true, index });
@@ -307,6 +317,25 @@ export default function ProfilScreen() {
               <Text style={[styles.niveauSub, { color: theme.textSub }]}>{levelInfo.progressInLevel} / {levelInfo.threshold} points pour le prochain niveau</Text>
             </View>
 
+            <View style={[styles.privacyRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <View style={styles.privacyLeft}>
+                <Text style={[styles.privacyLabel, { color: theme.textPri }]}>
+                  {profile?.is_private ? '🔒 Compte privé' : '🌍 Compte public'}
+                </Text>
+                <Text style={[styles.privacySub, { color: theme.textSub }]}>
+                  {profile?.is_private
+                    ? 'Tes tenues ne sont visibles que par tes amis'
+                    : 'Tes tenues sont visibles par toute la communauté'}
+                </Text>
+              </View>
+              <Switch
+                value={!!profile?.is_private}
+                onValueChange={togglePrivacy}
+                trackColor={{ false: '#ddd', true: theme.accent + '88' }}
+                thumbColor={profile?.is_private ? theme.accent : '#f4f3f4'}
+              />
+            </View>
+
             <Text style={[styles.galerieTitle, { color: theme.textPri }]}>Mes tenues</Text>
           </View>
         }
@@ -407,6 +436,10 @@ const styles = StyleSheet.create({
   niveauSub:      { fontSize: 11 },
 
   galerieTitle:   { fontWeight: '700', fontSize: 16, padding: 16, paddingBottom: 8 },
+  privacyRow:     { flexDirection: 'row', alignItems: 'center', margin: 16, marginTop: 0, borderRadius: 16, padding: 16, borderWidth: 1 },
+  privacyLeft:    { flex: 1, marginRight: 12 },
+  privacyLabel:   { fontWeight: '700', fontSize: 14, marginBottom: 3 },
+  privacySub:     { fontSize: 12, lineHeight: 17 },
   gridCell:       { width: '33.33%', aspectRatio: 1 },
   gridPhoto:      { width: '100%', height: '100%' },
 
