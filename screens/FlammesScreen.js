@@ -157,7 +157,7 @@ export default function FlammesScreen() {
     const { data: out } = await supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'pending');
     setOutgoingPendingIds((out || []).map(r => r.friend_id));
 
-    const { data: flammesData } = await supabase.from('flammes').select('*').or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`);
+    const { data: flammesData } = await supabase.from('flammes').select('id, user1_id, user2_id, streak, last_snap_at').or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`);
     setFlammes(flammesData || []);
 
     const allIds = [user.id, ...friendIds];
@@ -439,10 +439,11 @@ export default function FlammesScreen() {
     const now = new Date().toISOString();
     const { data } = await supabase
       .from('messages')
-      .select('*')
+      .select('id, sender_id, receiver_id, content, image_url, is_liked, is_deleted, created_at, expires_at')
       .or(`and(sender_id.eq.${userId},receiver_id.eq.${friend.id}),and(sender_id.eq.${friend.id},receiver_id.eq.${userId})`)
       .gt('expires_at', now)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .limit(60);
     setMessages(data || []);
   }, [userId]);
 
@@ -473,7 +474,15 @@ export default function FlammesScreen() {
           (row.sender_id === selectedFriend.id && row.receiver_id === userId);
         if (!inPair) return;
         if (payload.eventType === 'INSERT') {
-          setMessages((prev) => (prev.some((m) => m.id === payload.new.id) ? prev : [...prev, payload.new]));
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === payload.new.id)) return prev;
+            // Retire le placeholder optimiste (même expéditeur + contenu)
+            const filtered = prev.filter(m => !(
+              typeof m.id === 'string' && m.id.startsWith('opt-') &&
+              m.sender_id === payload.new.sender_id && m.content === payload.new.content
+            ));
+            return [...filtered, payload.new];
+          });
         } else if (payload.eventType === 'UPDATE') {
           setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? { ...m, ...payload.new } : m)));
         } else if (payload.eventType === 'DELETE') {
@@ -559,16 +568,24 @@ export default function FlammesScreen() {
 
   const sendTextMessage = async () => {
     if (!messageText.trim() || !selectedFriend || sendingMessage) return;
-    setSendingMessage(true);
     const text = messageText.trim();
     setMessageText('');
+    // Optimistic : affiche le message immédiatement, Realtime le remplacera par la vraie ligne
+    const tempId = 'opt-' + Date.now();
+    const tempMsg = {
+      id: tempId, sender_id: userId, receiver_id: selectedFriend.id, content: text,
+      image_url: null, is_liked: false, is_deleted: false,
+      created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(),
+    };
+    setMessages(prev => [...prev, tempMsg]);
     try {
       const { error } = await supabase.from('messages').insert({ sender_id: userId, receiver_id: selectedFriend.id, content: text });
       if (error) throw error;
-      await loadMessages(selectedFriend);
       notifyFriend(selectedFriend.id, myProfile?.username || 'Nouveau message', text.slice(0, 120));
-    } catch (e) { showToast(e?.message || 'Envoi impossible', { type: 'error' }); }
-    setSendingMessage(false);
+    } catch (e) {
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      showToast(e?.message || 'Envoi impossible', { type: 'error' });
+    }
   };
 
   const sendPhotoMessage = async () => {
@@ -594,7 +611,6 @@ export default function FlammesScreen() {
       const { data: urlData } = supabase.storage.from('ootds').getPublicUrl(fileName);
       const { error } = await supabase.from('messages').insert({ sender_id: userId, receiver_id: selectedFriend.id, image_url: urlData.publicUrl });
       if (error) throw error;
-      await loadMessages(selectedFriend);
       notifyFriend(selectedFriend.id, myProfile?.username || 'OOTD', '📸 t\'a envoyé une photo');
       const flamme = flammes.find(f =>
         (f.user1_id === userId && f.user2_id === selectedFriend.id) ||
@@ -912,6 +928,9 @@ export default function FlammesScreen() {
           <FlatList
             data={searchResults}
             keyExtractor={it => it.id}
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            windowSize={5}
             renderItem={({ item }) => {
               const slc = getLogoConfig(item.active_logo);
               return (
@@ -935,6 +954,9 @@ export default function FlammesScreen() {
             data={friends}
             keyExtractor={item => item.id}
             contentContainerStyle={styles.list}
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            windowSize={5}
             ListHeaderComponent={
               <>
                 {/* Demandes d'ami */}

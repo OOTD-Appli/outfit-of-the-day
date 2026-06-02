@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { computeLevelInfo } from '../lib/utils';
 import {
   View, Text, StyleSheet, TouchableOpacity, Switch,
@@ -12,6 +12,7 @@ import { supabase } from '../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
+import Skeleton from '../components/Skeleton';
 import { getLogoConfig } from '../lib/logoConfig';
 import { isPwaStandalone, promptInstall } from '../lib/pwa';
 
@@ -27,6 +28,10 @@ export default function ProfilScreen() {
   const { showToast } = useToast();
   const { theme } = useTheme();
   const [lightbox, setLightbox] = useState({ visible: false, index: 0 });
+  const [loadingMoreOotds, setLoadingMoreOotds] = useState(false);
+  const ootdsPageRef = useRef(0);
+  const ootdsHasMoreRef = useRef(true);
+  const OOTDS_PAGE = 21; // multiple de 3 pour la grille
   const [installable, setInstallable] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [editUsername, setEditUsername] = useState('');
@@ -64,15 +69,18 @@ export default function ProfilScreen() {
 
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes')
         .eq('id', user.id)
         .single();
 
+      ootdsPageRef.current = 0;
+      ootdsHasMoreRef.current = true;
       const { data: ootdsData } = await supabase
         .from('ootds')
-        .select('*')
+        .select('id, image_url, score_global, created_at')
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(0, OOTDS_PAGE - 1);
 
       const { data: subData } = await supabase
         .from('subscriptions')
@@ -82,6 +90,8 @@ export default function ProfilScreen() {
 
       setProfile(profileData);
       setOotds(ootdsData || []);
+      ootdsHasMoreRef.current = (ootdsData || []).length === OOTDS_PAGE;
+      ootdsPageRef.current = 1;
       setSubscription(subData);
       setUserEmail(user.email || '');
       setEditUsername(profileData?.username || '');
@@ -90,6 +100,26 @@ export default function ProfilScreen() {
       setLoading(false);
     }
   }, []);
+
+  const loadMoreOotds = useCallback(async () => {
+    if (loadingMoreOotds || !ootdsHasMoreRef.current || !profile?.id) return;
+    setLoadingMoreOotds(true);
+    const start = ootdsPageRef.current * OOTDS_PAGE;
+    const { data } = await supabase
+      .from('ootds')
+      .select('id, image_url, score_global, created_at')
+      .eq('user_id', profile.id)
+      .order('created_at', { ascending: false })
+      .range(start, start + OOTDS_PAGE - 1);
+    if (data?.length) {
+      setOotds(prev => [...prev, ...data]);
+      ootdsHasMoreRef.current = data.length === OOTDS_PAGE;
+      ootdsPageRef.current += 1;
+    } else {
+      ootdsHasMoreRef.current = false;
+    }
+    setLoadingMoreOotds(false);
+  }, [loadingMoreOotds, profile?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -252,9 +282,24 @@ export default function ProfilScreen() {
     : null;
 
   if (loading) return (
-    <View style={[styles.center, { backgroundColor: theme.bg }]}>
-      <ActivityIndicator color={theme.accent} size="large" />
-    </View>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={['top']}>
+      <View style={styles.skeletonHeader}>
+        <Skeleton width={120} height={22} borderRadius={6} />
+        <Skeleton width={90} height={14} borderRadius={6} style={{ marginTop: 8 }} />
+      </View>
+      <View style={styles.skeletonCard}>
+        <Skeleton width={avatarSize} height={avatarSize} borderRadius={avatarSize / 2} />
+        <Skeleton width={140} height={18} borderRadius={6} style={{ marginTop: 12 }} />
+        <View style={[styles.skeletonStats, { backgroundColor: theme.card }]}>
+          {[0, 1, 2].map(i => <Skeleton key={i} width={60} height={30} borderRadius={6} />)}
+        </View>
+      </View>
+      <View style={styles.skeletonGrid}>
+        {Array.from({ length: 9 }).map((_, i) => (
+          <Skeleton key={i} width="32%" height={0} style={{ aspectRatio: 1 }} borderRadius={0} />
+        ))}
+      </View>
+    </SafeAreaView>
   );
 
   return (
@@ -263,6 +308,14 @@ export default function ProfilScreen() {
         data={ootds}
         keyExtractor={item => item.id}
         numColumns={3}
+        initialNumToRender={21}
+        maxToRenderPerBatch={12}
+        windowSize={5}
+        onEndReached={loadMoreOotds}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={loadingMoreOotds
+          ? <ActivityIndicator color={theme.accent} style={{ padding: 16 }} />
+          : null}
         ListHeaderComponent={
           <View>
             <View style={styles.header}>
@@ -553,6 +606,10 @@ const styles = StyleSheet.create({
   gridCell:       { width: '33.33%', aspectRatio: 1 },
   gridPhoto:      { width: '100%', height: '100%' },
 
+  skeletonHeader: { padding: 20, paddingBottom: 10 },
+  skeletonCard:   { alignItems: 'center', padding: 20 },
+  skeletonStats:  { flexDirection: 'row', gap: 24, justifyContent: 'center', borderRadius: 16, padding: 16, marginTop: 16, width: '100%' },
+  skeletonGrid:   { flexDirection: 'row', flexWrap: 'wrap', gap: 2, padding: 2 },
   emptyGalerie:   { alignItems: 'center', padding: 40 },
   emptyText:      { fontSize: 16, fontWeight: '600' },
   emptySub:       { fontSize: 13, marginTop: 6 },

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, memo } from 'react';
 import {
   View, Text, StyleSheet, Animated,
   TouchableOpacity, ActivityIndicator,
@@ -31,8 +31,8 @@ function formatCount(n) {
   return String(n);
 }
 
-/* ── FeedPost ── */
-function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpenComments, onOpenShare, onAddFriend }) {
+/* ── FeedPost — memo évite le re-render quand les autres posts changent ── */
+const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpenComments, onOpenShare, onAddFriend }) {
   const likeObj = item.likes?.find(l => l.user_id === userId);
   const isLiked = !!likeObj;
   const likesCount = item.likes?.length || 0;
@@ -208,7 +208,7 @@ function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpen
       </View>
     </View>
   );
-}
+});
 
 /* ── FeedScreen ── */
 export default function FeedScreen() {
@@ -510,6 +510,10 @@ export default function FeedScreen() {
           bounces={false}
           nestedScrollEnabled={false}
           overScrollMode="never"
+          windowSize={3}
+          initialNumToRender={2}
+          maxToRenderPerBatch={2}
+          updateCellsBatchingPeriod={50}
           getItemLayout={(_, index) => ({ length: pageH, offset: pageH * index, index })}
           onEndReached={loadMoreFeed}
           onEndReachedThreshold={0.2}
