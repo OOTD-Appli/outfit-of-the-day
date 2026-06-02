@@ -10,7 +10,7 @@ import { decode } from 'base64-arraybuffer';
 import {
   View, Text, StyleSheet, ScrollView, Animated, Easing,
   Alert, TouchableOpacity, ActivityIndicator, Image, TextInput,
-  FlatList, Modal, useWindowDimensions, Platform,
+  FlatList, Modal, useWindowDimensions, Platform, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -95,6 +95,9 @@ export default function AccueilScreen({ navigation }) {
   const [postingFeed, setPostingFeed] = useState(false);
   const [sendingFlammesAll, setSendingFlammesAll] = useState(false);
   const [flammesPicker, setFlammesPicker] = useState({ visible: false, friends: [] });
+  const [selectedMusic, setSelectedMusic] = useState(null); // { title, artist, previewUrl, coverUrl }
+  const [musicPicker, setMusicPicker] = useState({ visible: false, query: '', results: [], searching: false });
+  const musicSearchTimeout = useRef(null);
   const [caption, setCaption] = useState('');
   const [credits, setCredits] = useState(null);
   const [maxCredits, setMaxCredits] = useState(2);
@@ -180,6 +183,33 @@ export default function AccueilScreen({ navigation }) {
     fetchCredits();
     fetchTopOotds();
   }, [fetchCredits, fetchTopOotds]));
+
+  const searchMusic = (query) => {
+    setMusicPicker(prev => ({ ...prev, query }));
+    if (musicSearchTimeout.current) clearTimeout(musicSearchTimeout.current);
+    if (query.length < 2) { setMusicPicker(prev => ({ ...prev, results: [], searching: false })); return; }
+    setMusicPicker(prev => ({ ...prev, searching: true }));
+    musicSearchTimeout.current = setTimeout(async () => {
+      try {
+        const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&limit=8&country=FR`;
+        const res = await fetch(url);
+        const json = await res.json();
+        setMusicPicker(prev => ({ ...prev, results: json.results || [], searching: false }));
+      } catch (_) {
+        setMusicPicker(prev => ({ ...prev, results: [], searching: false }));
+      }
+    }, 420);
+  };
+
+  const selectTrack = (track) => {
+    setSelectedMusic({
+      title: track.trackName,
+      artist: track.artistName,
+      previewUrl: track.previewUrl || null,
+      coverUrl: track.artworkUrl100 || null,
+    });
+    setMusicPicker({ visible: false, query: '', results: [], searching: false });
+  };
 
   const applyPickedImage = (asset) => {
     setScore(null);
@@ -362,6 +392,10 @@ export default function AccueilScreen({ navigation }) {
         score_tendance: score.detail,
         conseil: score.conseil,
         caption: caption.trim() || null,
+        audio_title: selectedMusic?.title || null,
+        audio_artist: selectedMusic?.artist || null,
+        audio_preview_url: selectedMusic?.previewUrl || null,
+        audio_cover_url: selectedMusic?.coverUrl || null,
       }).select('id').single();
       if (insertError) throw new Error(`Publication impossible: ${insertError.message}`);
       const { data: awardResult, error: awardError } = await supabase.rpc('award_points_for_ootd', { p_ootd_id: insertData.id });
@@ -370,6 +404,7 @@ export default function AccueilScreen({ navigation }) {
       const pointsGagnes = awardResult.points_earned;
       setPublishedToFeed(true);
       setCaption('');
+      setSelectedMusic(null);
       showToast(`Ta tenue est dans le feed. +${pointsGagnes} points.`, { type: 'success' });
     } catch (e) {
       showToast(e?.message || 'Erreur inconnue', { type: 'error' });
@@ -695,6 +730,93 @@ export default function AccueilScreen({ navigation }) {
                 maxLength={200}
               />
 
+              {/* Musique sélectionnée */}
+              {selectedMusic ? (
+                <View style={s.musicChip}>
+                  {selectedMusic.coverUrl
+                    ? <Image source={{ uri: selectedMusic.coverUrl }} style={s.musicChipCover} />
+                    : <Text style={s.musicChipNote}>♪</Text>}
+                  <View style={s.musicChipInfo}>
+                    <Text style={s.musicChipTitle} numberOfLines={1}>{selectedMusic.title}</Text>
+                    <Text style={s.musicChipArtist} numberOfLines={1}>{selectedMusic.artist}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setSelectedMusic(null)} hitSlop={8}>
+                    <Text style={s.musicChipRemove}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              {/* Bouton ajouter musique */}
+              {!publishedToFeed && (
+                <TouchableOpacity
+                  style={s.musicBtn}
+                  onPress={() => setMusicPicker(prev => ({ ...prev, visible: true }))}
+                  activeOpacity={0.8}
+                >
+                  <Text style={s.musicBtnText}>
+                    {selectedMusic ? '🎵 Changer la musique' : '🎵 Ajouter une musique'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Modale sélecteur musique */}
+              <Modal
+                visible={musicPicker.visible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setMusicPicker(prev => ({ ...prev, visible: false }))}
+              >
+                <View style={s.pickerOverlay}>
+                  <View style={s.musicSheet}>
+                    <View style={s.pickerHandle} />
+                    <Text style={s.pickerTitle}>Choisir une musique</Text>
+                    <TextInput
+                      style={s.musicSearchInput}
+                      placeholder="Rechercher un titre, un artiste..."
+                      placeholderTextColor={TEXT_SEC}
+                      value={musicPicker.query}
+                      onChangeText={searchMusic}
+                      autoFocus
+                      returnKeyType="search"
+                    />
+                    {musicPicker.searching && (
+                      <ActivityIndicator color={ACCENT} style={{ marginVertical: 12 }} />
+                    )}
+                    <FlatList
+                      data={musicPicker.results}
+                      keyExtractor={t => String(t.trackId)}
+                      keyboardShouldPersistTaps="handled"
+                      style={s.musicResultsList}
+                      renderItem={({ item: track }) => (
+                        <TouchableOpacity style={s.musicResultRow} onPress={() => selectTrack(track)} activeOpacity={0.75}>
+                          {track.artworkUrl100
+                            ? <Image source={{ uri: track.artworkUrl100 }} style={s.musicResultCover} />
+                            : <View style={[s.musicResultCover, { backgroundColor: ACCENT + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
+                          <View style={s.musicResultInfo}>
+                            <Text style={s.musicResultTitle} numberOfLines={1}>{track.trackName}</Text>
+                            <Text style={s.musicResultArtist} numberOfLines={1}>{track.artistName}</Text>
+                          </View>
+                          {track.previewUrl
+                            ? <Text style={s.musicResultBadge}>30s</Text>
+                            : null}
+                        </TouchableOpacity>
+                      )}
+                      ListEmptyComponent={
+                        !musicPicker.searching && musicPicker.query.length >= 2
+                          ? <Text style={s.musicNoResults}>Aucun résultat</Text>
+                          : null
+                      }
+                    />
+                    <TouchableOpacity
+                      style={[s.pickerCancel, { marginTop: 8 }]}
+                      onPress={() => { Keyboard.dismiss(); setMusicPicker(prev => ({ ...prev, visible: false })); }}
+                    >
+                      <Text style={s.pickerCancelText}>Annuler</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </Modal>
+
               <TouchableOpacity
                 style={[s.actionPrimary, (publishedToFeed || postingFeed) && s.actionDisabled]}
                 onPress={publishToFeed}
@@ -1010,6 +1132,27 @@ const s = StyleSheet.create({
   actionDisabled: { opacity: 0.55 },
   retryBtn:  { alignItems: 'center', paddingVertical: 10 },
   retryText: { fontSize: 13, fontWeight: '600', color: TEXT_SEC },
+
+  /* Musique */
+  musicBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, borderRadius: 12, borderWidth: 1, borderColor: ACCENT + '55', marginBottom: 10 },
+  musicBtnText:      { fontSize: 14, fontWeight: '700', color: ACCENT },
+  musicChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: ACCENT + '18', borderRadius: 12, padding: 10, marginBottom: 10, gap: 10 },
+  musicChipCover:    { width: 42, height: 42, borderRadius: 8 },
+  musicChipNote:     { width: 42, height: 42, borderRadius: 8, textAlign: 'center', lineHeight: 42, fontSize: 22, backgroundColor: ACCENT + '33' },
+  musicChipInfo:     { flex: 1 },
+  musicChipTitle:    { fontWeight: '700', fontSize: 13, color: TEXT_PRI },
+  musicChipArtist:   { fontSize: 12, color: TEXT_SEC, marginTop: 2 },
+  musicChipRemove:   { fontSize: 16, color: TEXT_SEC, paddingHorizontal: 4 },
+  musicSheet:        { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '80%' },
+  musicSearchInput:  { backgroundColor: BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginBottom: 10, borderWidth: 1, borderColor: BORDER, color: TEXT_PRI },
+  musicResultsList:  { maxHeight: 320 },
+  musicResultRow:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: BORDER },
+  musicResultCover:  { width: 48, height: 48, borderRadius: 8 },
+  musicResultInfo:   { flex: 1 },
+  musicResultTitle:  { fontWeight: '700', fontSize: 13, color: TEXT_PRI },
+  musicResultArtist: { fontSize: 12, color: TEXT_SEC, marginTop: 2 },
+  musicResultBadge:  { backgroundColor: ACCENT + '22', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, fontSize: 11, fontWeight: '700', color: ACCENT },
+  musicNoResults:    { textAlign: 'center', color: TEXT_SEC, marginVertical: 16, fontSize: 13 },
 
   /* Picker flammes */
   pickerOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },

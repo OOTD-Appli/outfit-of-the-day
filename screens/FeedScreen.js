@@ -1,10 +1,11 @@
-import { useState, useCallback, useRef, memo } from 'react';
+import { useState, useCallback, useRef, memo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, Animated,
   TouchableOpacity, ActivityIndicator,
   RefreshControl, Modal, FlatList, useWindowDimensions,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
+import { Audio } from 'expo-av';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -32,7 +33,7 @@ function formatCount(n) {
 }
 
 /* ── FeedPost — memo évite le re-render quand les autres posts changent ── */
-const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpenComments, onOpenShare, onAddFriend }) {
+const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpenComments, onOpenShare, onAddFriend, isCurrentlyPlaying, isMuted }) {
   const likeObj = item.likes?.find(l => l.user_id === userId);
   const isLiked = !!likeObj;
   const likesCount = item.likes?.length || 0;
@@ -115,10 +116,26 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
           <Text style={styles.postCaption} numberOfLines={2}>{item.caption}</Text>
         ) : null}
 
-        {/* Ligne musique */}
+        {/* Barre musique */}
         <View style={styles.musicRow}>
-          <Feather name="music" size={11} color="rgba(255,255,255,0.72)" />
-          <Text style={styles.musicText} numberOfLines={1}> Original Sound</Text>
+          {item.audio_preview_url ? (
+            <>
+              {item.audio_cover_url
+                ? <ExpoImage source={{ uri: item.audio_cover_url }} style={styles.musicCoverThumb} contentFit="cover" />
+                : <Feather name="music" size={11} color="rgba(255,255,255,0.72)" />}
+              <Text style={styles.musicText} numberOfLines={1}>
+                {isCurrentlyPlaying
+                  ? (isMuted ? '🔇 ' : '♪ ')
+                  : '♪ '}
+                {item.audio_title} — {item.audio_artist}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Feather name="music" size={11} color="rgba(255,255,255,0.72)" />
+              <Text style={styles.musicText} numberOfLines={1}> Original Sound</Text>
+            </>
+          )}
         </View>
       </LinearGradient>
 
@@ -233,6 +250,56 @@ export default function FeedScreen() {
   const pageRef = useRef(0);
   const friendIdsRef = useRef([]);
   const userIdRef = useRef(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [currentlyPlayingId, setCurrentlyPlayingId] = useState(null);
+  const soundRef = useRef(null);
+  const isMutedRef = useRef(false);
+
+  // Init mode audio une fois
+  useEffect(() => {
+    Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false }).catch(() => {});
+    return () => {
+      soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current = null;
+    };
+  }, []);
+
+  const stopCurrentSound = useCallback(async () => {
+    if (soundRef.current) {
+      try { await soundRef.current.stopAsync(); await soundRef.current.unloadAsync(); } catch (_) {}
+      soundRef.current = null;
+    }
+  }, []);
+
+  const playAudio = useCallback(async (previewUrl) => {
+    await stopCurrentSound();
+    if (!previewUrl) return;
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: previewUrl },
+        { shouldPlay: !isMutedRef.current, isLooping: true, volume: 1.0 },
+      );
+      soundRef.current = sound;
+    } catch (_) {}
+  }, [stopCurrentSound]);
+
+  const toggleMute = useCallback(async () => {
+    const next = !isMutedRef.current;
+    isMutedRef.current = next;
+    setIsMuted(next);
+    if (soundRef.current) {
+      try { await soundRef.current.setIsMutedAsync(next); } catch (_) {}
+    }
+  }, []);
+
+  // Viewability : item visible à ≥80% → lance l'audio associé
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 80 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }) => {
+    const visible = viewableItems[0]?.item;
+    const id = visible?.id ?? null;
+    setCurrentlyPlayingId(id);
+    playAudio(visible?.audio_preview_url ?? null);
+  }).current;
   const { showToast } = useToast();
   const { theme } = useTheme();
 
@@ -411,8 +478,10 @@ export default function FeedScreen() {
       onOpenComments={setCommentOotdId}
       onOpenShare={openShareModal}
       onAddFriend={addFriend}
+      isCurrentlyPlaying={item.id === currentlyPlayingId}
+      isMuted={isMuted}
     />
-  ), [userId, pageH, ww, insets, theme, toggleLike, openShareModal, addFriend]);
+  ), [userId, pageH, ww, insets, theme, toggleLike, openShareModal, addFriend, currentlyPlayingId, isMuted]);
 
   const tabTop = Math.max(insets.top, 44);
 
@@ -490,6 +559,9 @@ export default function FeedScreen() {
             <TouchableOpacity style={styles.searchBtn}>
               <Feather name="search" size={20} color="rgba(255,255,255,0.85)" />
             </TouchableOpacity>
+            <TouchableOpacity style={styles.muteBtn} onPress={toggleMute}>
+              <Feather name={isMuted ? 'volume-x' : 'volume-2'} size={20} color="rgba(255,255,255,0.85)" />
+            </TouchableOpacity>
           </View>
         </BlurView>
       </View>
@@ -514,6 +586,8 @@ export default function FeedScreen() {
           initialNumToRender={2}
           maxToRenderPerBatch={2}
           updateCellsBatchingPeriod={50}
+          viewabilityConfig={viewabilityConfig}
+          onViewableItemsChanged={onViewableItemsChanged}
           getItemLayout={(_, index) => ({ length: pageH, offset: pageH * index, index })}
           onEndReached={loadMoreFeed}
           onEndReachedThreshold={0.2}
@@ -596,8 +670,10 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  musicRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  musicText: { color: 'rgba(255,255,255,0.72)', fontSize: 11.5, fontStyle: 'italic' },
+  musicRow:         { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  musicText:        { color: 'rgba(255,255,255,0.72)', fontSize: 11.5, fontStyle: 'italic', flex: 1 },
+  musicCoverThumb:  { width: 20, height: 20, borderRadius: 4 },
+  muteBtn:          { position: 'absolute', left: 16, bottom: 12 },
 
   postLogoBadge: {
     position: 'absolute',
