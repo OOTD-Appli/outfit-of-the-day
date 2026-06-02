@@ -137,6 +137,15 @@
 
 ---
 
+## Chat : Likes et Suppression de Messages — 2026-06-02
+
+- [x] **Migration** `20260602120000_messages_interactions.sql` : colonnes `is_liked` + `is_deleted` sur `messages`, `REPLICA IDENTITY FULL`, publication Realtime, RPC `toggle_message_like` (destinataire uniquement, SECURITY DEFINER), RPC `delete_message` (soft delete + retourne `image_url` pour nettoyage Storage, SECURITY DEFINER). **⚠️ À exécuter dans le SQL Editor Supabase.**
+- [x] **Likes** : double-tap ou appui long sur un message reçu → toggle ❤️. Badge cœur affiché en coin de bulle. Optimistic update + rollback. Synchro temps réel via Supabase Realtime (event UPDATE).
+- [x] **Suppression** : appui long sur un message envoyé → Alert/window.confirm → RPC `delete_message` → soft delete (bulle remplacée par "Ce message a été supprimé" pour les deux participants). Nettoyage Storage du fichier image si présent. Temps réel via Realtime.
+- [x] **Realtime** : abonnement `channel chat-{userId}-{friendId}` gérant INSERT (nouveaux messages), UPDATE (like/suppression), DELETE. Nettoyage du channel au démontage du composant.
+
+---
+
 ## Abonnements Premium Stripe (2026-05-31)
 
 > Économie séparée : **points** (cosmétiques, inchangé) vs **abonnement Stripe** (Premium). Voir `STRIPE_SETUP.md` pour la configuration complète (secrets, price IDs, webhook, déploiement).

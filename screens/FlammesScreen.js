@@ -416,6 +416,98 @@ export default function FlammesScreen() {
     await loadMessages(friend);
   };
 
+  // ── Like / suppression de messages (synchro temps réel) ────────────────────
+  const lastTapRef = useRef({ id: null, t: 0 });
+
+  // Abonnement realtime : likes, suppressions et messages entrants de la conversation
+  useEffect(() => {
+    if (!userId || !selectedFriend) return;
+    const channel = supabase
+      .channel(`chat-${userId}-${selectedFriend.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
+        const row = payload.new && payload.new.id ? payload.new : payload.old;
+        if (!row) return;
+        const inPair =
+          (row.sender_id === userId && row.receiver_id === selectedFriend.id) ||
+          (row.sender_id === selectedFriend.id && row.receiver_id === userId);
+        if (!inPair) return;
+        if (payload.eventType === 'INSERT') {
+          setMessages((prev) => (prev.some((m) => m.id === payload.new.id) ? prev : [...prev, payload.new]));
+        } else if (payload.eventType === 'UPDATE') {
+          setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? { ...m, ...payload.new } : m)));
+        } else if (payload.eventType === 'DELETE') {
+          setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userId, selectedFriend]);
+
+  const toggleLike = async (msg) => {
+    if (msg.sender_id === userId || msg.is_deleted) return; // on ne like que les messages reçus
+    const next = !msg.is_liked;
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, is_liked: next } : m)));
+    try {
+      const { data, error } = await supabase.rpc('toggle_message_like', { p_id: msg.id, p_liked: next });
+      if (error || !data?.ok) throw new Error(data?.error || error?.message || 'Erreur');
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, is_liked: !next } : m)));
+      showToast(e.message || 'Action impossible', { type: 'error' });
+    }
+  };
+
+  const handleBubbleTap = (msg) => {
+    if (msg.sender_id === userId || msg.is_deleted) return;
+    const now = Date.now();
+    if (lastTapRef.current.id === msg.id && now - lastTapRef.current.t < 300) {
+      lastTapRef.current = { id: null, t: 0 };
+      toggleLike(msg);
+    } else {
+      lastTapRef.current = { id: msg.id, t: now };
+    }
+  };
+
+  const deleteMessage = async (msg) => {
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, is_deleted: true, content: null, image_url: null } : m)));
+    try {
+      const { data, error } = await supabase.rpc('delete_message', { p_id: msg.id });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'Suppression impossible');
+      const img = data.image_url;
+      if (img) {
+        try {
+          const marker = '/storage/v1/object/public/';
+          const i = img.indexOf(marker);
+          if (i !== -1) {
+            const rest = img.slice(i + marker.length);
+            const bucket = rest.split('/')[0];
+            const path = rest.split('/').slice(1).join('/');
+            if (bucket && path) await supabase.storage.from(bucket).remove([decodeURIComponent(path)]);
+          }
+        } catch (_) {}
+      }
+    } catch (e) {
+      console.error('[deleteMessage]', e);
+      showToast(e.message || 'Suppression impossible', { type: 'error' });
+      loadMessages(selectedFriend);
+    }
+  };
+
+  const handleBubbleLongPress = (msg) => {
+    if (msg.is_deleted) return;
+    if (msg.sender_id !== userId) { toggleLike(msg); return; }
+    // Message que j'ai envoyé → suppression (Alert.alert sans boutons sur web → window.confirm)
+    if (Platform.OS === 'web') {
+      const ok = typeof window !== 'undefined' && window.confirm ? window.confirm('Supprimer ce message ?') : true;
+      if (ok) deleteMessage(msg);
+      return;
+    }
+    Alert.alert('Supprimer', 'Supprimer ce message ?', [
+      { text: 'Annuler', style: 'cancel' },
+      { text: 'Supprimer le message', style: 'destructive', onPress: () => deleteMessage(msg) },
+    ]);
+  };
+
   // Notifie le destinataire via web push (best-effort, ne bloque jamais l'envoi).
   const notifyFriend = (friendId, title, body) => {
     if (!friendId) return;
@@ -620,24 +712,44 @@ export default function FlammesScreen() {
                 <Text style={[styles.msgEmptyText, { color: theme.textPri }]}>Début de la conversation</Text>
                 <Text style={[styles.msgEmptySub, { color: theme.textSub }]}>Les messages disparaissent après 24h</Text>
               </View>
-            ) : messages.map(msg => (
-              <View key={msg.id} style={[styles.msgRow, msg.sender_id === userId ? styles.msgRowRight : styles.msgRowLeft]}>
-                <View style={[
-                  styles.bubble,
-                  msg.sender_id === userId
-                    ? [styles.bubbleSent, { backgroundColor: theme.accent + '22', borderColor: theme.accent + '44', borderWidth: 1 }]
-                    : [styles.bubbleRecv, { backgroundColor: theme.card }],
-                ]}>
-                  {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
-                  {msg.image_url ? (
-                    <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
-                  ) : null}
+            ) : messages.map(msg => {
+              const mine = msg.sender_id === userId;
+              return (
+              <View key={msg.id} style={[styles.msgRow, mine ? styles.msgRowRight : styles.msgRowLeft]}>
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={() => handleBubbleTap(msg)}
+                  onLongPress={() => handleBubbleLongPress(msg)}
+                  delayLongPress={350}
+                  style={[
+                    styles.bubble,
+                    mine
+                      ? [styles.bubbleSent, { backgroundColor: theme.accent + '22', borderColor: theme.accent + '44', borderWidth: 1 }]
+                      : [styles.bubbleRecv, { backgroundColor: theme.card }],
+                  ]}
+                >
+                  {msg.is_deleted ? (
+                    <Text style={[styles.bubbleDeleted, { color: theme.textSub }]}>Ce message a été supprimé</Text>
+                  ) : (
+                    <>
+                      {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
+                      {msg.image_url ? (
+                        <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
+                      ) : null}
+                    </>
+                  )}
                   <Text style={[styles.msgTime, { color: theme.textSub }]}>
                     {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                   </Text>
-                </View>
+                  {msg.is_liked && !msg.is_deleted && (
+                    <View style={[styles.likeBadge, mine ? styles.likeBadgeLeft : styles.likeBadgeRight, { backgroundColor: theme.bg }]}>
+                      <Text style={styles.likeBadgeText}>❤️</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
               </View>
-            ))}
+              );
+            })}
           </ScrollView>
 
           <View style={[styles.inputBar, { backgroundColor: theme.bg, borderTopColor: theme.border }]}>
@@ -1072,8 +1184,13 @@ const styles = StyleSheet.create({
   bubbleSent:      { borderBottomRightRadius: 4 },
   bubbleRecv:      { borderBottomLeftRadius: 4 },
   bubbleText:      { fontSize: 14, lineHeight: 20 },
+  bubbleDeleted:   { fontSize: 13, fontStyle: 'italic' },
   msgImage:        { borderRadius: 12, marginBottom: 4 },
   msgTime:         { fontSize: 10, marginTop: 4 },
+  likeBadge:       { position: 'absolute', bottom: -9, borderRadius: 11, paddingHorizontal: 3, paddingVertical: 1 },
+  likeBadgeLeft:   { left: -6 },
+  likeBadgeRight:  { right: -6 },
+  likeBadgeText:   { fontSize: 13 },
   inputBar:        { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 8, borderTopWidth: StyleSheet.hairlineWidth },
   msgInput:        { flex: 1, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 100, borderWidth: 1 },
   sendBtn:         { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
