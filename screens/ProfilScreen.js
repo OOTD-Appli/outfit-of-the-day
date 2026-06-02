@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { computeLevelInfo } from '../lib/utils';
 import {
   View, Text, StyleSheet, TouchableOpacity, Switch,
-  FlatList, Image, ActivityIndicator,
+  FlatList, Image, ActivityIndicator, TextInput, ScrollView,
   useWindowDimensions, Modal, Alert, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,6 +28,11 @@ export default function ProfilScreen() {
   const { theme } = useTheme();
   const [lightbox, setLightbox] = useState({ visible: false, index: 0 });
   const [installable, setInstallable] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [editUsername, setEditUsername] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [userEmail, setUserEmail] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
 
   useEffect(() => {
     setAvatarLoadError(false);
@@ -78,6 +83,9 @@ export default function ProfilScreen() {
       setProfile(profileData);
       setOotds(ootdsData || []);
       setSubscription(subData);
+      setUserEmail(user.email || '');
+      setEditUsername(profileData?.username || '');
+      setEditBio(profileData?.bio || '');
     } finally {
       setLoading(false);
     }
@@ -100,6 +108,30 @@ export default function ProfilScreen() {
     const msg = "Pour installer l'application, ouvre le menu de partage de ton navigateur puis « Sur l'écran d'accueil ».";
     if (typeof window !== 'undefined' && window.alert) window.alert(msg);
     else showToast(msg, { type: 'info' });
+  };
+
+  const openSettings = () => {
+    setEditUsername(profile?.username || '');
+    setEditBio(profile?.bio || '');
+    setSettingsVisible(true);
+  };
+
+  const saveSettings = async () => {
+    const trimUser = editUsername.trim();
+    const trimBio = editBio.trim();
+    if (!trimUser) { showToast('Le nom ne peut pas être vide', { type: 'warning' }); return; }
+    setSavingSettings(true);
+    const { error } = await supabase.from('profiles')
+      .update({ username: trimUser, bio: trimBio || null })
+      .eq('id', profile.id);
+    if (error) {
+      showToast(error.code === '23505' ? 'Ce nom est déjà pris' : (error.message || 'Erreur'), { type: 'error' });
+    } else {
+      setProfile(prev => ({ ...prev, username: trimUser, bio: trimBio || null }));
+      setSettingsVisible(false);
+      showToast('Profil mis à jour ✓', { type: 'success' });
+    }
+    setSavingSettings(false);
   };
 
   const togglePrivacy = async () => {
@@ -234,7 +266,13 @@ export default function ProfilScreen() {
         ListHeaderComponent={
           <View>
             <View style={styles.header}>
-              <Text style={[styles.title, { color: theme.textPri }]}>Profil</Text>
+              <View>
+                <Text style={[styles.title, { color: theme.textPri }]}>Profil</Text>
+                <TouchableOpacity style={styles.settingsBtn} onPress={openSettings} activeOpacity={0.75}>
+                  <Ionicons name="settings-outline" size={14} color={theme.accent} />
+                  <Text style={[styles.settingsBtnText, { color: theme.accent }]}>Paramètres</Text>
+                </TouchableOpacity>
+              </View>
               <View style={styles.headerActions}>
                 <TouchableOpacity
                   style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
@@ -353,6 +391,96 @@ export default function ProfilScreen() {
         contentContainerStyle={styles.list}
       />
 
+      {/* Modal Paramètres */}
+      <Modal visible={settingsVisible} transparent animationType="slide" onRequestClose={() => setSettingsVisible(false)}>
+        <View style={styles.settingsOverlay}>
+          <View style={[styles.settingsSheet, { backgroundColor: theme.card }]}>
+            <View style={[styles.settingsHandle, { backgroundColor: theme.border }]} />
+            <Text style={[styles.settingsTitle, { color: theme.textPri }]}>Paramètres du profil</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+
+              {/* Photo */}
+              <TouchableOpacity
+                style={[styles.settingsPhotoRow, { borderColor: theme.border }]}
+                onPress={() => { setSettingsVisible(false); setTimeout(changeAvatar, 350); }}
+                activeOpacity={0.8}
+              >
+                {profile?.avatar_url ? (
+                  <Image source={{ uri: profile.avatar_url }} style={styles.settingsAvatarThumb} />
+                ) : (
+                  <View style={[styles.settingsAvatarFallback, { backgroundColor: theme.accent }]}>
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{profile?.username?.[0]?.toUpperCase()}</Text>
+                  </View>
+                )}
+                <Text style={[styles.settingsFieldValue, { color: theme.textPri, flex: 1 }]}>Changer la photo</Text>
+                <Ionicons name="chevron-forward" size={18} color={theme.textSub} />
+              </TouchableOpacity>
+
+              {/* Username */}
+              <Text style={[styles.settingsLabel, { color: theme.textSub }]}>Nom d'utilisateur</Text>
+              <TextInput
+                style={[styles.settingsInput, { backgroundColor: theme.bg, borderColor: theme.border, color: theme.textPri }]}
+                value={editUsername}
+                onChangeText={setEditUsername}
+                placeholder="Ton pseudo"
+                placeholderTextColor={theme.textSub}
+                autoCapitalize="none"
+                maxLength={30}
+              />
+
+              {/* Bio */}
+              <Text style={[styles.settingsLabel, { color: theme.textSub }]}>Bio</Text>
+              <TextInput
+                style={[styles.settingsInput, styles.settingsInputMulti, { backgroundColor: theme.bg, borderColor: theme.border, color: theme.textPri }]}
+                value={editBio}
+                onChangeText={setEditBio}
+                placeholder="Parle-nous de toi..."
+                placeholderTextColor={theme.textSub}
+                multiline
+                maxLength={160}
+              />
+
+              {/* Email (lecture seule) */}
+              <Text style={[styles.settingsLabel, { color: theme.textSub }]}>E-mail</Text>
+              <View style={[styles.settingsReadOnly, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+                <Text style={[styles.settingsFieldValue, { color: theme.textSub }]}>{userEmail || '—'}</Text>
+                <Ionicons name="lock-closed-outline" size={14} color={theme.textSub} />
+              </View>
+
+              {/* Confidentialité */}
+              <Text style={[styles.settingsLabel, { color: theme.textSub }]}>Confidentialité</Text>
+              <View style={[styles.settingsPrivacyRow, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+                <Text style={[styles.settingsFieldValue, { flex: 1, color: theme.textPri }]}>
+                  {profile?.is_private ? '🔒 Compte privé' : '🌍 Compte public'}
+                </Text>
+                <Switch
+                  value={!!profile?.is_private}
+                  onValueChange={togglePrivacy}
+                  trackColor={{ false: '#ddd', true: theme.accent + '88' }}
+                  thumbColor={profile?.is_private ? theme.accent : '#f4f3f4'}
+                />
+              </View>
+
+            </ScrollView>
+
+            <View style={[styles.settingsBtnsRow, { borderTopColor: theme.border }]}>
+              <TouchableOpacity style={[styles.settingsCancel, { backgroundColor: theme.border }]} onPress={() => setSettingsVisible(false)}>
+                <Text style={[styles.settingsCancelText, { color: theme.textPri }]}>Annuler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.settingsSave, { backgroundColor: theme.accent }, savingSettings && { opacity: 0.6 }]}
+                onPress={saveSettings}
+                disabled={savingSettings}
+              >
+                {savingSettings
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={styles.settingsSaveText}>Enregistrer</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Lightbox plein écran : défilement horizontal page par page */}
       <Modal visible={lightbox.visible} animationType="fade" onRequestClose={closeLightbox} statusBarTranslucent>
         <View style={[styles.lbContainer, { width: ww, height: wh }]}>
@@ -446,4 +574,28 @@ const styles = StyleSheet.create({
   emptyGalerie:   { alignItems: 'center', padding: 40 },
   emptyText:      { fontSize: 16, fontWeight: '600' },
   emptySub:       { fontSize: 13, marginTop: 6 },
+
+  /* Bouton Paramètres sous le titre */
+  settingsBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  settingsBtnText: { fontSize: 12, fontWeight: '700' },
+
+  /* Modal Paramètres */
+  settingsOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  settingsSheet:        { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '85%' },
+  settingsHandle:       { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  settingsTitle:        { fontWeight: '800', fontSize: 18, marginBottom: 20, textAlign: 'center' },
+  settingsPhotoRow:     { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, marginBottom: 16 },
+  settingsAvatarThumb:  { width: 48, height: 48, borderRadius: 24 },
+  settingsAvatarFallback:{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  settingsLabel:        { fontSize: 12, fontWeight: '700', marginBottom: 6, marginTop: 14, textTransform: 'uppercase', letterSpacing: 0.5 },
+  settingsInput:        { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginBottom: 4 },
+  settingsInputMulti:   { minHeight: 72, textAlignVertical: 'top' },
+  settingsReadOnly:     { flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, gap: 8 },
+  settingsFieldValue:   { fontSize: 14 },
+  settingsPrivacyRow:   { flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 },
+  settingsBtnsRow:      { flexDirection: 'row', gap: 10, marginTop: 20, paddingTop: 16, borderTopWidth: StyleSheet.hairlineWidth },
+  settingsCancel:       { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  settingsCancelText:   { fontWeight: '600', fontSize: 15 },
+  settingsSave:         { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  settingsSaveText:     { color: '#fff', fontWeight: '800', fontSize: 15 },
 });

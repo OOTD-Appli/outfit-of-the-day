@@ -106,6 +106,7 @@ export default function FlammesScreen() {
   const firstFocus = useRef(true);
   const [restoreModal, setRestoreModal] = useState({ visible: false, friend: null });
   const [restoring, setRestoring] = useState(false);
+  const [profileModal, setProfileModal] = useState({ visible: false, profile: null, loading: false });
 
   useEffect(() => {
     AsyncStorage.getItem('@ootd_unread_last_read').then(raw => {
@@ -329,6 +330,46 @@ export default function FlammesScreen() {
   const openRestore = (friend) => setRestoreModal({ visible: true, friend });
 
   const goToShop = () => { try { navigation.navigate('Shop'); } catch (_) {} };
+
+  const openUserProfile = async (targetId) => {
+    setProfileModal({ visible: true, profile: null, loading: true });
+    const { data } = await supabase.from('profiles').select('id, username, avatar_url, bio, active_logo').eq('id', targetId).single();
+    setProfileModal({ visible: true, profile: data || null, loading: false });
+  };
+
+  const renderProfileModal = () => (
+    <Modal visible={profileModal.visible} transparent animationType="fade" onRequestClose={() => setProfileModal({ visible: false, profile: null, loading: false })}>
+      <TouchableOpacity activeOpacity={1} style={styles.profileModalOverlay} onPress={() => setProfileModal({ visible: false, profile: null, loading: false })}>
+        <TouchableOpacity activeOpacity={1} style={[styles.profileModalCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          {profileModal.loading ? (
+            <ActivityIndicator color={theme.accent} size="large" style={{ padding: 32 }} />
+          ) : profileModal.profile ? (() => {
+            const lc = getLogoConfig(profileModal.profile.active_logo);
+            return (
+              <>
+                <GradientAvatar
+                  uri={profileModal.profile.avatar_url}
+                  initial={profileModal.profile.username?.[0]?.toUpperCase()}
+                  size={80}
+                  colors={lc.frameBorderColor ? [lc.frameBorderColor, lc.frameBorderColor] : ['#ED93B1', '#FF4567']}
+                  theme={theme}
+                  hasStory={false}
+                  showOnlineDot={false}
+                />
+                <View style={styles.profileModalNameRow}>
+                  <Text style={[styles.profileModalName, { color: theme.textPri }]}>@{profileModal.profile.username}</Text>
+                  {lc.badge ? <Text style={{ fontSize: 18 }}>{lc.badge}</Text> : null}
+                </View>
+                {profileModal.profile.bio ? (
+                  <Text style={[styles.profileModalBio, { color: theme.textSub }]}>{profileModal.profile.bio}</Text>
+                ) : null}
+              </>
+            );
+          })() : <Text style={{ color: theme.textSub }}>Profil introuvable</Text>}
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
 
   const doRestore = async () => {
     const friend = restoreModal.friend;
@@ -681,7 +722,7 @@ export default function FlammesScreen() {
           <TouchableOpacity onPress={() => { setView('list'); setMessages([]); }} style={styles.backBtn}>
             <Feather name="chevron-left" size={26} color={theme.textPri} />
           </TouchableOpacity>
-          <View style={styles.chatHeaderInfo}>
+          <TouchableOpacity style={styles.chatHeaderInfo} onPress={() => openUserProfile(selectedFriend.id)} activeOpacity={0.8}>
             <GradientAvatar
               uri={selectedFriend.avatar_url}
               initial={selectedFriend.username?.[0]?.toUpperCase()}
@@ -705,7 +746,7 @@ export default function FlammesScreen() {
                 </TouchableOpacity>
               )}
             </View>
-          </View>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.photoMsgBtn} onPress={sendPhotoMessage} disabled={sendingMessage}>
             <Feather name="camera" size={22} color={theme.textPri} />
           </TouchableOpacity>
@@ -782,6 +823,7 @@ export default function FlammesScreen() {
           </View>
         </KeyboardAvoidingView>
         {renderRestoreModal()}
+        {renderProfileModal()}
       </SafeAreaView>
     );
   }
@@ -874,11 +916,13 @@ export default function FlammesScreen() {
               const slc = getLogoConfig(item.active_logo);
               return (
                 <View style={[styles.searchResult, { borderBottomColor: theme.border }]}>
-                  <GradientAvatar uri={item.avatar_url} initial={item.username?.[0]?.toUpperCase()} size={44} colors={slc.frameBorderColor ? [slc.frameBorderColor, slc.frameBorderColor] : ['#ED93B1', '#FF4567']} theme={theme} hasStory={false} showOnlineDot={false} />
-                  <View style={styles.convNameRow}>
-                    <Text style={[styles.searchUsername, { color: theme.textPri }]}>{item.username}</Text>
-                    {slc.badge ? <Text style={styles.convNameBadge}>{slc.badge}</Text> : null}
-                  </View>
+                  <TouchableOpacity style={styles.searchResultLeft} onPress={() => openUserProfile(item.id)} activeOpacity={0.75}>
+                    <GradientAvatar uri={item.avatar_url} initial={item.username?.[0]?.toUpperCase()} size={44} colors={slc.frameBorderColor ? [slc.frameBorderColor, slc.frameBorderColor] : ['#ED93B1', '#FF4567']} theme={theme} hasStory={false} showOnlineDot={false} />
+                    <View style={styles.convNameRow}>
+                      <Text style={[styles.searchUsername, { color: theme.textPri }]}>{item.username}</Text>
+                      {slc.badge ? <Text style={styles.convNameBadge}>{slc.badge}</Text> : null}
+                    </View>
+                  </TouchableOpacity>
                   {renderSearchAction(item)}
                 </View>
               );
@@ -1042,6 +1086,7 @@ export default function FlammesScreen() {
       >
         <Feather name="edit-2" size={20} color="#fff" />
       </TouchableOpacity>
+      {renderProfileModal()}
     </View>
   );
 }
@@ -1217,6 +1262,16 @@ const styles = StyleSheet.create({
   storyModalPublish:    { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   storyModalPublishText:{ color: '#3a0d1e', fontWeight: '800', fontSize: 15 },
   storyModalBtnRow:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
+
+  /* Mini-profil public */
+  profileModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 32 },
+  profileModalCard:    { width: '100%', borderRadius: 24, borderWidth: 1, padding: 28, alignItems: 'center', gap: 10 },
+  profileModalNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  profileModalName:    { fontWeight: '800', fontSize: 18 },
+  profileModalBio:     { fontSize: 13, textAlign: 'center', lineHeight: 19 },
+
+  /* Zone gauche cliquable dans les résultats de recherche */
+  searchResultLeft:    { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
 
   /* Story viewer */
   viewerOverlay:         { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
