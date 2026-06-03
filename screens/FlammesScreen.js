@@ -194,7 +194,7 @@ export default function FlammesScreen() {
     if (friendIds.length) {
       const { data: msgsData } = await supabase
         .from('messages')
-        .select('sender_id, receiver_id, content, image_url, created_at')
+        .select('sender_id, receiver_id, content, image_url, is_deleted, created_at')
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false })
@@ -1217,7 +1217,7 @@ export default function FlammesScreen() {
                             colors={friendLc.frameBorderColor ? [friendLc.frameBorderColor, friendLc.frameBorderColor] : ['#ED93B1', '#FF4567']}
                             theme={theme}
                             hasStory={!!friendStory}
-                            badgeEmoji={friendLc.badge || '💬'}
+                            badgeEmoji={friendLc.badge || '🌟'}
                           />
                           <Text style={[styles.storyName, { color: theme.textSub }]} numberOfLines={1}>{friend.username}</Text>
                         </TouchableOpacity>
@@ -1232,7 +1232,13 @@ export default function FlammesScreen() {
               const lc = getLogoConfig(item.active_logo);
               const lastMsg = lastMessages[item.id];
               const hasStory = stories.some(s => s.user_id === item.id);
-              const lastMsgPreview = lastMsg?.image_url ? '📸 Photo' : lastMsg?.content || 'Envoie un message...';
+              const lastMsgPreview = lastMsg?.is_deleted
+                ? '🗑 Message supprimé'
+                : lastMsg?.image_url
+                  ? '📸 Photo'
+                  : lastMsg?.content?.startsWith('{"_type":"profile"')
+                    ? '👤 Profil partagé'
+                    : lastMsg?.content || 'Envoie un message...';
               const msgTime = lastMsg ? lastMsgTime(lastMsg.created_at) : '';
               return (
                 <TouchableOpacity style={[styles.convRow, { borderBottomColor: theme.border }]} onPress={() => openChat(item)} activeOpacity={0.75}>
@@ -1243,7 +1249,7 @@ export default function FlammesScreen() {
                     colors={lc.frameBorderColor ? [lc.frameBorderColor, lc.frameBorderColor] : ['#ED93B1', '#FF4567']}
                     theme={theme}
                     hasStory={hasStory}
-                    badgeEmoji={lc.badge || '💬'}
+                    badgeEmoji={lc.badge || '🌟'}
                   />
                   <View style={styles.convInfo}>
                     <View style={styles.convNameRow}>
