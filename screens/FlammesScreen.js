@@ -85,6 +85,8 @@ export default function FlammesScreen() {
   const [searchResults, setSearchResults] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const [localFilter, setLocalFilter] = useState('');
+  const [shareProfilePicker, setShareProfilePicker] = useState({ visible: false, targetProfile: null });
   const [selectedFriend, setSelectedFriend] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState('');
@@ -266,11 +268,25 @@ export default function FlammesScreen() {
     } catch (e) { Alert.alert('Envoi impossible', e?.message ?? 'Réessaie plus tard.'); }
   };
 
+  const normalizeStr = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
   const searchUsers = async (query) => {
     setSearchQuery(query);
     if (query.length < 2) { setSearchResults([]); return; }
-    const { data } = await supabase.from('profiles').select('id, username, avatar_url, active_logo').ilike('username', `%${query}%`).neq('id', userId).limit(12);
-    setSearchResults(data || []);
+    const normalized = normalizeStr(query);
+    // Double requête : terme original + version sans accents, résultats fusionnés
+    const patterns = [...new Set([query.toLowerCase(), normalized])];
+    const all = await Promise.all(
+      patterns.map(p => supabase.from('profiles').select('id, username, avatar_url, active_logo').ilike('username', `%${p}%`).neq('id', userId).limit(10)),
+    );
+    const seen = new Set();
+    const merged = [];
+    for (const { data } of all) {
+      for (const item of (data || [])) {
+        if (!seen.has(item.id)) { seen.add(item.id); merged.push(item); }
+      }
+    }
+    setSearchResults(merged.slice(0, 12));
   };
 
   const relationForSearchProfile = (targetId) => {
@@ -331,6 +347,60 @@ export default function FlammesScreen() {
 
   const goToShop = () => { try { navigation.navigate('Shop'); } catch (_) {} };
 
+  const sendProfileShare = async (friendId) => {
+    const p = shareProfilePicker.targetProfile;
+    if (!p || !friendId) return;
+    const content = JSON.stringify({ _type: 'profile', id: p.id, username: p.username, avatar_url: p.avatar_url || null });
+    const { error } = await supabase.from('messages').insert({ sender_id: userId, receiver_id: friendId, content });
+    if (error) { showToast('Envoi impossible', { type: 'error' }); return; }
+    setShareProfilePicker({ visible: false, targetProfile: null });
+    setProfileModal({ visible: false, profile: null, loading: false });
+    showToast(`Profil de @${p.username} partagé !`, { type: 'success' });
+  };
+
+  const renderShareProfilePicker = () => (
+    <Modal
+      visible={shareProfilePicker.visible}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShareProfilePicker({ visible: false, targetProfile: null })}
+    >
+      <View style={styles.profileModalOverlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={() => setShareProfilePicker({ visible: false, targetProfile: null })} />
+        <View style={[styles.sharePickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.settingsHandle, { backgroundColor: theme.border }]} />
+          <Text style={[styles.sharePickerTitle, { color: theme.textPri }]}>
+            Partager @{shareProfilePicker.targetProfile?.username}
+          </Text>
+          <Text style={[styles.sharePickerSub, { color: theme.textSub }]}>Choisir un ami à qui envoyer ce profil</Text>
+          <FlatList
+            data={friends}
+            keyExtractor={f => f.id}
+            style={{ maxHeight: 320 }}
+            renderItem={({ item }) => {
+              const lc = getLogoConfig(item.active_logo);
+              return (
+                <TouchableOpacity
+                  style={[styles.sharePickerRow, { borderBottomColor: theme.border }]}
+                  onPress={() => sendProfileShare(item.id)}
+                  activeOpacity={0.75}
+                >
+                  <GradientAvatar uri={item.avatar_url} initial={item.username?.[0]?.toUpperCase()} size={42} colors={lc.frameBorderColor ? [lc.frameBorderColor, lc.frameBorderColor] : ['#ED93B1', '#FF4567']} theme={theme} hasStory={false} showOnlineDot={false} />
+                  <View style={styles.convNameRow}>
+                    <Text style={[styles.sharePickerName, { color: theme.textPri }]}>{item.username}</Text>
+                    {lc.badge ? <Text style={styles.convNameBadge}>{lc.badge}</Text> : null}
+                  </View>
+                  <Feather name="send" size={18} color={theme.accent} />
+                </TouchableOpacity>
+              );
+            }}
+            ListEmptyComponent={<Text style={[styles.noResults, { color: theme.textSub }]}>Aucun ami</Text>}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+
   const openUserProfile = async (targetId) => {
     setProfileModal({ visible: true, profile: null, loading: true });
     const { data } = await supabase.from('profiles').select('id, username, avatar_url, bio, active_logo').eq('id', targetId).single();
@@ -363,6 +433,19 @@ export default function FlammesScreen() {
                 {profileModal.profile.bio ? (
                   <Text style={[styles.profileModalBio, { color: theme.textSub }]}>{profileModal.profile.bio}</Text>
                 ) : null}
+                {profileModal.profile.id !== userId && (
+                  <TouchableOpacity
+                    style={[styles.profileShareBtn, { backgroundColor: theme.accent }]}
+                    onPress={() => {
+                      const p = profileModal.profile;
+                      setProfileModal({ visible: false, profile: null, loading: false });
+                      setShareProfilePicker({ visible: true, targetProfile: p });
+                    }}
+                  >
+                    <Feather name="share-2" size={14} color="#fff" />
+                    <Text style={styles.profileShareBtnText}>Partager le profil</Text>
+                  </TouchableOpacity>
+                )}
               </>
             );
           })() : <Text style={{ color: theme.textSub }}>Profil introuvable</Text>}
@@ -794,14 +877,32 @@ export default function FlammesScreen() {
                 >
                   {msg.is_deleted ? (
                     <Text style={[styles.bubbleDeleted, { color: theme.textSub }]}>Ce message a été supprimé</Text>
-                  ) : (
-                    <>
-                      {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
-                      {msg.image_url ? (
-                        <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
-                      ) : null}
-                    </>
-                  )}
+                  ) : (() => {
+                    // Carte de profil partagé
+                    let profileCard = null;
+                    if (msg.content?.startsWith('{"_type":"profile"')) {
+                      try { profileCard = JSON.parse(msg.content); } catch (_) {}
+                    }
+                    if (profileCard) {
+                      return (
+                        <TouchableOpacity style={[styles.profileCardMsg, { borderColor: theme.border }]} onPress={() => openUserProfile(profileCard.id)} activeOpacity={0.8}>
+                          <GradientAvatar uri={profileCard.avatar_url} initial={profileCard.username?.[0]?.toUpperCase()} size={38} colors={['#ED93B1', '#FF4567']} theme={theme} hasStory={false} showOnlineDot={false} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.profileCardName, { color: theme.textPri }]}>@{profileCard.username}</Text>
+                            <Text style={[styles.profileCardSub, { color: theme.accent }]}>Voir le profil →</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    }
+                    return (
+                      <>
+                        {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
+                        {msg.image_url ? (
+                          <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
+                        ) : null}
+                      </>
+                    );
+                  })()}
                   <Text style={[styles.msgTime, { color: theme.textSub }]}>
                     {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                   </Text>
@@ -840,6 +941,7 @@ export default function FlammesScreen() {
         </KeyboardAvoidingView>
         {renderRestoreModal()}
         {renderProfileModal()}
+        {renderShareProfilePicker()}
       </SafeAreaView>
     );
   }
@@ -905,53 +1007,91 @@ export default function FlammesScreen() {
         {/* Header */}
         <View style={styles.header}>
           <Text style={[styles.title, { color: theme.textPri }]}>Chat</Text>
-          <TouchableOpacity onPress={() => setShowSearch(!showSearch)} hitSlop={10} style={styles.headerSearchBtn}>
-            <Feather name={showSearch ? 'x' : 'search'} size={22} color={theme.textPri} />
+          <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); setShowSearch(true); }} hitSlop={10} style={styles.headerSearchBtn}>
+            <Feather name="user-plus" size={22} color={theme.textPri} />
           </TouchableOpacity>
         </View>
 
-        {/* Barre de recherche */}
+        {/* Filtre local — filtre instantanément les contacts existants */}
         <View style={styles.searchBarWrap}>
           <View style={[styles.searchBarInner, { backgroundColor: theme.card }]}>
             <Feather name="search" size={16} color={theme.textSub} />
             <TextInput
               style={[styles.searchBarInput, { color: theme.textPri }]}
-              placeholder="Rechercher"
+              placeholder="Filtrer mes contacts..."
               placeholderTextColor={theme.textSub}
-              value={searchQuery}
-              onChangeText={searchUsers}
+              value={localFilter}
+              onChangeText={setLocalFilter}
             />
+            {localFilter.length > 0 && (
+              <TouchableOpacity onPress={() => setLocalFilter('')} hitSlop={8}>
+                <Feather name="x" size={16} color={theme.textSub} />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
-        {showSearch && searchQuery.length >= 2 ? (
-          <FlatList
-            data={searchResults}
-            keyExtractor={it => it.id}
-            initialNumToRender={10}
-            maxToRenderPerBatch={8}
-            windowSize={5}
-            renderItem={({ item }) => {
-              const slc = getLogoConfig(item.active_logo);
-              return (
-                <View style={[styles.searchResult, { borderBottomColor: theme.border }]}>
-                  <TouchableOpacity style={styles.searchResultLeft} onPress={() => openUserProfile(item.id)} activeOpacity={0.75}>
-                    <GradientAvatar uri={item.avatar_url} initial={item.username?.[0]?.toUpperCase()} size={44} colors={slc.frameBorderColor ? [slc.frameBorderColor, slc.frameBorderColor] : ['#ED93B1', '#FF4567']} theme={theme} hasStory={false} showOnlineDot={false} />
-                    <View style={styles.convNameRow}>
-                      <Text style={[styles.searchUsername, { color: theme.textPri }]}>{item.username}</Text>
-                      {slc.badge ? <Text style={styles.convNameBadge}>{slc.badge}</Text> : null}
+        {/* Modal recherche globale (loupe) */}
+        <Modal visible={showSearch} transparent animationType="slide" onRequestClose={() => setShowSearch(false)}>
+          <View style={styles.globalSearchOverlay}>
+            <View style={[styles.globalSearchSheet, { backgroundColor: theme.card }]}>
+              <View style={[styles.settingsHandle, { backgroundColor: theme.border }]} />
+              <Text style={[styles.globalSearchTitle, { color: theme.textPri }]}>Trouver un utilisateur</Text>
+              <View style={[styles.searchBarInner, { backgroundColor: theme.bg, marginBottom: 4 }]}>
+                <Feather name="search" size={16} color={theme.textSub} />
+                <TextInput
+                  style={[styles.searchBarInput, { color: theme.textPri }]}
+                  placeholder="Pseudo, prénom… (tolérant aux accents)"
+                  placeholderTextColor={theme.textSub}
+                  value={searchQuery}
+                  onChangeText={searchUsers}
+                  autoFocus
+                />
+              </View>
+              <Text style={[styles.globalSearchHint, { color: theme.textSub }]}>
+                Tape au moins 2 caractères — les accents et la casse sont ignorés
+              </Text>
+              <FlatList
+                data={searchResults}
+                keyExtractor={it => it.id}
+                style={{ maxHeight: 360 }}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => {
+                  const slc = getLogoConfig(item.active_logo);
+                  return (
+                    <View style={[styles.searchResult, { borderBottomColor: theme.border }]}>
+                      <TouchableOpacity style={styles.searchResultLeft} onPress={() => openUserProfile(item.id)} activeOpacity={0.75}>
+                        <GradientAvatar uri={item.avatar_url} initial={item.username?.[0]?.toUpperCase()} size={44} colors={slc.frameBorderColor ? [slc.frameBorderColor, slc.frameBorderColor] : ['#ED93B1', '#FF4567']} theme={theme} hasStory={false} showOnlineDot={false} />
+                        <View style={styles.convNameRow}>
+                          <Text style={[styles.searchUsername, { color: theme.textPri }]}>{item.username}</Text>
+                          {slc.badge ? <Text style={styles.convNameBadge}>{slc.badge}</Text> : null}
+                        </View>
+                      </TouchableOpacity>
+                      {renderSearchAction(item)}
                     </View>
-                  </TouchableOpacity>
-                  {renderSearchAction(item)}
-                </View>
-              );
-            }}
-            ListEmptyComponent={<Text style={[styles.noResults, { color: theme.textSub }]}>Aucun résultat</Text>}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4 }}
-          />
-        ) : (
-          <FlatList
-            data={friends}
+                  );
+                }}
+                ListEmptyComponent={
+                  searchQuery.length >= 2
+                    ? <Text style={[styles.noResults, { color: theme.textSub }]}>Aucun résultat pour « {searchQuery} »</Text>
+                    : null
+                }
+                contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4 }}
+              />
+              <TouchableOpacity
+                style={[styles.storyModalCancel, { backgroundColor: theme.border, margin: 16, marginTop: 8, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }]}
+                onPress={() => { setShowSearch(false); setSearchQuery(''); setSearchResults([]); }}
+              >
+                <Text style={[styles.storyModalCancelText, { color: theme.textPri }]}>Fermer</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        <FlatList
+            data={localFilter.trim()
+              ? friends.filter(f => f.username?.toLowerCase().includes(localFilter.toLowerCase()))
+              : friends}
             keyExtractor={item => item.id}
             contentContainerStyle={styles.list}
             initialNumToRender={10}
@@ -1097,18 +1237,18 @@ export default function FlammesScreen() {
               </View>
             }
           />
-        )}
       </SafeAreaView>
 
-      {/* FAB nouveau message */}
+      {/* FAB : ouvre la recherche globale */}
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: theme.accent, bottom: insets.bottom + 86 }]}
-        onPress={() => setShowSearch(true)}
+        onPress={() => { setSearchQuery(''); setSearchResults([]); setShowSearch(true); }}
         activeOpacity={0.85}
       >
-        <Feather name="edit-2" size={20} color="#fff" />
+        <Feather name="user-plus" size={20} color="#fff" />
       </TouchableOpacity>
       {renderProfileModal()}
+      {renderShareProfilePicker()}
     </View>
   );
 }
@@ -1291,6 +1431,26 @@ const styles = StyleSheet.create({
   profileModalNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   profileModalName:    { fontWeight: '800', fontSize: 18 },
   profileModalBio:     { fontSize: 13, textAlign: 'center', lineHeight: 19 },
+  profileShareBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 9, marginTop: 4 },
+  profileShareBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+
+  /* Partage profil picker */
+  sharePickerSheet:    { width: '100%', borderRadius: 24, borderWidth: 1, padding: 20, paddingBottom: 28 },
+  sharePickerTitle:    { fontWeight: '800', fontSize: 17, textAlign: 'center', marginBottom: 4 },
+  sharePickerSub:      { fontSize: 12, textAlign: 'center', marginBottom: 14 },
+  sharePickerRow:      { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  sharePickerName:     { fontWeight: '600', fontSize: 15, flex: 1 },
+
+  /* Carte profil dans bulle de message */
+  profileCardMsg:  { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, borderWidth: 1, padding: 10, minWidth: 180 },
+  profileCardName: { fontWeight: '700', fontSize: 14 },
+  profileCardSub:  { fontSize: 12, marginTop: 2 },
+
+  /* Recherche globale */
+  globalSearchOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  globalSearchSheet:   { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 8, maxHeight: '85%' },
+  globalSearchTitle:   { fontWeight: '800', fontSize: 18, marginBottom: 12, textAlign: 'center' },
+  globalSearchHint:    { fontSize: 11, marginBottom: 8, textAlign: 'center' },
 
   /* Zone gauche cliquable dans les résultats de recherche */
   searchResultLeft:    { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
