@@ -35,7 +35,7 @@ function lastMsgTime(iso) {
 }
 
 /* ── Avatar with gradient ring ── */
-function GradientAvatar({ uri, initial, size = 52, colors, theme, hasStory, showOnlineDot }) {
+function GradientAvatar({ uri, initial, size = 52, colors, theme, hasStory, showOnlineDot, badgeEmoji }) {
   const inner = size - 5;
   const borderW = hasStory ? 2.5 : 0;
   return (
@@ -67,8 +67,14 @@ function GradientAvatar({ uri, initial, size = 52, colors, theme, hasStory, show
           )}
         </View>
       )}
-      {showOnlineDot && (
-        <View style={[styles.onlineDot, { borderColor: theme.bg, right: hasStory ? 2 : 1, bottom: hasStory ? 2 : 1 }]} />
+      {(showOnlineDot || badgeEmoji) && (
+        badgeEmoji ? (
+          <View style={[styles.statusBadge, { borderColor: theme.bg, right: hasStory ? 1 : 0, bottom: hasStory ? 1 : 0, backgroundColor: theme.card }]}>
+            <Text style={{ fontSize: Math.round(size * 0.22), lineHeight: Math.round(size * 0.28) }}>{badgeEmoji}</Text>
+          </View>
+        ) : (
+          <View style={[styles.onlineDot, { borderColor: theme.bg, right: hasStory ? 2 : 1, bottom: hasStory ? 2 : 1 }]} />
+        )
       )}
     </View>
   );
@@ -871,7 +877,7 @@ export default function FlammesScreen() {
               colors={chatLogoConfig.frameBorderColor ? [chatLogoConfig.frameBorderColor, chatLogoConfig.frameBorderColor] : ['#ED93B1', '#FF4567']}
               theme={theme}
               hasStory={stories.some(s => s.user_id === selectedFriend.id)}
-              showOnlineDot
+              badgeEmoji={chatLogoConfig.badge || '💬'}
             />
             <View>
               <View style={styles.convNameRow}>
@@ -1201,16 +1207,17 @@ export default function FlammesScreen() {
                     {/* Stories amis */}
                     {friends.map(friend => {
                       const friendStory = stories.find(s => s.user_id === friend.id);
+                      const friendLc = getLogoConfig(friend.active_logo);
                       return (
                         <TouchableOpacity key={friend.id} style={styles.storyItem} onPress={() => friendStory && setStoryViewer({ visible: true, story: friendStory })}>
                           <GradientAvatar
                             uri={friend.avatar_url}
                             initial={friend.username?.[0]?.toUpperCase()}
                             size={58}
-                            colors={['#ED93B1', '#FF4567']}
+                            colors={friendLc.frameBorderColor ? [friendLc.frameBorderColor, friendLc.frameBorderColor] : ['#ED93B1', '#FF4567']}
                             theme={theme}
                             hasStory={!!friendStory}
-                            showOnlineDot
+                            badgeEmoji={friendLc.badge || '💬'}
                           />
                           <Text style={[styles.storyName, { color: theme.textSub }]} numberOfLines={1}>{friend.username}</Text>
                         </TouchableOpacity>
@@ -1236,7 +1243,7 @@ export default function FlammesScreen() {
                     colors={lc.frameBorderColor ? [lc.frameBorderColor, lc.frameBorderColor] : ['#ED93B1', '#FF4567']}
                     theme={theme}
                     hasStory={hasStory}
-                    showOnlineDot
+                    badgeEmoji={lc.badge || '💬'}
                   />
                   <View style={styles.convInfo}>
                     <View style={styles.convNameRow}>
@@ -1322,6 +1329,15 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     backgroundColor: '#4CD964',
     borderWidth: 2,
+  },
+  statusBadge: {
+    position: 'absolute',
+    borderRadius: 10,
+    borderWidth: 1.5,
+    paddingHorizontal: 2,
+    paddingVertical: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   /* Stories */

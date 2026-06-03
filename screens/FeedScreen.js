@@ -254,31 +254,37 @@ export default function FeedScreen() {
   const [currentlyPlayingId, setCurrentlyPlayingId] = useState(null);
   const soundRef = useRef(null);
   const isMutedRef = useRef(false);
+  // audioActiveRef = true uniquement quand le Feed est au premier plan.
+  // Évite la race condition où createAsync se termine après un changement
+  // d'onglet (le son s'assigne après la cleanup et joue en arrière-plan).
+  const audioActiveRef = useRef(false);
 
   // Init mode audio une fois
   useEffect(() => {
     Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false }).catch(() => {});
     return () => {
+      audioActiveRef.current = false;
       soundRef.current?.unloadAsync().catch(() => {});
       soundRef.current = null;
     };
   }, []);
 
   const stopCurrentSound = useCallback(async () => {
-    if (soundRef.current) {
-      try { await soundRef.current.stopAsync(); await soundRef.current.unloadAsync(); } catch (_) {}
-      soundRef.current = null;
-    }
+    const s = soundRef.current;
+    soundRef.current = null;
+    if (s) { try { await s.stopAsync(); await s.unloadAsync(); } catch (_) {} }
   }, []);
 
   const playAudio = useCallback(async (previewUrl) => {
     await stopCurrentSound();
-    if (!previewUrl) return;
+    if (!previewUrl || !audioActiveRef.current) return;
     try {
       const { sound } = await Audio.Sound.createAsync(
         { uri: previewUrl },
         { shouldPlay: !isMutedRef.current, isLooping: true, volume: 1.0 },
       );
+      // Vérification post-async : l'onglet a pu perdre le focus pendant le chargement
+      if (!audioActiveRef.current) { sound.unloadAsync().catch(() => {}); return; }
       soundRef.current = sound;
     } catch (_) {}
   }, [stopCurrentSound]);
@@ -375,13 +381,17 @@ export default function FeedScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      audioActiveRef.current = true;
       if (feedFirstFocus.current) { feedFirstFocus.current = false; fetchFeed(); }
       else { fetchFeed({ silent: true }); }
       // Reprend l'audio du post visible au retour sur l'onglet
       const item = currentlyVisibleItemRef.current;
       if (item?.audio_preview_url) playAudio(item.audio_preview_url);
       // Arrête l'audio dès que l'onglet perd le focus
-      return () => { stopCurrentSound(); };
+      return () => {
+        audioActiveRef.current = false;
+        stopCurrentSound();
+      };
     }, [fetchFeed, playAudio, stopCurrentSound]),
   );
 
