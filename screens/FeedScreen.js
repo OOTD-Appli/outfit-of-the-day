@@ -293,11 +293,12 @@ export default function FeedScreen() {
   }, []);
 
   // Viewability : item visible à ≥80% → lance l'audio associé
+  const currentlyVisibleItemRef = useRef(null);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 80 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
-    const visible = viewableItems[0]?.item;
-    const id = visible?.id ?? null;
-    setCurrentlyPlayingId(id);
+    const visible = viewableItems[0]?.item ?? null;
+    currentlyVisibleItemRef.current = visible;
+    setCurrentlyPlayingId(visible?.id ?? null);
     playAudio(visible?.audio_preview_url ?? null);
   }).current;
   const { showToast } = useToast();
@@ -376,7 +377,12 @@ export default function FeedScreen() {
     useCallback(() => {
       if (feedFirstFocus.current) { feedFirstFocus.current = false; fetchFeed(); }
       else { fetchFeed({ silent: true }); }
-    }, [fetchFeed]),
+      // Reprend l'audio du post visible au retour sur l'onglet
+      const item = currentlyVisibleItemRef.current;
+      if (item?.audio_preview_url) playAudio(item.audio_preview_url);
+      // Arrête l'audio dès que l'onglet perd le focus
+      return () => { stopCurrentSound(); };
+    }, [fetchFeed, playAudio, stopCurrentSound]),
   );
 
   const loadChatFriends = useCallback(async () => {
