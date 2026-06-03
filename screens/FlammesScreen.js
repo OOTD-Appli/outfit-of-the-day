@@ -442,17 +442,50 @@ export default function FlammesScreen() {
                 {profileModal.profile.bio ? (
                   <Text style={[styles.profileModalBio, { color: theme.textSub }]}>{profileModal.profile.bio}</Text>
                 ) : null}
+                {profileModal.profile.id !== userId && (() => {
+                  const rel = relationForSearchProfile(profileModal.profile.id);
+                  if (rel === 'friend') return (
+                    <View style={[styles.profileShareBtn, { backgroundColor: theme.accent + '22' }]}>
+                      <Feather name="check" size={14} color={theme.accent} />
+                      <Text style={[styles.profileShareBtnText, { color: theme.accent }]}>Déjà amis</Text>
+                    </View>
+                  );
+                  if (rel === 'outgoing') return (
+                    <View style={[styles.profileShareBtn, { backgroundColor: theme.border }]}>
+                      <Feather name="clock" size={14} color={theme.textSub} />
+                      <Text style={[styles.profileShareBtnText, { color: theme.textSub }]}>Demande envoyée</Text>
+                    </View>
+                  );
+                  if (rel === 'incoming') return (
+                    <TouchableOpacity
+                      style={[styles.profileShareBtn, { backgroundColor: '#4CD964' }]}
+                      onPress={() => { acceptRequest(profileModal.profile.id); setProfileModal({ visible: false, profile: null, loading: false }); }}
+                    >
+                      <Feather name="user-check" size={14} color="#fff" />
+                      <Text style={styles.profileShareBtnText}>Accepter la demande</Text>
+                    </TouchableOpacity>
+                  );
+                  return (
+                    <TouchableOpacity
+                      style={[styles.profileShareBtn, { backgroundColor: theme.accent }]}
+                      onPress={() => { sendFriendRequest(profileModal.profile.id); }}
+                    >
+                      <Feather name="user-plus" size={14} color="#fff" />
+                      <Text style={styles.profileShareBtnText}>Demander en ami</Text>
+                    </TouchableOpacity>
+                  );
+                })()}
                 {profileModal.profile.id !== userId && (
                   <TouchableOpacity
-                    style={[styles.profileShareBtn, { backgroundColor: theme.accent }]}
+                    style={[styles.profileShareBtn, { backgroundColor: theme.accent + '22' }]}
                     onPress={() => {
                       const p = profileModal.profile;
                       setProfileModal({ visible: false, profile: null, loading: false });
                       setShareProfilePicker({ visible: true, targetProfile: p });
                     }}
                   >
-                    <Feather name="share-2" size={14} color="#fff" />
-                    <Text style={styles.profileShareBtnText}>Partager le profil</Text>
+                    <Feather name="share-2" size={14} color={theme.accent} />
+                    <Text style={[styles.profileShareBtnText, { color: theme.accent }]}>Partager le profil</Text>
                   </TouchableOpacity>
                 )}
               </>
