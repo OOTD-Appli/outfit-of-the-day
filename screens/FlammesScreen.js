@@ -1217,7 +1217,7 @@ export default function FlammesScreen() {
                             colors={friendLc.frameBorderColor ? [friendLc.frameBorderColor, friendLc.frameBorderColor] : ['#ED93B1', '#FF4567']}
                             theme={theme}
                             hasStory={!!friendStory}
-                            badgeEmoji={friendLc.badge || '🌟'}
+                            badgeEmoji={friendLc.badge || '⭐'}
                           />
                           <Text style={[styles.storyName, { color: theme.textSub }]} numberOfLines={1}>{friend.username}</Text>
                         </TouchableOpacity>
@@ -1238,7 +1238,7 @@ export default function FlammesScreen() {
                   ? '📸 Photo'
                   : lastMsg?.content?.startsWith('{"_type":"profile"')
                     ? '👤 Profil partagé'
-                    : lastMsg?.content || 'Envoie un message...';
+                    : lastMsg?.content || 'Nouveau contact';
               const msgTime = lastMsg ? lastMsgTime(lastMsg.created_at) : '';
               return (
                 <TouchableOpacity style={[styles.convRow, { borderBottomColor: theme.border }]} onPress={() => openChat(item)} activeOpacity={0.75}>
@@ -1249,7 +1249,7 @@ export default function FlammesScreen() {
                     colors={lc.frameBorderColor ? [lc.frameBorderColor, lc.frameBorderColor] : ['#ED93B1', '#FF4567']}
                     theme={theme}
                     hasStory={hasStory}
-                    badgeEmoji={lc.badge || '🌟'}
+                    badgeEmoji={lc.badge || '⭐'}
                   />
                   <View style={styles.convInfo}>
                     <View style={styles.convNameRow}>

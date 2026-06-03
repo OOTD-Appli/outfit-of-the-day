@@ -4,7 +4,7 @@ import {
   fetchAcceptedFriendIds,
   hasSnapUsedTodayForPair,
 } from '../lib/flammesUtils';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { decode } from 'base64-arraybuffer';
 import {
@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useToast } from '../lib/toastContext';
+import { useTheme } from '../lib/themeContext';
 import Gauge from '../components/Gauge';
 
 const ACCENT      = '#ED93B1';
@@ -86,6 +87,8 @@ function withTimeout(promise, timeoutMs, timeoutMessage) {
 export default function AccueilScreen({ navigation }) {
   const { width: ww } = useWindowDimensions();
   const ringSize = Math.min(Math.round(ww * 0.21), 86);
+  const { theme } = useTheme();
+  const s = useMemo(() => createStyles(theme), [theme]);
 
   const [image, setImage] = useState(null);
   const [score, setScore] = useState(null);
@@ -503,7 +506,7 @@ export default function AccueilScreen({ navigation }) {
             {/* En-tête */}
             <View style={s.beforeHeader}>
               <Text style={s.title}>Analyse ton OOTD ✨</Text>
-              <Ionicons name="notifications-outline" size={22} color={TEXT_SEC} style={s.bellIcon} />
+              <Ionicons name="notifications-outline" size={22} color={theme.textSub} style={s.bellIcon} />
             </View>
             <Text style={s.subtitle}>
               Prends une photo de ta tenue pour obtenir ton analyse personnalisée.
@@ -587,7 +590,7 @@ export default function AccueilScreen({ navigation }) {
               >
                 {loading ? (
                   <View style={s.analyzeBtnInner}>
-                    <ActivityIndicator color={BTN_TEXT} size="small" />
+                    <ActivityIndicator color="#1a0a10" size="small" />
                     <Text style={s.analyzeBtnText}>  Analyse en cours...</Text>
                   </View>
                 ) : (
@@ -599,7 +602,7 @@ export default function AccueilScreen({ navigation }) {
             {/* Carte conseil */}
             <View style={s.tipCard}>
               <View style={s.tipIconWrap}>
-                <Ionicons name="bulb-outline" size={20} color={ACCENT} />
+                <Ionicons name="bulb-outline" size={20} color={theme.accent} />
               </View>
               <View style={s.tipTexts}>
                 <Text style={s.tipTitle}>Conseil <Text style={s.tipHeart}>🤍</Text></Text>
@@ -619,7 +622,7 @@ export default function AccueilScreen({ navigation }) {
               ].map((item, i) => (
                 <View key={i} style={s.howCard}>
                   <View style={s.howIconCircle}>
-                    <Ionicons name={item.icon} size={20} color={ACCENT} />
+                    <Ionicons name={item.icon} size={20} color={theme.accent} />
                   </View>
                   <Text style={s.howCardTitle}>{item.title}</Text>
                   <Text style={s.howText}>{item.text}</Text>
@@ -640,7 +643,7 @@ export default function AccueilScreen({ navigation }) {
                 <Text style={s.subtitleLeft}>Tes statistiques sur 30 derniers jours</Text>
               </View>
               <TouchableOpacity style={s.searchBtn} onPress={openImageSourcePicker}>
-                <Ionicons name="search" size={18} color={TEXT_PRI} />
+                <Ionicons name="search" size={18} color={theme.textPri} />
               </TouchableOpacity>
             </View>
 
@@ -658,7 +661,7 @@ export default function AccueilScreen({ navigation }) {
                   <View key={key} style={s.criterionCard}>
                     <Ionicons name={meta.icon} size={18} color={meta.color} style={{ marginBottom: 4 }} />
                     <Text style={s.criterionName}>{meta.name}</Text>
-                    <Gauge value={val} size={ringSize} thickness={Math.round(ringSize * 0.1)} color={meta.color} track={meta.track} textColor={TEXT_PRI} />
+                    <Gauge value={val} size={ringSize} thickness={Math.round(ringSize * 0.1)} color={meta.color} track={meta.track} textColor={theme.textPri} />
                     <Text style={[s.criterionLabel, { color: meta.color }]}>{criterionLabel(meta, val)}</Text>
                     <Text style={s.criterionDesc}>{meta.desc}</Text>
                   </View>
@@ -708,7 +711,7 @@ export default function AccueilScreen({ navigation }) {
                       <View key={ootd.id} style={s.topItem}>
                         <Image source={{ uri: ootd.image_url }} style={s.topImg} />
                         <View style={s.topHeartChip}>
-                          <Ionicons name="heart" size={10} color={ACCENT} />
+                          <Ionicons name="heart" size={10} color={theme.accent} />
                           <Text style={s.topHeartText}>{formatHearts(hearts)}</Text>
                         </View>
                       </View>
@@ -780,7 +783,7 @@ export default function AccueilScreen({ navigation }) {
                       returnKeyType="search"
                     />
                     {musicPicker.searching && (
-                      <ActivityIndicator color={ACCENT} style={{ marginVertical: 12 }} />
+                      <ActivityIndicator color={theme.accent} style={{ marginVertical: 12 }} />
                     )}
                     <FlatList
                       data={musicPicker.results}
@@ -791,7 +794,7 @@ export default function AccueilScreen({ navigation }) {
                         <TouchableOpacity style={s.musicResultRow} onPress={() => selectTrack(track)} activeOpacity={0.75}>
                           {track.artworkUrl100
                             ? <Image source={{ uri: track.artworkUrl100 }} style={s.musicResultCover} />
-                            : <View style={[s.musicResultCover, { backgroundColor: ACCENT + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
+                            : <View style={[s.musicResultCover, { backgroundColor: ACC_T + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
                           <View style={s.musicResultInfo}>
                             <Text style={s.musicResultTitle} numberOfLines={1}>{track.trackName}</Text>
                             <Text style={s.musicResultArtist} numberOfLines={1}>{track.artistName}</Text>
@@ -824,7 +827,7 @@ export default function AccueilScreen({ navigation }) {
                 activeOpacity={0.85}
               >
                 {postingFeed ? (
-                  <ActivityIndicator color={BTN_TEXT} size="small" />
+                  <ActivityIndicator color="#1a0a10" size="small" />
                 ) : (
                   <Text style={s.actionPrimaryText}>
                     {publishedToFeed ? '✓ Publié dans le feed' : '🏠 Publier dans le feed'}
@@ -839,7 +842,7 @@ export default function AccueilScreen({ navigation }) {
                 activeOpacity={0.85}
               >
                 {sendingFlammesAll ? (
-                  <ActivityIndicator color={ACCENT} size="small" />
+                  <ActivityIndicator color={theme.accent} size="small" />
                 ) : (
                   <Text style={s.actionSecondaryText}>
                     {sentFlammesToAll ? '✓ Envoyé à tes flammes' : '🔥 Envoyer à mes flammes'}
@@ -869,7 +872,7 @@ export default function AccueilScreen({ navigation }) {
                           onPress={() => toggleFlammesFriend(item.id)}
                           activeOpacity={0.75}
                         >
-                          <View style={[s.pickerAvatar, { backgroundColor: ACCENT + 'BB' }]}>
+                          <View style={[s.pickerAvatar, { backgroundColor: ACC_T + 'BB' }]}>
                             {item.avatar_url
                               ? <Image source={{ uri: item.avatar_url }} style={s.pickerAvatarImg} />
                               : <Text style={s.pickerAvatarText}>{item.username?.[0]?.toUpperCase()}</Text>}
@@ -924,27 +927,35 @@ export default function AccueilScreen({ navigation }) {
   );
 }
 
-const s = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: BG },
+function createStyles(theme) {
+  const BG_T    = theme.bg;
+  const CARD_T  = theme.card;
+  const ACC_T   = theme.accent;
+  const PRI_T   = theme.textPri;
+  const SUB_T   = theme.textSub;
+  const BRD_T   = theme.border;
+  const TIP_T   = theme.accent + '18';
+  return StyleSheet.create({
+  safe:   { flex: 1, backgroundColor: BG_T },
   scroll: { padding: 20, paddingBottom: 48 },
 
   // Titres
   beforeHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   bellIcon:     { position: 'absolute', right: 0 },
-  title:    { fontSize: 22, fontWeight: '800', color: TEXT_PRI, textAlign: 'center', marginBottom: 6 },
-  subtitle: { fontSize: 13, color: TEXT_SEC, textAlign: 'center', lineHeight: 19, marginBottom: 20, paddingHorizontal: 12 },
-  titleLeft:    { fontSize: 21, fontWeight: '800', color: TEXT_PRI, marginBottom: 3 },
-  subtitleLeft: { fontSize: 12, color: TEXT_SEC, lineHeight: 17 },
+  title:    { fontSize: 22, fontWeight: '800', color: PRI_T, textAlign: 'center', marginBottom: 6 },
+  subtitle: { fontSize: 13, color: SUB_T, textAlign: 'center', lineHeight: 19, marginBottom: 20, paddingHorizontal: 12 },
+  titleLeft:    { fontSize: 21, fontWeight: '800', color: PRI_T, marginBottom: 3 },
+  subtitleLeft: { fontSize: 12, color: SUB_T, lineHeight: 17 },
 
   // Carte upload
   uploadCard: {
-    backgroundColor: '#FFF6F9',
+    backgroundColor: CARD_T,
     borderRadius: 24,
     paddingVertical: 28,
     paddingHorizontal: 20,
     marginBottom: 16,
     borderWidth: 1.5,
-    borderColor: '#F3CEDC',
+    borderColor: BRD_T,
     borderStyle: 'dashed',
   },
   uploadOption:    { alignItems: 'center', paddingVertical: 6 },
@@ -952,21 +963,21 @@ const s = StyleSheet.create({
     width: 84, height: 84, borderRadius: 42,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 12,
-    shadowColor: ACCENT, shadowOpacity: 0.35, shadowRadius: 12,
+    shadowColor: ACC_T, shadowOpacity: 0.35, shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 }, elevation: 6,
   },
   galleryCircle: {
     width: 56, height: 56, borderRadius: 28,
-    backgroundColor: '#F4EEEA',
+    backgroundColor: BG_T,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 10,
   },
-  uploadOptionText: { fontSize: 16, fontWeight: '700', color: TEXT_PRI },
-  uploadOptionSub:  { fontSize: 12, color: TEXT_SEC, marginTop: 3 },
+  uploadOptionText: { fontSize: 16, fontWeight: '700', color: PRI_T },
+  uploadOptionSub:  { fontSize: 12, color: SUB_T, marginTop: 3 },
 
   dividerRow:  { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#EFD9E2' },
-  dividerText: { marginHorizontal: 14, color: TEXT_SEC, fontSize: 13 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: BRD_T },
+  dividerText: { marginHorizontal: 14, color: SUB_T, fontSize: 13 },
 
   previewImg: { width: '100%', height: 300, borderRadius: 16 },
   changeOverlay: {
@@ -979,36 +990,36 @@ const s = StyleSheet.create({
 
   // Crédits
   creditsRow:         { alignItems: 'center', marginBottom: 14 },
-  creditsChip:        { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: CARD, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, borderWidth: 1, borderColor: ACCENT + '60' },
-  creditsChipEmpty:   { borderColor: BORDER },
-  creditsChipText:    { fontSize: 12, fontWeight: '700', color: ACCENT },
-  creditsChipTextEmpty: { color: TEXT_SEC },
+  creditsChip:        { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: CARD_T, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, borderWidth: 1, borderColor: ACC_T + '60' },
+  creditsChipEmpty:   { borderColor: BRD_T },
+  creditsChipText:    { fontSize: 12, fontWeight: '700', color: ACC_T },
+  creditsChipTextEmpty: { color: SUB_T },
 
   // Plus de crédits
-  noCreditsCard:  { backgroundColor: CARD, borderRadius: 16, padding: 18, marginBottom: 14, alignItems: 'center', gap: 8 },
-  noCreditsTitle: { fontWeight: '800', fontSize: 15, color: TEXT_PRI },
-  noCreditsText:  { fontSize: 13, lineHeight: 18, textAlign: 'center', color: TEXT_SEC },
-  noCreditsBtn:   { backgroundColor: ACCENT, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10, marginTop: 4 },
-  noCreditsBtnText: { color: BTN_TEXT, fontWeight: '700', fontSize: 13 },
+  noCreditsCard:  { backgroundColor: CARD_T, borderRadius: 16, padding: 18, marginBottom: 14, alignItems: 'center', gap: 8 },
+  noCreditsTitle: { fontWeight: '800', fontSize: 15, color: PRI_T },
+  noCreditsText:  { fontSize: 13, lineHeight: 18, textAlign: 'center', color: SUB_T },
+  noCreditsBtn:   { backgroundColor: ACC_T, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10, marginTop: 4 },
+  noCreditsBtnText: { color: "#1a0a10", fontWeight: '700', fontSize: 13 },
 
   // Bouton analyser
   analyzeBtn: {
-    backgroundColor: ACCENT,
+    backgroundColor: ACC_T,
     borderRadius: 16, padding: 16,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 16,
-    shadowColor: ACCENT,
+    shadowColor: ACC_T,
     shadowOpacity: 0.3, shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
   analyzeBtnDisabled: { opacity: 0.75 },
   analyzeBtnInner:    { flexDirection: 'row', alignItems: 'center' },
-  analyzeBtnText:     { color: BTN_TEXT, fontWeight: '700', fontSize: 16 },
+  analyzeBtnText:     { color: "#1a0a10", fontWeight: '700', fontSize: 16 },
 
   // Carte conseil
   tipCard: {
-    backgroundColor: TIP_BG,
+    backgroundColor: TIP_T,
     borderRadius: 18, padding: 16,
     flexDirection: 'row', alignItems: 'center',
     gap: 12, marginBottom: 26,
@@ -1019,86 +1030,86 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   tipTexts: { flex: 1 },
-  tipTitle: { fontWeight: '800', fontSize: 14, color: ACCENT, marginBottom: 3 },
+  tipTitle: { fontWeight: '800', fontSize: 14, color: ACC_T, marginBottom: 3 },
   tipHeart: { fontSize: 12 },
-  tipBody:  { fontSize: 12.5, lineHeight: 17, color: '#8A7B74' },
+  tipBody:  { fontSize: 12.5, lineHeight: 17, color: SUB_T },
 
   // Comment ça marche
-  howTitle: { fontSize: 17, fontWeight: '800', color: TEXT_PRI, marginBottom: 14, textAlign: 'center' },
+  howTitle: { fontSize: 17, fontWeight: '800', color: PRI_T, marginBottom: 14, textAlign: 'center' },
   howRow:   { flexDirection: 'row', gap: 10 },
   howCard:  {
-    flex: 1, backgroundColor: CARD, borderRadius: 18, padding: 14, alignItems: 'center',
+    flex: 1, backgroundColor: CARD_T, borderRadius: 18, padding: 14, alignItems: 'center',
     shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
   howIconCircle: {
     width: 44, height: 44, borderRadius: 22,
-    backgroundColor: TIP_BG,
+    backgroundColor: TIP_T,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 10,
   },
-  howCardTitle: { fontSize: 12, fontWeight: '800', color: TEXT_PRI, marginBottom: 6, textAlign: 'center' },
-  howText:  { fontSize: 10.5, lineHeight: 14, textAlign: 'center', color: TEXT_SEC },
+  howCardTitle: { fontSize: 12, fontWeight: '800', color: PRI_T, marginBottom: 6, textAlign: 'center' },
+  howText:  { fontSize: 10.5, lineHeight: 14, textAlign: 'center', color: SUB_T },
 
   // APRÈS — en-tête
   afterHeader:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 },
   afterHeaderLeft: { flex: 1, paddingRight: 12 },
   searchBtn: {
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: CARD, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: CARD_T, alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6,
     elevation: 2, marginTop: 2,
   },
 
   // Photo analysée (état résultat)
-  resultPhoto: { width: '100%', height: 300, borderRadius: 18, marginBottom: 16, backgroundColor: '#EFE3DD' },
+  resultPhoto: { width: '100%', height: 300, borderRadius: 18, marginBottom: 16, backgroundColor: BRD_T },
 
   // Cartes critères
   criterionRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   criterionCard: {
-    flex: 1, backgroundColor: CARD, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 8,
+    flex: 1, backgroundColor: CARD_T, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 8,
     alignItems: 'center',
     shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
   },
-  criterionName:  { fontSize: 12, fontWeight: '700', color: TEXT_PRI, marginBottom: 8 },
+  criterionName:  { fontSize: 12, fontWeight: '700', color: PRI_T, marginBottom: 8 },
   criterionLabel: { fontSize: 11, fontWeight: '700', marginTop: 8, textAlign: 'center' },
-  criterionDesc:  { fontSize: 9.5, color: TEXT_SEC, marginTop: 3, textAlign: 'center', lineHeight: 12.5 },
+  criterionDesc:  { fontSize: 9.5, color: SUB_T, marginTop: 3, textAlign: 'center', lineHeight: 12.5 },
 
   // Note globale
   globalCard: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: CARD, borderRadius: 18, padding: 16, marginBottom: 14,
+    backgroundColor: CARD_T, borderRadius: 18, padding: 16, marginBottom: 14,
     shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
   },
   globalLeft:      { alignItems: 'flex-start', paddingRight: 14 },
-  globalCardTitle: { fontSize: 12, color: TEXT_SEC, marginBottom: 2, fontWeight: '600' },
+  globalCardTitle: { fontSize: 12, color: SUB_T, marginBottom: 2, fontWeight: '600' },
   globalScoreRow:  { flexDirection: 'row', alignItems: 'flex-end' },
-  globalScore:     { fontSize: 38, fontWeight: '800', color: ACCENT, lineHeight: 42 },
-  globalSub:       { fontSize: 13, color: TEXT_SEC, marginBottom: 6 },
+  globalScore:     { fontSize: 38, fontWeight: '800', color: ACC_T, lineHeight: 42 },
+  globalSub:       { fontSize: 13, color: SUB_T, marginBottom: 6 },
   globalDivider:   { width: 1, alignSelf: 'stretch', backgroundColor: BORDER, marginVertical: 2 },
   globalRight:     { flex: 1, paddingLeft: 14, paddingRight: 8 },
-  globalMessage:   { fontSize: 14, fontWeight: '800', color: TEXT_PRI, marginBottom: 2 },
-  globalMessageSub:{ fontSize: 11.5, color: TEXT_SEC, lineHeight: 15 },
+  globalMessage:   { fontSize: 14, fontWeight: '800', color: PRI_T, marginBottom: 2 },
+  globalMessageSub:{ fontSize: 11.5, color: SUB_T, lineHeight: 15 },
   globalStarBadge: {
-    width: 34, height: 34, borderRadius: 17, backgroundColor: ACCENT,
+    width: 34, height: 34, borderRadius: 17, backgroundColor: ACC_T,
     alignItems: 'center', justifyContent: 'center',
   },
 
   // Conseil
   conseilCard: {
-    backgroundColor: CONSEIL_BG, borderRadius: 18, padding: 16,
+    backgroundColor: TIP_T, borderRadius: 18, padding: 16,
     flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 16,
   },
   conseilEmoji:  { fontSize: 34 },
   conseilTexts:  { flex: 1 },
-  conseilTitle:  { fontSize: 13.5, fontWeight: '800', color: TEXT_PRI, marginBottom: 4 },
-  conseilBody:   { fontSize: 12.5, lineHeight: 18, color: '#7C6F69' },
+  conseilTitle:  { fontSize: 13.5, fontWeight: '800', color: PRI_T, marginBottom: 4 },
+  conseilBody:   { fontSize: 12.5, lineHeight: 18, color: SUB_T },
 
   // Top OOTDs
   topSection: { marginBottom: 16 },
   topHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  topTitle:   { fontSize: 15, fontWeight: '800', color: TEXT_PRI },
-  topSeeAll:  { fontSize: 12, fontWeight: '700', color: ACCENT },
+  topTitle:   { fontSize: 15, fontWeight: '800', color: PRI_T },
+  topSeeAll:  { fontSize: 12, fontWeight: '700', color: ACC_T },
   topItem:    { marginRight: 10, position: 'relative' },
   topImg:     { width: 86, height: 112, borderRadius: 14 },
   topHeartChip: {
@@ -1106,72 +1117,73 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 3,
     backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2.5,
   },
-  topHeartText: { fontSize: 10, fontWeight: '800', color: TEXT_PRI },
+  topHeartText: { fontSize: 10, fontWeight: '800', color: PRI_T },
 
   // Actions
   actionsCard: {
-    backgroundColor: CARD, borderRadius: 20, padding: 16,
+    backgroundColor: CARD_T, borderRadius: 20, padding: 16,
     shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
   },
   captionInput: {
-    backgroundColor: BG, borderRadius: 12, padding: 14, fontSize: 14,
-    marginBottom: 12, borderWidth: 1, borderColor: BORDER,
-    minHeight: 72, textAlignVertical: 'top', color: TEXT_PRI,
+    backgroundColor: BG_T, borderRadius: 12, padding: 14, fontSize: 14,
+    marginBottom: 12, borderWidth: 1, borderColor: BRD_T,
+    minHeight: 72, textAlignVertical: 'top', color: PRI_T,
   },
   actionPrimary: {
-    backgroundColor: ACCENT, borderRadius: 14, paddingVertical: 14,
+    backgroundColor: ACC_T, borderRadius: 14, paddingVertical: 14,
     alignItems: 'center', justifyContent: 'center', marginBottom: 10,
   },
-  actionPrimaryText: { color: BTN_TEXT, fontWeight: '800', fontSize: 14 },
+  actionPrimaryText: { color: "#1a0a10", fontWeight: '800', fontSize: 14 },
   actionSecondary: {
-    borderWidth: 1.5, borderColor: ACCENT, borderRadius: 14, paddingVertical: 14,
+    borderWidth: 1.5, borderColor: ACC_T, borderRadius: 14, paddingVertical: 14,
     alignItems: 'center', justifyContent: 'center', marginBottom: 14,
-    backgroundColor: CARD,
+    backgroundColor: CARD_T,
   },
-  actionSecondaryText: { color: ACCENT, fontWeight: '700', fontSize: 14 },
+  actionSecondaryText: { color: ACC_T, fontWeight: '700', fontSize: 14 },
   actionDisabled: { opacity: 0.55 },
   retryBtn:  { alignItems: 'center', paddingVertical: 10 },
-  retryText: { fontSize: 13, fontWeight: '600', color: TEXT_SEC },
+  retryText: { fontSize: 13, fontWeight: '600', color: SUB_T },
 
   /* Musique */
-  musicBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, borderRadius: 12, borderWidth: 1, borderColor: ACCENT + '55', marginBottom: 10 },
-  musicBtnText:      { fontSize: 14, fontWeight: '700', color: ACCENT },
-  musicChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: ACCENT + '18', borderRadius: 12, padding: 10, marginBottom: 10, gap: 10 },
+  musicBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, borderRadius: 12, borderWidth: 1, borderColor: ACC_T + '55', marginBottom: 10 },
+  musicBtnText:      { fontSize: 14, fontWeight: '700', color: ACC_T },
+  musicChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: ACC_T + '18', borderRadius: 12, padding: 10, marginBottom: 10, gap: 10 },
   musicChipCover:    { width: 42, height: 42, borderRadius: 8 },
-  musicChipNote:     { width: 42, height: 42, borderRadius: 8, textAlign: 'center', lineHeight: 42, fontSize: 22, backgroundColor: ACCENT + '33' },
+  musicChipNote:     { width: 42, height: 42, borderRadius: 8, textAlign: 'center', lineHeight: 42, fontSize: 22, backgroundColor: ACC_T + '33' },
   musicChipInfo:     { flex: 1 },
-  musicChipTitle:    { fontWeight: '700', fontSize: 13, color: TEXT_PRI },
-  musicChipArtist:   { fontSize: 12, color: TEXT_SEC, marginTop: 2 },
-  musicChipRemove:   { fontSize: 16, color: TEXT_SEC, paddingHorizontal: 4 },
-  musicSheet:        { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '80%' },
-  musicSearchInput:  { backgroundColor: BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginBottom: 10, borderWidth: 1, borderColor: BORDER, color: TEXT_PRI },
+  musicChipTitle:    { fontWeight: '700', fontSize: 13, color: PRI_T },
+  musicChipArtist:   { fontSize: 12, color: SUB_T, marginTop: 2 },
+  musicChipRemove:   { fontSize: 16, color: SUB_T, paddingHorizontal: 4 },
+  musicSheet:        { backgroundColor: CARD_T, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '80%' },
+  musicSearchInput:  { backgroundColor: BG_T, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginBottom: 10, borderWidth: 1, borderColor: BRD_T, color: PRI_T },
   musicResultsList:  { maxHeight: 320 },
-  musicResultRow:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: BORDER },
+  musicResultRow:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: BRD_T},
   musicResultCover:  { width: 48, height: 48, borderRadius: 8 },
   musicResultInfo:   { flex: 1 },
-  musicResultTitle:  { fontWeight: '700', fontSize: 13, color: TEXT_PRI },
-  musicResultArtist: { fontSize: 12, color: TEXT_SEC, marginTop: 2 },
-  musicResultBadge:  { backgroundColor: ACCENT + '22', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, fontSize: 11, fontWeight: '700', color: ACCENT },
-  musicNoResults:    { textAlign: 'center', color: TEXT_SEC, marginVertical: 16, fontSize: 13 },
+  musicResultTitle:  { fontWeight: '700', fontSize: 13, color: PRI_T },
+  musicResultArtist: { fontSize: 12, color: SUB_T, marginTop: 2 },
+  musicResultBadge:  { backgroundColor: ACC_T + '22', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, fontSize: 11, fontWeight: '700', color: ACC_T },
+  musicNoResults:    { textAlign: 'center', color: SUB_T, marginVertical: 16, fontSize: 13 },
 
   /* Picker flammes */
   pickerOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
-  pickerSheet:     { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '75%' },
+  pickerSheet:     { backgroundColor: CARD_T, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '75%' },
   pickerHandle:    { width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, alignSelf: 'center', marginBottom: 16 },
-  pickerTitle:     { fontWeight: '800', fontSize: 18, color: TEXT_PRI, textAlign: 'center', marginBottom: 4 },
-  pickerSub:       { fontSize: 13, color: TEXT_SEC, textAlign: 'center', marginBottom: 16 },
+  pickerTitle:     { fontWeight: '800', fontSize: 18, color: PRI_T, textAlign: 'center', marginBottom: 4 },
+  pickerSub:       { fontSize: 13, color: SUB_T, textAlign: 'center', marginBottom: 16 },
   pickerList:      { maxHeight: 320 },
   pickerRow:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12 },
   pickerAvatar:    { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   pickerAvatarImg: { width: 44, height: 44, borderRadius: 22 },
   pickerAvatarText:{ color: '#fff', fontWeight: '700', fontSize: 17 },
-  pickerName:      { flex: 1, fontWeight: '600', fontSize: 15, color: TEXT_PRI },
-  checkbox:        { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: BORDER, alignItems: 'center', justifyContent: 'center' },
-  checkboxOn:      { backgroundColor: ACCENT, borderColor: ACCENT },
+  pickerName:      { flex: 1, fontWeight: '600', fontSize: 15, color: PRI_T },
+  checkbox:        { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: BRD_T, alignItems: 'center', justifyContent: 'center' },
+  checkboxOn:      { backgroundColor: ACC_T, borderColor: ACC_T },
   checkmark:       { color: '#fff', fontWeight: '900', fontSize: 13 },
   pickerBtns:      { flexDirection: 'row', gap: 10, marginTop: 16 },
-  pickerCancel:    { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: BORDER },
-  pickerCancelText:{ fontWeight: '600', fontSize: 15, color: TEXT_PRI },
-  pickerConfirm:   { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: ACCENT },
+  pickerCancel:    { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: BRD_T},
+  pickerCancelText:{ fontWeight: '600', fontSize: 15, color: PRI_T },
+  pickerConfirm:   { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: ACC_T },
   pickerConfirmText:{ fontWeight: '800', fontSize: 15, color: '#fff' },
-});
+  });
+}
