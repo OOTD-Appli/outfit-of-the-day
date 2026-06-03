@@ -268,14 +268,23 @@ export default function FlammesScreen() {
     } catch (e) { Alert.alert('Envoi impossible', e?.message ?? 'Réessaie plus tard.'); }
   };
 
-  const normalizeStr = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const normalizeStr = (s) =>
+    s
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')    // accents / diacritiques → base ASCII
+      .replace(/[^\x00-\x7F]/g, ' ')      // emoji + caractères non-ASCII → espace
+      .replace(/[^a-z0-9_\s]/gi, '')      // ponctuation résiduelle → supprimée
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
 
   const searchUsers = async (query) => {
     setSearchQuery(query);
-    if (query.length < 2) { setSearchResults([]); return; }
-    const normalized = normalizeStr(query);
-    // Double requête : terme original + version sans accents, résultats fusionnés
-    const patterns = [...new Set([query.toLowerCase(), normalized])];
+    const queryClean = query.trim();
+    if (queryClean.length < 2) { setSearchResults([]); return; }
+    const normalized = normalizeStr(queryClean);
+    // Trois patterns : brut (casse ignorée), sans accents, sans emoji/spéciaux
+    const patterns = [...new Set([queryClean.toLowerCase(), normalized])].filter(p => p.length >= 2);
     const all = await Promise.all(
       patterns.map(p => supabase.from('profiles').select('id, username, avatar_url, active_logo').ilike('username', `%${p}%`).neq('id', userId).limit(10)),
     );
