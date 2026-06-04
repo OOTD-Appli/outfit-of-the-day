@@ -16,6 +16,7 @@ import InAppBanner from './components/InAppBanner';
 const navigationRef = createNavigationContainerRef();
 
 import AuthScreen from './screens/AuthScreen';
+import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import AccueilScreen from './screens/AccueilScreen';
 import FeedScreen from './screens/FeedScreen';
 import FlammesScreen from './screens/FlammesScreen';
@@ -161,6 +162,7 @@ function ThemedNavigator({ userId }) {
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [recovery, setRecovery] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -202,7 +204,14 @@ export default function App() {
       }
     })();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      // Lien de réinitialisation cliqué (web) → on affiche l'écran dédié
+      if (event === 'PASSWORD_RECOVERY') {
+        setRecovery(true);
+        setSession(nextSession);
+        setLoading(false);
+        return;
+      }
       syncSession(nextSession);
     });
 
@@ -224,7 +233,9 @@ export default function App() {
     <SafeAreaProvider>
       <ThemeProvider>
         <ToastProvider>
-          {!session ? (
+          {recovery ? (
+            <ResetPasswordScreen onDone={() => setRecovery(false)} />
+          ) : !session ? (
             <AuthScreen />
           ) : (
             <ThemedNavigator userId={session?.user?.id} />

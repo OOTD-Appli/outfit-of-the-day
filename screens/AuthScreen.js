@@ -2,7 +2,7 @@ import { Image } from 'react-native';
 import { useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  TextInput, ActivityIndicator, KeyboardAvoidingView, Platform,
+  TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Modal,
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,8 +19,30 @@ export default function AuthScreen() {
   const [username, setUsername] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [forgotVisible, setForgotVisible] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
   const { showToast } = useToast();
   const { theme } = useTheme();
+
+  const sendResetLink = async () => {
+    const target = forgotEmail.trim();
+    if (!target) { showToast('Saisis ton adresse email.', { type: 'warning' }); return; }
+    setForgotLoading(true);
+    try {
+      const redirectTo = (Platform.OS === 'web' && typeof window !== 'undefined')
+        ? `${window.location.origin}/reset-password`
+        : 'https://ootd-fr.vercel.app/reset-password';
+      // Ne révèle jamais si l'email existe (pas de leak d'énumération de comptes)
+      await supabase.auth.resetPasswordForEmail(target, { redirectTo });
+      showToast('Si cet email existe, un lien de réinitialisation vous a été envoyé.', { type: 'info' });
+      setForgotVisible(false);
+      setForgotEmail('');
+    } catch (e) {
+      showToast('Erreur : ' + (e?.message || 'inconnue'), { type: 'error' });
+    }
+    setForgotLoading(false);
+  };
 
   const handleAuth = async () => {
     if (!email || !password) {
@@ -118,6 +140,12 @@ export default function AuthScreen() {
           secureTextEntry
         />
 
+        {isLogin && (
+          <TouchableOpacity onPress={() => { setForgotEmail(email); setForgotVisible(true); }} style={styles.forgotBtn}>
+            <Text style={[styles.forgotText, { color: theme.accent }]}>Mot de passe oublié ?</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity style={[styles.btn, { backgroundColor: theme.accent }]} onPress={handleAuth} disabled={loading}>
           {loading
             ? <ActivityIndicator color="#3a0d1e" />
@@ -132,6 +160,37 @@ export default function AuthScreen() {
         </TouchableOpacity>
 
       </KeyboardAvoidingView>
+
+      {/* Modale Mot de passe oublié */}
+      <Modal visible={forgotVisible} transparent animationType="slide" onRequestClose={() => setForgotVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: theme.card }]}>
+            <View style={[styles.modalHandle, { backgroundColor: theme.border }]} />
+            <Text style={[styles.modalTitle, { color: theme.textPri }]}>Mot de passe oublié</Text>
+            <Text style={[styles.modalText, { color: theme.textSub }]}>
+              Saisissez votre adresse email pour recevoir un lien de réinitialisation.
+            </Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: theme.bg, borderColor: theme.border, color: theme.textPri, marginTop: 4 }]}
+              placeholder="Email"
+              placeholderTextColor={theme.textSub}
+              value={forgotEmail}
+              onChangeText={setForgotEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoFocus
+            />
+            <TouchableOpacity style={[styles.btn, { backgroundColor: theme.accent }]} onPress={sendResetLink} disabled={forgotLoading}>
+              {forgotLoading
+                ? <ActivityIndicator color="#3a0d1e" />
+                : <Text style={styles.btnText}>Envoyer le lien</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setForgotVisible(false)} style={styles.switchBtn}>
+              <Text style={[styles.switchText, { color: theme.textSub }]}>Annuler</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -155,6 +214,15 @@ const styles = StyleSheet.create({
 
   switchBtn:  { marginTop: 20, alignItems: 'center' },
   switchText: { fontSize: 13 },
+
+  forgotBtn:  { alignSelf: 'flex-end', marginTop: -4, marginBottom: 8, paddingVertical: 4 },
+  forgotText: { fontSize: 13, fontWeight: '600' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  modalSheet:   { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 36 },
+  modalHandle:  { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 18 },
+  modalTitle:   { fontSize: 18, fontWeight: '800', textAlign: 'center', marginBottom: 8 },
+  modalText:    { fontSize: 13.5, textAlign: 'center', lineHeight: 19, marginBottom: 16, paddingHorizontal: 8 },
 
   logoSmall: { width: 40, height: 40, borderRadius: 8 },
 });
