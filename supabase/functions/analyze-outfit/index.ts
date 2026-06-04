@@ -8,7 +8,10 @@ const CORS = {
 
 const CRITERIA_KEYS = ['fit', 'harmonie', 'detail'];
 
-const PROMPT = `Tu es un styliste-conseiller expert. Analyse uniquement ce qui est VISIBLE sur la photo.
+// Modèle Gemini (cf. cahier des charges : gemini-1.5-flash ou gemini-2.0-flash).
+const GEMINI_MODEL = 'gemini-2.0-flash';
+
+const PROMPT = `Tu es un styliste-conseiller expert et bienveillant. Analyse uniquement ce qui est VISIBLE sur la photo.
 
 Barème (notes entières de 1 à 10):
 - global: impression générale de la tenue
@@ -19,7 +22,7 @@ Barème (notes entières de 1 à 10):
 Contraintes:
 - Les notes doivent être variées et réalistes (évite les mêmes notes partout)
 - N'utilise 9-10 que pour une tenue vraiment remarquable
-- Le conseil doit être ultra concret, actionnable, et lié à cette photo
+- Le conseil doit être ultra concret, actionnable, bienveillant et lié à cette photo
 - N'invente pas des éléments non visibles
 - Explique brièvement pourquoi chaque note a été donnée (1 phrase par critère)
 - Le conseil doit être structuré en 2 parties: "Ce qui marche" puis "À essayer"
@@ -32,6 +35,66 @@ function json(body: unknown, status: number) {
     status,
     headers: { ...CORS, 'Content-Type': 'application/json' },
   });
+}
+
+// ── Analyse via Google Gemini (préféré) ──────────────────────────────────────
+async function analyzeWithGemini(base64Image: string): Promise<string> {
+  const key = Deno.env.get('GEMINI_API_KEY');
+  if (!key) throw new Error('GEMINI_API_KEY absente');
+
+  const mimeMatch = base64Image.match(/^data:(image\/[^;]+);base64,/);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const base64Data = base64Image.replace(/^data:image\/[^;]+;base64,/, '');
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { inline_data: { mime_type: mimeType, data: base64Data } },
+            { text: PROMPT },
+          ],
+        }],
+        generationConfig: { temperature: 0.8, maxOutputTokens: 600, responseMimeType: 'application/json' },
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Réponse Gemini vide');
+  return text;
+}
+
+// ── Repli : Groq Llama 4 Scout vision ────────────────────────────────────────
+async function analyzeWithGroq(base64Image: string): Promise<string> {
+  const key = Deno.env.get('GROQ_API_KEY');
+  if (!key) throw new Error('GROQ_API_KEY absente');
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+    body: JSON.stringify({
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      max_tokens: 500,
+      temperature: 0.8,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: base64Image } },
+          { type: 'text', text: PROMPT },
+        ],
+      }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content;
+  if (!text) throw new Error('Réponse Groq vide');
+  return text;
 }
 
 serve(async (req: Request) => {
@@ -72,39 +135,18 @@ serve(async (req: Request) => {
       return json({ error: msg, credits: creditResult?.credits ?? 0 }, 403);
     }
 
-    const groqApiKey = Deno.env.get('GROQ_API_KEY');
-    if (!groqApiKey) {
-      return json({ error: 'Clé API Groq non configurée sur le serveur' }, 500);
+    // Gemini en priorité ; repli automatique sur Groq si Gemini échoue
+    // (clé absente, quota épuisé, modèle indisponible…). Garantit que l'analyse
+    // continue de fonctionner pendant la bascule vers Gemini.
+    let text: string;
+    let provider = 'gemini';
+    try {
+      text = await analyzeWithGemini(base64Image);
+    } catch (gemErr) {
+      console.warn('[analyze-outfit] Gemini KO, repli Groq:', gemErr instanceof Error ? gemErr.message : gemErr);
+      provider = 'groq';
+      text = await analyzeWithGroq(base64Image);
     }
-
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${groqApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-        max_tokens: 500,
-        temperature: 0.8,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: base64Image } },
-            { type: 'text', text: PROMPT },
-          ],
-        }],
-      }),
-    });
-
-    if (!groqRes.ok) {
-      const errText = await groqRes.text();
-      return json({ error: `Groq ${groqRes.status}: ${errText}` }, 502);
-    }
-
-    const groqData = await groqRes.json();
-    const text = groqData?.choices?.[0]?.message?.content;
-    if (!text) return json({ error: 'Réponse IA invalide' }, 502);
 
     const clean = text.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
@@ -116,6 +158,7 @@ serve(async (req: Request) => {
 
     return json({
       ...parsed,
+      provider,
       credits_remaining: creditResult.credits,
       max_credits: creditResult.max_credits,
     }, 200);
