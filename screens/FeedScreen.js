@@ -17,6 +17,18 @@ import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import { getLogoConfig } from '../lib/logoConfig';
 import { timeAgo } from '../lib/utils';
+import { triggerHaptic } from '../lib/haptics';
+
+// Pré-charge en arrière-plan les images des prochains posts + avatars (cache expo-image).
+function prefetchUpcoming(list, startIndex, count = 3) {
+  const urls = [];
+  for (let i = startIndex; i < Math.min(startIndex + count, list.length); i++) {
+    if (list[i]?.image_url) urls.push(list[i].image_url);
+    if (list[i]?.profiles?.avatar_url) urls.push(list[i].profiles.avatar_url);
+    if (list[i]?.audio_cover_url) urls.push(list[i].audio_cover_url);
+  }
+  if (urls.length) ExpoImage.prefetch(urls).catch(() => {});
+}
 
 function feedCommentCount(item) {
   const c = item?.comments;
@@ -73,6 +85,7 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
     if (now - lastTapRef.current < 300) {
       lastTapRef.current = 0;
       playOverlayHeart();
+      triggerHaptic(12); // micro-vibration PWA-safe au pop du cœur
       if (!isLiked) onToggleLike(item.id, false, null);
     } else {
       lastTapRef.current = now;
@@ -350,6 +363,7 @@ export default function FeedScreen() {
       setFetchError(null);
       setHasMore((data ?? []).length === PAGE_SIZE);
       pageRef.current = 1;
+      prefetchUpcoming(list, 1, 3); // précharge les 3 prochains posts + avatars
     }
     if (!silent) { setLoading(false); setRefreshing(false); }
   }, []);
@@ -371,6 +385,7 @@ export default function FeedScreen() {
       setOotds(prev => {
         const next = [...prev, ...list];
         ootdsRef.current = next;
+        prefetchUpcoming(next, prev.length, 3); // précharge le premier lot fraîchement ajouté
         return next;
       });
       setHasMore((data ?? []).length === PAGE_SIZE);
@@ -606,7 +621,7 @@ export default function FeedScreen() {
           onViewableItemsChanged={onViewableItemsChanged}
           getItemLayout={(_, index) => ({ length: pageH, offset: pageH * index, index })}
           onEndReached={loadMoreFeed}
-          onEndReachedThreshold={0.2}
+          onEndReachedThreshold={1.5}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

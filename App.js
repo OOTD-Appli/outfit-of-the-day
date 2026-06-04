@@ -2,7 +2,7 @@ import { registerForPushNotifications, savePushToken } from './lib/notifications
 import { registerWebPush } from './lib/webPush';
 import { useState, useEffect } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text, Platform } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
@@ -11,6 +11,9 @@ import { supabase } from './lib/supabase';
 import { ensureUserProfile } from './lib/ensureProfile';
 import { ToastProvider } from './lib/toastContext';
 import { ThemeProvider, useTheme } from './lib/themeContext';
+import InAppBanner from './components/InAppBanner';
+
+const navigationRef = createNavigationContainerRef();
 
 import AuthScreen from './screens/AuthScreen';
 import AccueilScreen from './screens/AccueilScreen';
@@ -85,8 +88,14 @@ function ThemedNavigator({ userId }) {
     elevation: 14,
   };
 
+  const openConversation = (friendId) => {
+    setUnreadCount(0);
+    if (navigationRef.isReady()) navigationRef.navigate('Chat', { openFriendId: friendId });
+  };
+
   return (
-    <NavigationContainer>
+    <>
+    <NavigationContainer ref={navigationRef}>
       <Tab.Navigator
         screenOptions={{
           headerShown: false,
@@ -144,6 +153,8 @@ function ThemedNavigator({ userId }) {
         />
       </Tab.Navigator>
     </NavigationContainer>
+    <InAppBanner userId={userId} onPress={openConversation} />
+    </>
   );
 }
 

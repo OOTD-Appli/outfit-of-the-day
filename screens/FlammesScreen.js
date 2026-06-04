@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  View, Text, StyleSheet,
+  View, Text, StyleSheet, Animated,
   FlatList, TouchableOpacity, ActivityIndicator,
   TextInput, ScrollView, Alert, KeyboardAvoidingView, Platform, Modal,
   useWindowDimensions,
@@ -11,7 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { ENV } from '../lib/env';
@@ -19,6 +19,33 @@ import { flammeOrderedIds } from '../lib/flammesUtils';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import { getLogoConfig } from '../lib/logoConfig';
+import { setActiveChat } from '../lib/activeChat';
+
+// Indicateur « en train d'écrire… » — 3 points qui rebondissent
+function TypingDots({ color }) {
+  const dots = [useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current];
+  useEffect(() => {
+    const anims = dots.map((d, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 150),
+          Animated.timing(d, { toValue: -4, duration: 250, useNativeDriver: true }),
+          Animated.timing(d, { toValue: 0, duration: 250, useNativeDriver: true }),
+          Animated.delay((2 - i) * 150),
+        ]),
+      ),
+    );
+    anims.forEach(a => a.start());
+    return () => anims.forEach(a => a.stop());
+  }, []);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 12 }}>
+      {dots.map((d, i) => (
+        <Animated.View key={i} style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: color, transform: [{ translateY: d }] }} />
+      ))}
+    </View>
+  );
+}
 
 function lastMsgTime(iso) {
   if (!iso) return '';
@@ -111,10 +138,16 @@ export default function FlammesScreen() {
   const { showToast } = useToast();
   const { theme } = useTheme();
   const navigation = useNavigation();
+  const route = useRoute();
   const firstFocus = useRef(true);
   const [restoreModal, setRestoreModal] = useState({ visible: false, friend: null });
   const [restoring, setRestoring] = useState(false);
   const [profileModal, setProfileModal] = useState({ visible: false, profile: null, loading: false });
+  const [friendTyping, setFriendTyping] = useState(false);
+  const typingChannelRef = useRef(null);
+  const typingSentAtRef = useRef(0);
+  const typingStopTimer = useRef(null);   // côté émetteur : envoie typing:false après pause
+  const typingHideTimer = useRef(null);   // côté récepteur : masque les points si plus de signal
 
   useEffect(() => {
     AsyncStorage.getItem('@ootd_unread_last_read').then(raw => {
@@ -147,6 +180,9 @@ export default function FlammesScreen() {
     }
     setFriends(merged);
     setMyProfile(profileById[user.id] || null);
+    // Pré-charge en arrière-plan les avatars des contacts (cache expo-image)
+    const avatarUrls = merged.map(f => f.avatar_url).filter(Boolean);
+    if (avatarUrls.length) ExpoImage.prefetch(avatarUrls).catch(() => {});
 
     const { data: incRows } = await supabase.from('friendships').select('user_id, created_at').eq('friend_id', user.id).eq('status', 'pending');
     const requesterIds = [...new Set((incRows || []).map(r => r.user_id))];
@@ -222,6 +258,24 @@ export default function FlammesScreen() {
     if (firstFocus.current) { firstFocus.current = false; fetchData(); }
     else { fetchData({ silent: true }); }
   }, [fetchData]));
+
+  // Signale la conversation ouverte uniquement quand l'onglet Chat a le focus.
+  // Au blur (changement d'onglet), on efface → la bannière in-app reprend.
+  useFocusEffect(useCallback(() => {
+    if (view === 'chat' && selectedFriend) setActiveChat(selectedFriend.id);
+    return () => setActiveChat(null);
+  }, [view, selectedFriend]));
+
+  // Ouverture directe d'une conversation depuis la bannière in-app (param de navigation)
+  useEffect(() => {
+    const openId = route.params?.openFriendId;
+    if (!openId || !friends.length) return;
+    const friend = friends.find(f => f.id === openId);
+    if (friend) {
+      openChat(friend);
+      navigation.setParams({ openFriendId: undefined });
+    }
+  }, [route.params?.openFriendId, friends]);
 
   const ensureFlammesRow = async (otherId) => {
     await supabase.from('flammes').upsert(
@@ -570,7 +624,7 @@ export default function FlammesScreen() {
     const now = new Date().toISOString();
     const { data } = await supabase
       .from('messages')
-      .select('id, sender_id, receiver_id, content, image_url, is_liked, is_deleted, created_at, expires_at')
+      .select('id, sender_id, receiver_id, content, image_url, is_liked, is_deleted, read_at, created_at, expires_at')
       .or(`and(sender_id.eq.${userId},receiver_id.eq.${friend.id}),and(sender_id.eq.${friend.id},receiver_id.eq.${userId})`)
       .gt('expires_at', now)
       .order('created_at', { ascending: true })
@@ -586,7 +640,16 @@ export default function FlammesScreen() {
     setUnreadCounts(prev => ({ ...prev, [friend.id]: 0 }));
     setSelectedFriend(friend);
     setView('chat');
+    setActiveChat(friend.id);
     await loadMessages(friend);
+    supabase.rpc('mark_messages_read', { p_friend_id: friend.id }).catch(() => {});
+  };
+
+  const leaveChat = () => {
+    setActiveChat(null);
+    setFriendTyping(false);
+    setView('list');
+    setMessages([]);
   };
 
   // ── Like / suppression de messages (synchro temps réel) ────────────────────
@@ -614,6 +677,11 @@ export default function FlammesScreen() {
             ));
             return [...filtered, payload.new];
           });
+          // Message reçu pendant que le chat est ouvert → accusé de lecture immédiat
+          if (payload.new.sender_id === selectedFriend.id) {
+            setFriendTyping(false);
+            supabase.rpc('mark_messages_read', { p_friend_id: selectedFriend.id }).catch(() => {});
+          }
         } else if (payload.eventType === 'UPDATE') {
           setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? { ...m, ...payload.new } : m)));
         } else if (payload.eventType === 'DELETE') {
@@ -623,6 +691,50 @@ export default function FlammesScreen() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [userId, selectedFriend]);
+
+  // ── Indicateur « en train d'écrire… » via Supabase Broadcast ───────────────
+  // Canal partagé déterministe (ids triés) entre les deux participants.
+  useEffect(() => {
+    if (!userId || !selectedFriend) { typingChannelRef.current = null; return; }
+    const pairKey = [userId, selectedFriend.id].sort().join('-');
+    const channel = supabase.channel(`typing-${pairKey}`, { config: { broadcast: { self: false } } });
+    channel
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if (payload?.from !== selectedFriend.id) return;
+        setFriendTyping(!!payload.typing);
+        if (payload.typing) {
+          if (typingHideTimer.current) clearTimeout(typingHideTimer.current);
+          // Filet de sécurité : masque les points si plus aucun signal après 4s
+          typingHideTimer.current = setTimeout(() => setFriendTyping(false), 4000);
+        }
+      })
+      .subscribe();
+    typingChannelRef.current = channel;
+    return () => {
+      if (typingHideTimer.current) clearTimeout(typingHideTimer.current);
+      if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
+      supabase.removeChannel(channel);
+      typingChannelRef.current = null;
+    };
+  }, [userId, selectedFriend]);
+
+  const broadcastTyping = (isTyping) => {
+    const ch = typingChannelRef.current;
+    if (!ch) return;
+    ch.send({ type: 'broadcast', event: 'typing', payload: { from: userId, typing: isTyping } });
+  };
+
+  const onChangeMessageText = (text) => {
+    setMessageText(text);
+    const now = Date.now();
+    // Throttle l'émission « typing:true » à 1×/1.5s
+    if (now - typingSentAtRef.current > 1500) {
+      typingSentAtRef.current = now;
+      broadcastTyping(true);
+    }
+    if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
+    typingStopTimer.current = setTimeout(() => { broadcastTyping(false); typingSentAtRef.current = 0; }, 2000);
+  };
 
   const toggleLike = async (msg) => {
     if (msg.sender_id === userId || msg.is_deleted) return; // on ne like que les messages reçus
@@ -701,11 +813,15 @@ export default function FlammesScreen() {
     if (!messageText.trim() || !selectedFriend || sendingMessage) return;
     const text = messageText.trim();
     setMessageText('');
+    // Stoppe l'indicateur « en train d'écrire » immédiatement
+    if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
+    typingSentAtRef.current = 0;
+    broadcastTyping(false);
     // Optimistic : affiche le message immédiatement, Realtime le remplacera par la vraie ligne
     const tempId = 'opt-' + Date.now();
     const tempMsg = {
       id: tempId, sender_id: userId, receiver_id: selectedFriend.id, content: text,
-      image_url: null, is_liked: false, is_deleted: false,
+      image_url: null, is_liked: false, is_deleted: false, read_at: null,
       created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(),
     };
     setMessages(prev => [...prev, tempMsg]);
@@ -866,7 +982,7 @@ export default function FlammesScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={['top']}>
         {/* Header chat */}
         <View style={[styles.chatHeader, { borderBottomColor: theme.border }]}>
-          <TouchableOpacity onPress={() => { setView('list'); setMessages([]); }} style={styles.backBtn}>
+          <TouchableOpacity onPress={leaveChat} style={styles.backBtn}>
             <Feather name="chevron-left" size={26} color={theme.textPri} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.chatHeaderInfo} onPress={() => openUserProfile(selectedFriend.id)} activeOpacity={0.8}>
@@ -877,20 +993,29 @@ export default function FlammesScreen() {
               colors={chatLogoConfig.frameBorderColor ? [chatLogoConfig.frameBorderColor, chatLogoConfig.frameBorderColor] : ['#ED93B1', '#FF4567']}
               theme={theme}
               hasStory={stories.some(s => s.user_id === selectedFriend.id)}
-              badgeEmoji={chatLogoConfig.badge || '💬'}
+              badgeEmoji={chatLogoConfig.badge}
             />
             <View>
               <View style={styles.convNameRow}>
                 <Text style={[styles.chatUsername, { color: theme.textPri }]}>{selectedFriend.username}</Text>
                 {chatLogoConfig.badge ? <Text style={styles.convNameBadge}>{chatLogoConfig.badge}</Text> : null}
               </View>
-              {chatFlamme.state === 'active' && chatFlamme.streak > 0 && (
-                <Text style={[styles.chatStreak, { color: theme.accent }]}>🔥 {chatFlamme.streak} j</Text>
-              )}
-              {chatFlamme.state === 'expired' && (
-                <TouchableOpacity onPress={() => openRestore(selectedFriend)}>
-                  <Text style={[styles.chatStreak, styles.flammeDim, { color: theme.textSub }]}>🔥 {chatFlamme.streak} j · ranimer</Text>
-                </TouchableOpacity>
+              {friendTyping ? (
+                <View style={styles.typingRow}>
+                  <Text style={[styles.chatStreak, { color: theme.accent }]}>écrit </Text>
+                  <TypingDots color={theme.accent} />
+                </View>
+              ) : (
+                <>
+                  {chatFlamme.state === 'active' && chatFlamme.streak > 0 && (
+                    <Text style={[styles.chatStreak, { color: theme.accent }]}>🔥 {chatFlamme.streak} j</Text>
+                  )}
+                  {chatFlamme.state === 'expired' && (
+                    <TouchableOpacity onPress={() => openRestore(selectedFriend)}>
+                      <Text style={[styles.chatStreak, styles.flammeDim, { color: theme.textSub }]}>🔥 {chatFlamme.streak} j · ranimer</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
               )}
             </View>
           </TouchableOpacity>
@@ -951,9 +1076,19 @@ export default function FlammesScreen() {
                       </>
                     );
                   })()}
-                  <Text style={[styles.msgTime, { color: theme.textSub }]}>
-                    {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
+                  <View style={styles.msgMetaRow}>
+                    <Text style={[styles.msgTime, { color: theme.textSub }]}>
+                      {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                    {mine && !msg.is_deleted && (
+                      <Feather
+                        name={msg.read_at ? 'check-circle' : 'check'}
+                        size={12}
+                        color={msg.read_at ? theme.accent : theme.textSub}
+                        style={{ marginLeft: 4 }}
+                      />
+                    )}
+                  </View>
                   {msg.is_liked && !msg.is_deleted && (
                     <View style={[styles.likeBadge, mine ? styles.likeBadgeLeft : styles.likeBadgeRight, { backgroundColor: theme.bg }]}>
                       <Text style={styles.likeBadgeText}>❤️</Text>
@@ -971,7 +1106,7 @@ export default function FlammesScreen() {
               placeholder="Écrire un message..."
               placeholderTextColor={theme.textSub}
               value={messageText}
-              onChangeText={setMessageText}
+              onChangeText={onChangeMessageText}
               multiline
               maxLength={500}
             />
@@ -1449,6 +1584,7 @@ const styles = StyleSheet.create({
   chatHeaderInfo:  { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   chatUsername:    { fontWeight: '700', fontSize: 15 },
   chatStreak:      { fontSize: 11, fontWeight: '600', marginTop: 1 },
+  typingRow:       { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   photoMsgBtn:     { padding: 8 },
   msgList:         { flex: 1 },
   msgListContent:  { padding: 16, gap: 8, paddingBottom: 24 },
@@ -1464,7 +1600,8 @@ const styles = StyleSheet.create({
   bubbleText:      { fontSize: 14, lineHeight: 20 },
   bubbleDeleted:   { fontSize: 13, fontStyle: 'italic' },
   msgImage:        { borderRadius: 12, marginBottom: 4 },
-  msgTime:         { fontSize: 10, marginTop: 4 },
+  msgTime:         { fontSize: 10 },
+  msgMetaRow:      { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
   likeBadge:       { position: 'absolute', bottom: -9, borderRadius: 11, paddingHorizontal: 3, paddingVertical: 1 },
   likeBadgeLeft:   { left: -6 },
   likeBadgeRight:  { right: -6 },
