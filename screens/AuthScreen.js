@@ -33,12 +33,27 @@ export default function AuthScreen() {
       const redirectTo = (Platform.OS === 'web' && typeof window !== 'undefined')
         ? `${window.location.origin}/reset-password`
         : 'https://ootd-fr.vercel.app/reset-password';
-      // Ne révèle jamais si l'email existe (pas de leak d'énumération de comptes)
-      await supabase.auth.resetPasswordForEmail(target, { redirectTo });
-      showToast('Si cet email existe, un lien de réinitialisation vous a été envoyé.', { type: 'info' });
+      console.log('[resetPassword] envoi à', target, '· redirectTo:', redirectTo);
+      const { data, error } = await supabase.auth.resetPasswordForEmail(target, { redirectTo });
+      if (error) {
+        // Capture l'erreur réelle (rate limit 429, SMTP, redirect non autorisé…)
+        console.error('[resetPassword] échec Supabase:', error.status, error.code, error.message, error);
+        if (error.status === 429 || /rate limit/i.test(error.message)) {
+          showToast('Trop de demandes. Le service email de test Supabase est limité (~2-3/h). Réessaie plus tard.', { type: 'error' });
+        } else {
+          showToast('Erreur : ' + error.message, { type: 'error' });
+        }
+        setForgotLoading(false);
+        return;
+      }
+      console.log('[resetPassword] requête acceptée par Supabase:', data);
+      // Message neutre (anti-énumération de comptes). NB : un succès ici ne garantit
+      // pas la *réception* — vérifier le dossier spam + quota SMTP (cf. docs/SUPABASE_EMAIL.md).
+      showToast('Si cet email existe, un lien de réinitialisation vous a été envoyé. Pense à vérifier tes spams.', { type: 'info' });
       setForgotVisible(false);
       setForgotEmail('');
     } catch (e) {
+      console.error('[resetPassword] exception:', e);
       showToast('Erreur : ' + (e?.message || 'inconnue'), { type: 'error' });
     }
     setForgotLoading(false);
