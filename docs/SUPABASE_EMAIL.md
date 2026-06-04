@@ -1,6 +1,40 @@
 # 📧 Emails Supabase (réinitialisation mot de passe, confirmation) — mémo
 
-## ⚠️ Pourquoi l'email de réinitialisation n'arrive pas
+## ✅ ÉTAT ACTUEL (2026-06-05) : SMTP Resend configuré
+
+Custom SMTP **Resend** posé sur le projet via la Management API :
+
+| Réglage | Valeur |
+|---------|--------|
+| `smtp_host` | `smtp.resend.com` |
+| `smtp_port` | `465` |
+| `smtp_user` | `resend` |
+| `smtp_admin_email` (expéditeur) | `onboarding@resend.dev` |
+| `smtp_sender_name` | `OOTD` |
+| `rate_limit_email_sent` | `30` / h |
+
+### ⚠️ Limite restante : Resend en **mode test** (domaine non vérifié)
+
+Tant qu'aucun **domaine** n'est vérifié dans Resend, l'expéditeur est forcément
+`onboarding@resend.dev` et Resend **ne délivre qu'à l'adresse propriétaire du
+compte Resend** (`medi.freymann.jeux@gmail.com`) + ses adresses de test
+(`delivered@resend.dev`…). Tout autre destinataire → **HTTP 403, non délivré**.
+
+➡️ **Pour tester maintenant** : lance un « mot de passe oublié » avec
+`medi.freymann.jeux@gmail.com` (s'il est bien un compte de l'app) → l'email
+arrive (vérifie les spams).
+
+➡️ **Pour envoyer à TOUS les utilisateurs** (gmail, outlook…), une seule étape
+reste : **vérifier un domaine dans Resend** :
+1. Resend → **Domains → Add Domain** (ex: `ootd-fr.app` ou tout domaine à toi).
+2. Ajoute les enregistrements DNS fournis (SPF/DKIM) chez ton registrar.
+3. Une fois « Verified », redonne-moi la main : je change `smtp_admin_email`
+   pour `no-reply@ton-domaine` via l'API et l'envoi marche pour tout le monde.
+   (Sans domaine perso, impossible d'envoyer aux adresses arbitraires.)
+
+---
+
+## ⚠️ Pourquoi l'email ne partait pas AVANT (historique)
 
 Diagnostic effectué le 2026-06-05 via la Management API sur le projet
 `jjqisirnrodilxfkcbiq` :
@@ -62,8 +96,10 @@ de config).
 
 - **Site URL** : `https://ootd-fr.vercel.app` ✅
 - **Redirect allowlist** : `https://ootd-fr.vercel.app/**`, `http://localhost:8081/**`, `http://localhost:19006/**` ✅
-- **SMTP** : ❌ test intégré (à remplacer par un SMTP custom pour la prod)
-- **Rate limit emails** : 2/h (verrouillé tant que SMTP test)
+- **SMTP** : ✅ Resend (`smtp.resend.com:465`, expéditeur `onboarding@resend.dev`)
+- **Rate limit emails** : 30/h ✅
+- **Reste à faire** : vérifier un domaine Resend pour délivrer à tous les users
+  (sinon seul `medi.freymann.jeux@gmail.com` reçoit — cf. section « mode test »).
 
 ## Debug côté client
 
