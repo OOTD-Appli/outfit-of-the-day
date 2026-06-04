@@ -6,29 +6,18 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const CRITERIA_KEYS = ['fit', 'harmonie', 'detail'];
-
 // Modèle Gemini. 2.5-flash dispose du quota sur la clé fournie (2.0-flash = 0).
 const GEMINI_MODEL = 'gemini-2.5-flash';
 
-const PROMPT = `Tu es un styliste-conseiller expert et bienveillant. Analyse uniquement ce qui est VISIBLE sur la photo.
+const PROMPT = `Tu es un critique de mode de haute couture, froid, analytique, impartial et extrêmement strict. Ton rôle est d'évaluer la photo d'un outfit sans aucune complaisance ni politesse artificielle. Tu dois utiliser l'intégralité de l'échelle de notation de 1 à 10. Si un outfit est basique ou négligé, sa note doit être basse (entre 2 et 4). Si un outfit est correct mais sans recherche, sa note doit être de 5. Pour chaque critère, applique rigoureusement le barème suivant :
 
-Barème (notes entières de 1 à 10):
-- global: impression générale de la tenue
-- fit: précision de la coupe sur le corps, proportion, tombé
-- harmonie: équilibre des couleurs, matières et textures
-- detail: soin des finitions et accessoires visibles
+- CRITÈRE 1: HARMONIE DES COULEURS (Départ à 10/10). Enlève 3 points si plus de 3 couleurs non neutres (hors noir, blanc, gris). Enlève 2 points si conflit de couleurs saturées incompatibles. Enlève 2 points si monochrome total plat et sans relief de texture.
+- CRITÈRE 2: COUPE ET SILHOUETTE (Départ à 0/10). Donne 4 points si les volumes sont équilibrés (ample/ajusté ou ajusté/ample), sinon 0. Donne 3 points si la ligne de taille est marquée (vêtement rentré, ceinture, crop). Donne 3 points si le tombé et les longueurs sont impeccables.
+- CRITÈRE 3: EFFORT DE STYLE (Départ à 0/10). Donne 3 points si présence de layering (superposition). Donne jusqu'à 4 points pour les accessoires (1pt par catégorie : bijoux, sac, couvre-chef/lunettes, détails/chaussettes). Donne 3 points si les chaussures sont parfaitement cohérentes avec le style global.
 
-Contraintes:
-- Les notes doivent être variées et réalistes (évite les mêmes notes partout)
-- N'utilise 9-10 que pour une tenue vraiment remarquable
-- Le conseil doit être ultra concret, actionnable, bienveillant et lié à cette photo
-- N'invente pas des éléments non visibles
-- Explique brièvement pourquoi chaque note a été donnée (1 phrase par critère)
-- Le conseil doit être structuré en 2 parties: "Ce qui marche" puis "À essayer"
-
-Réponds UNIQUEMENT en JSON valide (sans markdown) au format exact:
-{"global": 6, "fit": 7, "harmonie": 6, "detail": 6, "explications": {"fit": "explication", "harmonie": "explication", "detail": "explication"}, "conseil": "Ce qui marche: ... À essayer: ..."}`;
+N'évalue que ce qui est VISIBLE sur la photo. N'invente aucun élément non visible.
+Réponds EXCLUSIVEMENT en JSON valide (sans markdown), à la structure exacte :
+{"couleurs_note": 0, "couleurs_analyse": "...", "coupe_note": 0, "coupe_analyse": "...", "style_note": 0, "style_analyse": "..."}`;
 
 function json(body: unknown, status: number) {
   return new Response(JSON.stringify(body), {
@@ -156,15 +145,41 @@ serve(async (req: Request) => {
     }
 
     const clean = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
+    const raw = JSON.parse(clean);
 
-    if (typeof parsed.global !== 'number') return json({ error: 'Analyse IA incomplète' }, 502);
-    if (!CRITERIA_KEYS.every(k => typeof parsed[k] === 'number')) return json({ error: 'Analyse IA invalide' }, 502);
-    if (!CRITERIA_KEYS.every(k => typeof parsed?.explications?.[k] === 'string')) return json({ error: 'Explications manquantes' }, 502);
-    if (typeof parsed.conseil !== 'string' || parsed.conseil.trim().length < 40) return json({ error: 'Conseil trop court' }, 502);
+    // Validation de la structure stricte renvoyée par l'IA
+    const notes = [raw.couleurs_note, raw.coupe_note, raw.style_note];
+    const analyses = [raw.couleurs_analyse, raw.coupe_analyse, raw.style_analyse];
+    if (!notes.every(n => typeof n === 'number')) return json({ error: 'Notes IA manquantes ou invalides' }, 502);
+    if (!analyses.every(s => typeof s === 'string' && s.trim().length > 0)) return json({ error: 'Analyses IA manquantes' }, 502);
+
+    const clamp = (n: number) => Math.max(0, Math.min(10, Math.round(n)));
+    const harmonie = clamp(raw.couleurs_note); // CRITÈRE 1 → couleurs
+    const fit = clamp(raw.coupe_note);         // CRITÈRE 2 → coupe
+    const detail = clamp(raw.style_note);      // CRITÈRE 3 → style/effort
+    // Moyenne globale calculée mathématiquement côté serveur
+    const global = Math.round((harmonie + fit + detail) / 3);
+
+    // Mapping vers la structure attendue par le client et la DB
+    // (score_couleurs=harmonie, score_coupe=fit, score_tendance=detail).
+    const conseil =
+      `Couleurs (${harmonie}/10) : ${raw.couleurs_analyse.trim()} ` +
+      `Coupe (${fit}/10) : ${raw.coupe_analyse.trim()} ` +
+      `Style (${detail}/10) : ${raw.style_analyse.trim()}`;
 
     return json({
-      ...parsed,
+      global,
+      fit,
+      harmonie,
+      detail,
+      explications: {
+        fit: raw.coupe_analyse.trim(),
+        harmonie: raw.couleurs_analyse.trim(),
+        detail: raw.style_analyse.trim(),
+      },
+      conseil,
+      // Structure brute stricte également exposée (couleurs_note/analyse, etc.)
+      ...raw,
       provider,
       credits_remaining: creditResult.credits,
       max_credits: creditResult.max_credits,
