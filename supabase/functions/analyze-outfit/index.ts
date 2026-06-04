@@ -8,8 +8,8 @@ const CORS = {
 
 const CRITERIA_KEYS = ['fit', 'harmonie', 'detail'];
 
-// Modèle Gemini (cf. cahier des charges : gemini-1.5-flash ou gemini-2.0-flash).
-const GEMINI_MODEL = 'gemini-2.0-flash';
+// Modèle Gemini. 2.5-flash dispose du quota sur la clé fournie (2.0-flash = 0).
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 const PROMPT = `Tu es un styliste-conseiller expert et bienveillant. Analyse uniquement ce qui est VISIBLE sur la photo.
 
@@ -58,7 +58,14 @@ async function analyzeWithGemini(base64Image: string): Promise<string> {
             { text: PROMPT },
           ],
         }],
-        generationConfig: { temperature: 0.8, maxOutputTokens: 600, responseMimeType: 'application/json' },
+        // thinkingBudget:0 désactive le raisonnement (2.5 = modèle "thinking") →
+        // tout le budget de tokens va à la sortie JSON, réponse rapide.
+        generationConfig: {
+          temperature: 0.8,
+          maxOutputTokens: 1024,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       }),
     },
   );
