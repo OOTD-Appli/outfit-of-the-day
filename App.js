@@ -15,6 +15,14 @@ import InAppBanner from './components/InAppBanner';
 
 const navigationRef = createNavigationContainerRef();
 
+// URL capturée au chargement du module (avant que supabase-js ne nettoie le hash).
+const INITIAL_HREF = (typeof window !== 'undefined' && window.location) ? window.location.href : '';
+// Détecte un atterrissage de réinitialisation : token recovery dans le hash/query
+// OU chemin /reset-password (qui survit au nettoyage du hash par supabase-js).
+function isRecoveryHref(href) {
+  return /[#?&]type=recovery/i.test(href) || /\/reset-password/i.test(href);
+}
+
 import AuthScreen from './screens/AuthScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import AccueilScreen from './screens/AccueilScreen';
@@ -162,7 +170,9 @@ function ThemedNavigator({ userId }) {
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [recovery, setRecovery] = useState(false);
+  // Initialisé dès le 1er rendu si l'URL est un lien de récupération → pas de
+  // course avec l'évènement PASSWORD_RECOVERY (qui peut être précédé d'un SIGNED_IN).
+  const [recovery, setRecovery] = useState(() => Platform.OS === 'web' && isRecoveryHref(INITIAL_HREF));
 
   useEffect(() => {
     let isMounted = true;
@@ -234,7 +244,12 @@ export default function App() {
       <ThemeProvider>
         <ToastProvider>
           {recovery ? (
-            <ResetPasswordScreen onDone={() => setRecovery(false)} />
+            <ResetPasswordScreen onDone={() => {
+              setRecovery(false);
+              if (Platform.OS === 'web' && typeof window !== 'undefined' && window.history) {
+                window.history.replaceState({}, '', '/');
+              }
+            }} />
           ) : !session ? (
             <AuthScreen />
           ) : (
