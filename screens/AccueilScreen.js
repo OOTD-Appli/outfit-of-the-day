@@ -97,7 +97,7 @@ export default function AccueilScreen({ navigation }) {
   const [sentFlammesToAll, setSentFlammesToAll] = useState(false);
   const [postingFeed, setPostingFeed] = useState(false);
   const [sendingFlammesAll, setSendingFlammesAll] = useState(false);
-  const [flammesPicker, setFlammesPicker] = useState({ visible: false, friends: [] });
+  const [flammesPicker, setFlammesPicker] = useState({ visible: false, friends: [], loading: false });
   const [selectedMusic, setSelectedMusic] = useState(null); // { title, artist, previewUrl, coverUrl }
   const [musicPicker, setMusicPicker] = useState({ visible: false, query: '', results: [], searching: false });
   const musicSearchTimeout = useRef(null);
@@ -418,21 +418,30 @@ export default function AccueilScreen({ navigation }) {
   // Ouvre le sélecteur d'amis avant d'envoyer
   const openFlammesPicker = async () => {
     if (!score || sentFlammesToAll || sendingFlammesAll) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const friendIds = await fetchAcceptedFriendIds(supabase, user.id);
-    if (!friendIds.length) {
-      Alert.alert('Aucun ami', "Accepte des amis dans l'onglet Chat pour leur envoyer ton outfit.");
-      return;
+    // Ouvre la modale immédiatement avec un indicateur de chargement
+    setFlammesPicker({ visible: true, friends: [], loading: true });
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setFlammesPicker({ visible: false, friends: [], loading: false }); return; }
+      const friendIds = await fetchAcceptedFriendIds(supabase, user.id);
+      if (!friendIds?.length) {
+        setFlammesPicker({ visible: false, friends: [], loading: false });
+        Alert.alert('Aucun ami', "Accepte des amis dans l'onglet Chat pour leur envoyer ton outfit.");
+        return;
+      }
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_url')
+        .in('id', friendIds);
+      setFlammesPicker({
+        visible: true,
+        loading: false,
+        friends: (profiles || []).map(p => ({ ...p, selected: false })),
+      });
+    } catch (e) {
+      setFlammesPicker({ visible: false, friends: [], loading: false });
+      showToast('Impossible de charger tes contacts. Réessaie.', { type: 'error' });
     }
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, username, avatar_url')
-      .in('id', friendIds);
-    setFlammesPicker({
-      visible: true,
-      friends: (profiles || []).map(p => ({ ...p, selected: false })),
-    });
   };
 
   const toggleFlammesFriend = (id) => {
@@ -443,7 +452,7 @@ export default function AccueilScreen({ navigation }) {
   };
 
   const sendOutfitToSelectedFlammes = async () => {
-    const selectedIds = flammesPicker.friends.filter(f => f.selected).map(f => f.id);
+    const selectedIds = (flammesPicker.friends || []).filter(f => f.selected).map(f => f.id);
     if (!selectedIds.length) {
       showToast('Sélectionne au moins un ami', { type: 'warning' });
       return;
@@ -794,7 +803,7 @@ export default function AccueilScreen({ navigation }) {
                         <TouchableOpacity style={s.musicResultRow} onPress={() => selectTrack(track)} activeOpacity={0.75}>
                           {track.artworkUrl100
                             ? <Image source={{ uri: track.artworkUrl100 }} style={s.musicResultCover} />
-                            : <View style={[s.musicResultCover, { backgroundColor: ACC_T + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
+                            : <View style={[s.musicResultCover, { backgroundColor: theme.accent + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
                           <View style={s.musicResultInfo}>
                             <Text style={s.musicResultTitle} numberOfLines={1}>{track.trackName}</Text>
                             <Text style={s.musicResultArtist} numberOfLines={1}>{track.artistName}</Text>
@@ -862,28 +871,35 @@ export default function AccueilScreen({ navigation }) {
                     <View style={s.pickerHandle} />
                     <Text style={s.pickerTitle}>Envoyer à...</Text>
                     <Text style={s.pickerSub}>Sélectionne les amis qui recevront ton outfit 🔥</Text>
-                    <FlatList
-                      data={flammesPicker.friends}
-                      keyExtractor={f => f.id}
-                      style={s.pickerList}
-                      renderItem={({ item }) => (
-                        <TouchableOpacity
-                          style={s.pickerRow}
-                          onPress={() => toggleFlammesFriend(item.id)}
-                          activeOpacity={0.75}
-                        >
-                          <View style={[s.pickerAvatar, { backgroundColor: ACC_T + 'BB' }]}>
-                            {item.avatar_url
-                              ? <Image source={{ uri: item.avatar_url }} style={s.pickerAvatarImg} />
-                              : <Text style={s.pickerAvatarText}>{item.username?.[0]?.toUpperCase()}</Text>}
-                          </View>
-                          <Text style={s.pickerName}>{item.username}</Text>
-                          <View style={[s.checkbox, item.selected && s.checkboxOn]}>
-                            {item.selected && <Text style={s.checkmark}>✓</Text>}
-                          </View>
-                        </TouchableOpacity>
-                      )}
-                    />
+                    {flammesPicker.loading ? (
+                      <ActivityIndicator color={theme.accent} style={{ paddingVertical: 28 }} />
+                    ) : (
+                      <FlatList
+                        data={flammesPicker.friends || []}
+                        keyExtractor={f => f.id}
+                        style={s.pickerList}
+                        ListEmptyComponent={
+                          <Text style={s.musicNoResults}>Aucun contact à afficher.</Text>
+                        }
+                        renderItem={({ item }) => (
+                          <TouchableOpacity
+                            style={s.pickerRow}
+                            onPress={() => toggleFlammesFriend(item.id)}
+                            activeOpacity={0.75}
+                          >
+                            <View style={[s.pickerAvatar, { backgroundColor: theme.accent + 'BB' }]}>
+                              {item?.avatar_url
+                                ? <Image source={{ uri: item.avatar_url }} style={s.pickerAvatarImg} />
+                                : <Text style={s.pickerAvatarText}>{item?.username?.[0]?.toUpperCase() || '?'}</Text>}
+                            </View>
+                            <Text style={s.pickerName}>{item?.username || 'Utilisateur'}</Text>
+                            <View style={[s.checkbox, item?.selected && s.checkboxOn]}>
+                              {item?.selected && <Text style={s.checkmark}>✓</Text>}
+                            </View>
+                          </TouchableOpacity>
+                        )}
+                      />
+                    )}
                     <View style={s.pickerBtns}>
                       <TouchableOpacity
                         style={s.pickerCancel}
@@ -892,12 +908,12 @@ export default function AccueilScreen({ navigation }) {
                         <Text style={s.pickerCancelText}>Annuler</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[s.pickerConfirm, !flammesPicker.friends.some(f => f.selected) && s.actionDisabled]}
+                        style={[s.pickerConfirm, !(flammesPicker.friends || []).some(f => f.selected) && s.actionDisabled]}
                         onPress={sendOutfitToSelectedFlammes}
-                        disabled={!flammesPicker.friends.some(f => f.selected)}
+                        disabled={!(flammesPicker.friends || []).some(f => f.selected)}
                       >
                         <Text style={s.pickerConfirmText}>
-                          Envoyer ({flammesPicker.friends.filter(f => f.selected).length})
+                          Envoyer ({(flammesPicker.friends || []).filter(f => f.selected).length})
                         </Text>
                       </TouchableOpacity>
                     </View>

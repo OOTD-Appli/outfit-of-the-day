@@ -23,6 +23,23 @@ function isRecoveryHref(href) {
   return /[#?&]type=recovery/i.test(href) || /\/reset-password/i.test(href);
 }
 
+// Extrait les paramètres d'auth présents dans le hash ET la query string.
+// iOS Safari/PWA tronque parfois le hash ou ne déclenche pas detectSessionInUrl :
+// on parse nous-mêmes et on établira la session explicitement.
+function parseAuthParams(href) {
+  const out = { access_token: null, refresh_token: null, type: null, token_hash: null, code: null };
+  try {
+    const u = new URL(href);
+    const hash = u.hash && u.hash.startsWith('#') ? u.hash.slice(1) : (u.hash || '');
+    const fromHash = new URLSearchParams(hash);
+    const fromQuery = u.searchParams;
+    for (const k of Object.keys(out)) {
+      out[k] = fromHash.get(k) || fromQuery.get(k) || null;
+    }
+  } catch (_) {}
+  return out;
+}
+
 import AuthScreen from './screens/AuthScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import AccueilScreen from './screens/AccueilScreen';
@@ -176,6 +193,30 @@ export default function App() {
 
   useEffect(() => {
     let isMounted = true;
+
+    // ── iOS PWA : établir explicitement la session de récupération ───────────
+    // On ne dépend pas uniquement de detectSessionInUrl (peu fiable sur Safari/
+    // iOS standalone). On lit les tokens capturés dans INITIAL_HREF et on pose
+    // la session à la main → updateUser({password}) aura toujours une session.
+    if (Platform.OS === 'web' && isRecoveryHref(INITIAL_HREF)) {
+      setRecovery(true);
+      (async () => {
+        const p = parseAuthParams(INITIAL_HREF);
+        try {
+          if (p.access_token && p.refresh_token) {
+            await supabase.auth.setSession({ access_token: p.access_token, refresh_token: p.refresh_token });
+          } else if (p.token_hash) {
+            await supabase.auth.verifyOtp({ type: 'recovery', token_hash: p.token_hash });
+          } else if (p.code) {
+            await supabase.auth.exchangeCodeForSession(p.code);
+          }
+        } catch (e) {
+          console.error('[recovery] établissement session échoué:', e?.message || e);
+        } finally {
+          if (isMounted) setLoading(false);
+        }
+      })();
+    }
 
     const syncSession = async (nextSession) => {
       if (!isMounted) return;
