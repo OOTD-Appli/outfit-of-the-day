@@ -58,6 +58,9 @@ self.addEventListener('push', (event) => {
     body: data.body || '',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
+    // tag : regroupe/remplace les notifs d'une même conversation (1 par chat)
+    tag: data.tag || undefined,
+    renotify: !!data.tag,
     data: { url: data.url || '/' },
   };
   event.waitUntil(self.registration.showNotification(title, options));
@@ -68,7 +71,14 @@ self.addEventListener('notificationclick', (event) => {
   const target = (event.notification.data && event.notification.data.url) || '/';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      for (const client of list) { if ('focus' in client) return client.focus(); }
+      // App déjà ouverte → on la focus ET on lui transmet le deep link (sans reload)
+      for (const client of list) {
+        if ('focus' in client) {
+          client.postMessage({ type: 'deep-link', url: target });
+          return client.focus();
+        }
+      }
+      // App fermée → on ouvre directement la bonne URL (avec ?chat=…)
       if (self.clients.openWindow) return self.clients.openWindow(target);
     }),
   );

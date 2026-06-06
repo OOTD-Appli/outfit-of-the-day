@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, Text, StyleSheet, Animated,
@@ -20,6 +20,7 @@ import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import { getLogoConfig } from '../lib/logoConfig';
 import { setActiveChat } from '../lib/activeChat';
+import { dismissChatNotifications } from '../lib/webPush';
 
 // Indicateur « en train d'écrire… » — 3 points qui rebondissent
 function TypingDots({ color }) {
@@ -258,6 +259,35 @@ export default function FlammesScreen() {
     if (firstFocus.current) { firstFocus.current = false; fetchData(); }
     else { fetchData({ silent: true }); }
   }, [fetchData]));
+
+  // Conversations triées : dernier message (reçu ou envoyé) le plus récent en haut.
+  const sortedFriends = useMemo(() => {
+    const ts = (id) => {
+      const m = lastMessages[id];
+      return m?.created_at ? new Date(m.created_at).getTime() : 0;
+    };
+    return [...friends].sort((a, b) => ts(b.id) - ts(a.id));
+  }, [friends, lastMessages]);
+
+  // Realtime (vue liste) : un message reçu remonte la conversation en haut + non-lus.
+  const selectedFriendRef = useRef(null);
+  useEffect(() => { selectedFriendRef.current = selectedFriend?.id || null; }, [selectedFriend]);
+  useEffect(() => {
+    if (!userId) return;
+    const ch = supabase
+      .channel(`list-msgs-${userId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, (payload) => {
+        const m = payload.new;
+        if (!m) return;
+        const fid = m.sender_id;
+        setLastMessages(prev => ({ ...prev, [fid]: m }));   // déclenche le re-tri
+        if (selectedFriendRef.current !== fid) {
+          setUnreadCounts(prev => ({ ...prev, [fid]: (prev[fid] || 0) + 1 }));
+        }
+      })
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [userId]);
 
   // Signale la conversation ouverte uniquement quand l'onglet Chat a le focus.
   // Au blur (changement d'onglet), on efface → la bannière in-app reprend.
@@ -641,6 +671,8 @@ export default function FlammesScreen() {
     setSelectedFriend(friend);
     setView('chat');
     setActiveChat(friend.id);
+    // Efface les notifications push de cette conversation (centre de notif)
+    dismissChatNotifications(friend.id);
     await loadMessages(friend);
     supabase.rpc('mark_messages_read', { p_friend_id: friend.id }).catch(() => {});
   };
@@ -804,8 +836,12 @@ export default function FlammesScreen() {
   // Notifie le destinataire via web push (best-effort, ne bloque jamais l'envoi).
   const notifyFriend = (friendId, title, body) => {
     if (!friendId) return;
+    // Deep link : le destinataire ouvre la conversation avec MOI (l'expéditeur).
+    // tag = chat-<monId> → regroupe/remplace + permet l'effacement à l'ouverture.
     supabase.functions
-      .invoke('send-web-push', { body: { recipient_id: friendId, title, body, url: '/' } })
+      .invoke('send-web-push', {
+        body: { recipient_id: friendId, title, body, url: `/?chat=${userId}`, tag: `chat-${userId}` },
+      })
       .catch(() => {});
   };
 
@@ -825,6 +861,7 @@ export default function FlammesScreen() {
       created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(),
     };
     setMessages(prev => [...prev, tempMsg]);
+    setLastMessages(prev => ({ ...prev, [selectedFriend.id]: tempMsg })); // remonte la conv en haut
     try {
       const { error } = await supabase.from('messages').insert({ sender_id: userId, receiver_id: selectedFriend.id, content: text });
       if (error) throw error;
@@ -1273,8 +1310,8 @@ export default function FlammesScreen() {
 
         <FlatList
             data={localFilter.trim()
-              ? friends.filter(f => f.username?.toLowerCase().includes(localFilter.toLowerCase()))
-              : friends}
+              ? sortedFriends.filter(f => f.username?.toLowerCase().includes(localFilter.toLowerCase()))
+              : sortedFriends}
             keyExtractor={item => item.id}
             contentContainerStyle={styles.list}
             initialNumToRender={10}

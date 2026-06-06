@@ -1,4 +1,4 @@
-import { registerForPushNotifications, savePushToken } from './lib/notifications';
+import { registerForPushNotifications, savePushToken, scheduleFlammeReminder } from './lib/notifications';
 import { registerWebPush } from './lib/webPush';
 import { useState, useEffect } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text, Platform } from 'react-native';
@@ -6,6 +6,7 @@ import { NavigationContainer, createNavigationContainerRef } from '@react-naviga
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import * as Notifications from 'expo-notifications';
 import { useSafeAreaInsets, SafeAreaProvider } from 'react-native-safe-area-context';
 import { supabase } from './lib/supabase';
 import { ensureUserProfile } from './lib/ensureProfile';
@@ -26,6 +27,11 @@ function isRecoveryHref(href) {
 // Extrait les paramètres d'auth présents dans le hash ET la query string.
 // iOS Safari/PWA tronque parfois le hash ou ne déclenche pas detectSessionInUrl :
 // on parse nous-mêmes et on établira la session explicitement.
+// Deep link messagerie : extrait l'id de conversation de ?chat=<id>
+function chatIdFromUrl(href) {
+  try { return new URL(href).searchParams.get('chat'); } catch (_) { return null; }
+}
+
 function parseAuthParams(href) {
   const out = { access_token: null, refresh_token: null, type: null, token_hash: null, code: null };
   try {
@@ -237,6 +243,7 @@ export default function App() {
           await registerWebPush();
           return;
         }
+        await scheduleFlammeReminder(); // rappel local quotidien « prends ta photo » (natif)
         if (Constants.appOwnership === 'expo') return;
         const token = await registerForPushNotifications();
         if (token) await savePushToken(token);
@@ -270,6 +277,46 @@ export default function App() {
       isMounted = false;
       authListener.subscription.unsubscribe();
     };
+  }, []);
+
+  // Deep link messagerie depuis une notif cliquée APP FERMÉE (?chat=<id> dans l'URL)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !session || recovery) return;
+    const id = chatIdFromUrl(INITIAL_HREF);
+    if (!id) return;
+    const t = setTimeout(() => {
+      if (navigationRef.isReady()) navigationRef.navigate('Chat', { openFriendId: id });
+      if (typeof window !== 'undefined' && window.history) window.history.replaceState({}, '', '/');
+    }, 400);
+    return () => clearTimeout(t);
+  }, [session, recovery]);
+
+  // Deep link depuis une notif cliquée APP DÉJÀ OUVERTE (message du service worker)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof navigator === 'undefined' || !navigator.serviceWorker) return;
+    const handler = (event) => {
+      if (event.data?.type !== 'deep-link') return;
+      const id = chatIdFromUrl(event.data.url || '');
+      if (id && navigationRef.isReady()) navigationRef.navigate('Chat', { openFriendId: id });
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, []);
+
+  // Clic sur une notification native (Expo) → routage deep link
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = Notifications.addNotificationResponseReceivedListener((resp) => {
+      const url = resp?.notification?.request?.content?.data?.url || '';
+      if (!navigationRef.isReady()) return;
+      if (/analyse/i.test(url)) {
+        navigationRef.navigate('Analyse'); // rappel flamme → écran d'analyse/caméra
+      } else {
+        const id = chatIdFromUrl(url);
+        if (id) navigationRef.navigate('Chat', { openFriendId: id });
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   if (loading) {

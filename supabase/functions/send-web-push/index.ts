@@ -42,6 +42,7 @@ serve(async (req: Request) => {
     const title = (body?.title ?? 'OOTD').toString().slice(0, 100);
     const message = (body?.body ?? '').toString().slice(0, 240);
     const url = (body?.url ?? '/').toString();
+    const tag = body?.tag ? body.tag.toString().slice(0, 100) : undefined;
     if (!recipientId || typeof recipientId !== 'string') {
       return json({ error: 'recipient_id manquant' }, 400);
     }
@@ -82,7 +83,7 @@ serve(async (req: Request) => {
     if (!subs || subs.length === 0) return json({ sent: 0 }, 200);
 
     webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
-    const payload = JSON.stringify({ title, body: message, url });
+    const payload = JSON.stringify({ title, body: message, url, tag });
 
     let sent = 0;
     const dead: string[] = [];

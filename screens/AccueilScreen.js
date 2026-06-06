@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
+import { dismissDeliveredFlammeReminder } from '../lib/notifications';
 import Gauge from '../components/Gauge';
 
 const ACCENT      = '#ED93B1';
@@ -494,7 +495,10 @@ export default function AccueilScreen({ navigation }) {
           }
         } catch (loopErr) { console.warn('flamme loop', loopErr); }
       }
-      if (sent > 0) setSentFlammesToAll(true);
+      if (sent > 0) {
+        setSentFlammesToAll(true);
+        dismissDeliveredFlammeReminder(); // photo envoyée → on retire le rappel affiché
+      }
       const msg = sent > 0
         ? `${sent} ami(s) ont reçu ton outfit 🔥${skipped > 0 ? ` · ${skipped} ignoré(s) (déjà envoyé aujourd'hui)` : ''}`
         : "Aucun envoi : snap déjà envoyé à ces amis aujourd'hui.";
