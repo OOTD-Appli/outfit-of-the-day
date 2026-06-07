@@ -131,6 +131,9 @@ function ThemedNavigator({ userId }) {
       <Tab.Navigator
         screenOptions={{
           headerShown: false,
+          // Transition douce entre onglets (fondu + léger glissement) — n'affecte
+          // ni les boutons ni la logique, juste le changement d'écran.
+          animation: 'shift',
           tabBarStyle,
           tabBarActiveTintColor: theme.accent,
           tabBarInactiveTintColor: '#C4B5AD',

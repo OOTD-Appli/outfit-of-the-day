@@ -726,6 +726,14 @@ export default function FlammesScreen() {
     setMessages([]);
   };
 
+  // ── Auto-scroll vers le bas du fil de messages ─────────────────────────────
+  // onContentSizeChange couvre TOUS les cas (ouverture, envoi, réception realtime,
+  // animations d'entrée) sans toucher à la logique des messages. Premier affichage :
+  // saut immédiat ; messages suivants : défilement animé fluide.
+  const msgListRef = useRef(null);
+  const didInitialScroll = useRef(false);
+  useEffect(() => { didInitialScroll.current = false; }, [selectedFriend]);
+
   // ── Like / suppression de messages (synchro temps réel) ────────────────────
   const lastTapRef = useRef({ id: null, t: 0 });
 
@@ -1105,7 +1113,16 @@ export default function FlammesScreen() {
         </View>
 
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}>
-          <ScrollView style={[styles.msgList, { backgroundColor: theme.bg }]} contentContainerStyle={styles.msgListContent} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            ref={msgListRef}
+            style={[styles.msgList, { backgroundColor: theme.bg }]}
+            contentContainerStyle={styles.msgListContent}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => {
+              msgListRef.current?.scrollToEnd({ animated: didInitialScroll.current });
+              didInitialScroll.current = true;
+            }}
+          >
             {messages.length === 0 ? (
               <View style={styles.msgEmpty}>
                 <Feather name="message-circle" size={40} color={theme.border} />
