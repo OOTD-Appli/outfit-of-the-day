@@ -13,6 +13,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import Skeleton from '../components/Skeleton';
+import AnimatedEntrance from '../components/AnimatedEntrance';
+import Bouncy from '../components/Bouncy';
 import { getLogoConfig } from '../lib/logoConfig';
 import { isPwaStandalone, promptInstall } from '../lib/pwa';
 
@@ -352,7 +354,7 @@ export default function ProfilScreen() {
               </View>
             </View>
 
-            <View style={styles.profileCard}>
+            <AnimatedEntrance style={styles.profileCard} distance={16} duration={380}>
               <View style={styles.avatarContainer}>
                 {uploadingAvatar ? (
                   <View style={[styles.avatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2, backgroundColor: theme.accent, borderWidth: logoConfig.frameBorderColor ? 3 : 0, borderColor: logoConfig.frameBorderColor || 'transparent' }]}>
@@ -399,7 +401,7 @@ export default function ProfilScreen() {
                   <Text style={[styles.statLabel, { color: theme.textSub }]}>Points</Text>
                 </View>
               </View>
-            </View>
+            </AnimatedEntrance>
 
             <View style={[styles.niveauCard, { backgroundColor: theme.card }]}>
               <Text style={[styles.niveauLabel, { color: theme.textPri }]}>Niveau {profile?.niveau || 1}</Text>
@@ -413,9 +415,11 @@ export default function ProfilScreen() {
           </View>
         }
         renderItem={({ item, index }) => (
-          <TouchableOpacity style={styles.gridCell} activeOpacity={0.85} onPress={() => openLightbox(index)}>
-            <Image source={{ uri: item.image_url }} style={styles.gridPhoto} />
-          </TouchableOpacity>
+          <AnimatedEntrance style={styles.gridCell} delay={Math.min(index, 12) * 30} distance={10} scaleFrom={0.92}>
+            <TouchableOpacity style={{ width: '100%', height: '100%' }} activeOpacity={0.85} onPress={() => openLightbox(index)}>
+              <Image source={{ uri: item.image_url }} style={styles.gridPhoto} />
+            </TouchableOpacity>
+          </AnimatedEntrance>
         )}
         ListEmptyComponent={
           <View style={styles.emptyGalerie}>

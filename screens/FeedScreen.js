@@ -18,6 +18,8 @@ import { useTheme } from '../lib/themeContext';
 import { getLogoConfig } from '../lib/logoConfig';
 import { timeAgo } from '../lib/utils';
 import { triggerHaptic } from '../lib/haptics';
+import Bouncy from '../components/Bouncy';
+import Skeleton from '../components/Skeleton';
 
 // Pré-charge en arrière-plan les images des prochains posts + avatars (cache expo-image).
 function prefetchUpcoming(list, startIndex, count = 3) {
@@ -232,21 +234,21 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
         </TouchableOpacity>
 
         {/* Commentaires */}
-        <TouchableOpacity style={styles.sideAction} onPress={() => onOpenComments(item.id)} activeOpacity={0.82}>
+        <Bouncy style={styles.sideAction} onPress={() => onOpenComments(item.id)}>
           <Feather name="message-circle" size={30} color="#fff" />
           <Text style={styles.sideCount}>{formatCount(commentsCount)}</Text>
-        </TouchableOpacity>
+        </Bouncy>
 
         {/* Partager */}
-        <TouchableOpacity style={styles.sideAction} onPress={() => onOpenShare(item)} activeOpacity={0.82}>
+        <Bouncy style={styles.sideAction} onPress={() => onOpenShare(item)}>
           <Feather name="send" size={28} color="#fff" />
           <Text style={styles.sideCount}> </Text>
-        </TouchableOpacity>
+        </Bouncy>
 
         {/* Plus */}
-        <TouchableOpacity style={styles.sideAction} activeOpacity={0.82}>
+        <Bouncy style={styles.sideAction}>
           <Feather name="more-horizontal" size={26} color="#fff" />
-        </TouchableOpacity>
+        </Bouncy>
       </View>
     </View>
   );
@@ -361,7 +363,7 @@ export default function FeedScreen() {
 
     const { data, error } = await supabase
       .from('ootds')
-      .select(`*, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
+      .select(`id, user_id, image_url, caption, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
       .order('created_at', { ascending: false })
       .range(0, PAGE_SIZE - 1);
     if (error) {
@@ -387,7 +389,7 @@ export default function FeedScreen() {
     const end = start + PAGE_SIZE - 1;
     const { data, error } = await supabase
       .from('ootds')
-      .select(`*, profiles(username, avatar_url, active_logo), likes(id, user_id), comments(count)`)
+      .select(`id, user_id, image_url, caption, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
       .order('created_at', { ascending: false })
       .range(start, end);
     if (!error && data) {
@@ -611,8 +613,17 @@ export default function FeedScreen() {
 
       {/* Feed */}
       {(loading || pageH === 0) ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.accent} size="large" />
+        <View style={[styles.center, { justifyContent: 'flex-end', paddingBottom: insets.bottom + 110, paddingHorizontal: 16 }]}>
+          {/* Skeleton feed (sombre) — épouse la forme d'un post */}
+          <View style={{ position: 'absolute', right: 12, bottom: insets.bottom + 150, gap: 22, alignItems: 'center' }}>
+            {[52, 30, 30, 28].map((sz, i) => (
+              <Skeleton key={i} width={sz} height={sz} borderRadius={sz / 2} color="#2c2c2c" />
+            ))}
+          </View>
+          <Skeleton width={70} height={22} borderRadius={11} color="#2c2c2c" style={{ marginBottom: 10 }} />
+          <Skeleton width={170} height={16} borderRadius={6} color="#2c2c2c" style={{ marginBottom: 8 }} />
+          <Skeleton width="62%" height={13} borderRadius={6} color="#2c2c2c" style={{ marginBottom: 8 }} />
+          <Skeleton width={130} height={12} borderRadius={6} color="#2c2c2c" />
         </View>
       ) : (
         <FlatList

@@ -22,6 +22,8 @@ import { getLogoConfig } from '../lib/logoConfig';
 import { setActiveChat } from '../lib/activeChat';
 import { dismissChatNotifications } from '../lib/webPush';
 import { triggerHaptic } from '../lib/haptics';
+import Bouncy from '../components/Bouncy';
+import AnimatedEntrance from '../components/AnimatedEntrance';
 
 // Entrée d'une bulle de message : fade + léger glissement (vertical + côté) + scale.
 // L'animation ne joue qu'au MONTAGE (key=msg.id stable) → seules les nouvelles
@@ -1209,7 +1211,7 @@ export default function FlammesScreen() {
               multiline
               maxLength={500}
             />
-            <TouchableOpacity
+            <Bouncy
               style={[styles.sendBtn, { backgroundColor: theme.accent }, (!messageText.trim() || sendingMessage) && { opacity: 0.45 }]}
               onPress={sendTextMessage}
               disabled={!messageText.trim() || sendingMessage}
@@ -1218,7 +1220,7 @@ export default function FlammesScreen() {
                 ? <ActivityIndicator color="#fff" size="small" />
                 : <Feather name="send" size={16} color="#fff" />
               }
-            </TouchableOpacity>
+            </Bouncy>
           </View>
         </KeyboardAvoidingView>
         {renderRestoreModal()}
@@ -1461,7 +1463,7 @@ export default function FlammesScreen() {
                 </View>
               </>
             }
-            renderItem={({ item }) => {
+            renderItem={({ item, index }) => {
               const fi = getFlammeInfo(item.id);
               const lc = getLogoConfig(item.active_logo);
               const lastMsg = lastMessages[item.id];
@@ -1475,6 +1477,7 @@ export default function FlammesScreen() {
                     : lastMsg?.content || 'Nouveau contact';
               const msgTime = lastMsg ? lastMsgTime(lastMsg.created_at) : '';
               return (
+                <AnimatedEntrance delay={Math.min(index, 8) * 45} distance={14}>
                 <TouchableOpacity style={[styles.convRow, { borderBottomColor: theme.border }]} onPress={() => openChat(item)} activeOpacity={0.75}>
                   <GradientAvatar
                     uri={item.avatar_url}
@@ -1513,6 +1516,7 @@ export default function FlammesScreen() {
                     )}
                   </View>
                 </TouchableOpacity>
+                </AnimatedEntrance>
               );
             }}
             ListEmptyComponent={

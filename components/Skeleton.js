@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Animated } from 'react-native';
 
-export default function Skeleton({ width, height, borderRadius = 8, style }) {
+export default function Skeleton({ width, height, borderRadius = 8, style, color = '#D0C8C8' }) {
   const shimmer = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -19,7 +19,7 @@ export default function Skeleton({ width, height, borderRadius = 8, style }) {
 
   return (
     <Animated.View
-      style={[{ width, height, borderRadius, backgroundColor: '#D0C8C8', opacity }, style]}
+      style={[{ width, height, borderRadius, backgroundColor: color, opacity }, style]}
     />
   );
 }

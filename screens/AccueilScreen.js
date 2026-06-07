@@ -20,6 +20,8 @@ import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import { dismissDeliveredFlammeReminder } from '../lib/notifications';
 import Gauge from '../components/Gauge';
+import Bouncy from '../components/Bouncy';
+import AnimatedEntrance from '../components/AnimatedEntrance';
 
 const ACCENT      = '#ED93B1';
 const BG          = '#FAF4F1';
@@ -515,7 +517,7 @@ export default function AccueilScreen({ navigation }) {
 
         {/* ===== AVANT — pas encore de score ===== */}
         {!score && (
-          <View>
+          <AnimatedEntrance distance={16} duration={360}>
             {/* En-tête */}
             <View style={s.beforeHeader}>
               <Text style={s.title}>Analyse ton OOTD ✨</Text>
@@ -595,11 +597,10 @@ export default function AccueilScreen({ navigation }) {
 
             {/* Bouton analyser */}
             {image && credits !== 0 && (
-              <TouchableOpacity
+              <Bouncy
                 style={[s.analyzeBtn, (loading || credits === null) && s.analyzeBtnDisabled]}
                 onPress={analyzeOutfit}
                 disabled={loading || credits === null}
-                activeOpacity={0.85}
               >
                 {loading ? (
                   <View style={s.analyzeBtnInner}>
@@ -609,7 +610,7 @@ export default function AccueilScreen({ navigation }) {
                 ) : (
                   <Text style={s.analyzeBtnText}>✨ Analyser ma tenue</Text>
                 )}
-              </TouchableOpacity>
+              </Bouncy>
             )}
 
             {/* Carte conseil */}
@@ -642,7 +643,7 @@ export default function AccueilScreen({ navigation }) {
                 </View>
               ))}
             </View>
-          </View>
+          </AnimatedEntrance>
         )}
 
         {/* ===== APRÈS — score disponible ===== */}
@@ -833,11 +834,10 @@ export default function AccueilScreen({ navigation }) {
                 </View>
               </Modal>
 
-              <TouchableOpacity
+              <Bouncy
                 style={[s.actionPrimary, (publishedToFeed || postingFeed) && s.actionDisabled]}
                 onPress={publishToFeed}
                 disabled={publishedToFeed || postingFeed}
-                activeOpacity={0.85}
               >
                 {postingFeed ? (
                   <ActivityIndicator color="#1a0a10" size="small" />
@@ -846,13 +846,12 @@ export default function AccueilScreen({ navigation }) {
                     {publishedToFeed ? '✓ Publié dans le feed' : '🏠 Publier dans le feed'}
                   </Text>
                 )}
-              </TouchableOpacity>
+              </Bouncy>
 
-              <TouchableOpacity
+              <Bouncy
                 style={[s.actionSecondary, (sentFlammesToAll || sendingFlammesAll) && s.actionDisabled]}
                 onPress={openFlammesPicker}
                 disabled={sentFlammesToAll || sendingFlammesAll}
-                activeOpacity={0.85}
               >
                 {sendingFlammesAll ? (
                   <ActivityIndicator color={theme.accent} size="small" />
@@ -861,7 +860,7 @@ export default function AccueilScreen({ navigation }) {
                     {sentFlammesToAll ? '✓ Envoyé à tes flammes' : '🔥 Envoyer à mes flammes'}
                   </Text>
                 )}
-              </TouchableOpacity>
+              </Bouncy>
 
               {/* Sélecteur de destinataires flammes */}
               <Modal
