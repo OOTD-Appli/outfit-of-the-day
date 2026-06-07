@@ -248,8 +248,22 @@ export default function AccueilScreen({ navigation }) {
         const canvas = document.createElement('canvas');
         canvas.width = width; canvas.height = height;
         canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-        applyPickedImage({ uri: dataUrl, base64: dataUrl.split(',')[1] || null, width, height });
+        // Deux encodages :
+        //  • JPEG → envoyé à l'IA d'analyse (format le plus sûr/compatible).
+        //  • WebP → STOCKÉ dans le feed (≈25-35% plus léger, rendu par tous les
+        //    navigateurs modernes + expo-image). Repli JPEG si WebP non supporté
+        //    (toDataURL renvoie alors du PNG → on détecte et on retombe sur JPEG).
+        const jpegUrl = canvas.toDataURL('image/jpeg', 0.78);
+        let uploadMime = 'image/webp';
+        let uploadUrl = canvas.toDataURL(uploadMime, 0.72);
+        if (!uploadUrl.startsWith('data:image/webp')) { uploadMime = 'image/jpeg'; uploadUrl = jpegUrl; }
+        applyPickedImage({
+          uri: uploadUrl,                                  // aperçu = exactement ce qui sera stocké
+          base64: jpegUrl.split(',')[1] || null,           // analyse IA (JPEG)
+          uploadBase64: uploadUrl.split(',')[1] || null,   // stockage feed (WebP/JPEG)
+          uploadMime,
+          width, height,
+        });
       };
       img.onerror = () => { URL.revokeObjectURL(objectUrl); showToast('Image illisible, réessaie', { type: 'error' }); };
       img.src = objectUrl;
@@ -322,6 +336,7 @@ export default function AccueilScreen({ navigation }) {
       if (!image.base64) {
         throw new Error("Impossible de lire la photo. Réessaie en choisissant une autre image.");
       }
+      // L'analyse reçoit toujours du JPEG (format le plus compatible avec l'IA).
       const base64Image = `data:image/jpeg;base64,${image.base64}`;
       const { data: parsed, error: fnError } = await withTimeout(
         supabase.functions.invoke("analyze-outfit", { body: { base64Image } }),
@@ -360,16 +375,20 @@ export default function AccueilScreen({ navigation }) {
 
   const uploadAnalyzedImageIfNeeded = useCallback(async () => {
     if (cachedPublicUrlRef.current) return cachedPublicUrlRef.current;
-    if (!image?.base64) {
+    // Stockage feed : WebP si dispo (web), sinon JPEG (web sans support / natif).
+    const upBase64 = image?.uploadBase64 || image?.base64;
+    if (!upBase64) {
       throw new Error('Image introuvable. Reprends une photo.');
     }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Session expirée. Reconnecte-toi.');
-    const fileName = `${user.id}/outfit_${Date.now()}.jpg`;
-    const imageBuffer = decode(image.base64);
+    const mime = image.uploadMime || 'image/jpeg';
+    const ext = mime === 'image/webp' ? 'webp' : 'jpg';
+    const fileName = `${user.id}/outfit_${Date.now()}.${ext}`;
+    const imageBuffer = decode(upBase64);
     const { error: uploadError } = await supabase.storage
       .from('ootds')
-      .upload(fileName, imageBuffer, { contentType: 'image/jpeg' });
+      .upload(fileName, imageBuffer, { contentType: mime });
     if (uploadError) {
       if (uploadError.message?.toLowerCase().includes('bucket not found')) {
         throw new Error("Le bucket 'ootds' est introuvable dans Supabase Storage.");
