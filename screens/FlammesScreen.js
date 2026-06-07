@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  View, Text, StyleSheet, Animated,
+  View, Text, StyleSheet, Animated, Easing,
   FlatList, TouchableOpacity, ActivityIndicator,
   TextInput, ScrollView, Alert, KeyboardAvoidingView, Platform, Modal,
   useWindowDimensions,
@@ -21,6 +21,48 @@ import { useTheme } from '../lib/themeContext';
 import { getLogoConfig } from '../lib/logoConfig';
 import { setActiveChat } from '../lib/activeChat';
 import { dismissChatNotifications } from '../lib/webPush';
+import { triggerHaptic } from '../lib/haptics';
+
+// Entrée d'une bulle de message : fade + léger glissement (vertical + côté) + scale.
+// L'animation ne joue qu'au MONTAGE (key=msg.id stable) → seules les nouvelles
+// bulles s'animent, jamais les anciennes à chaque rendu. transform+opacity only.
+function AnimatedMsgRow({ mine, style, children }) {
+  const t = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(t, { toValue: 1, duration: 230, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, []);
+  return (
+    <Animated.View
+      style={[
+        style,
+        {
+          opacity: t,
+          transform: [
+            { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) },
+            { translateX: t.interpolate({ inputRange: [0, 1], outputRange: [mine ? 8 : -8, 0] }) },
+            { scale: t.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+          ],
+        },
+      ]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+// Badge ❤️ : pop élastique à l'apparition (spring 0.4 → 1, léger dépassement).
+// Monte quand is_liked passe à true → l'animation joue pile au like.
+function LikeBadge({ style, bg, textStyle }) {
+  const s = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    Animated.spring(s, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 14 }).start();
+  }, []);
+  return (
+    <Animated.View style={[style, { backgroundColor: bg, transform: [{ scale: s }] }]}>
+      <Text style={textStyle}>❤️</Text>
+    </Animated.View>
+  );
+}
 
 // Indicateur « en train d'écrire… » — 3 points qui rebondissent
 function TypingDots({ color }) {
@@ -771,6 +813,7 @@ export default function FlammesScreen() {
   const toggleLike = async (msg) => {
     if (msg.sender_id === userId || msg.is_deleted) return; // on ne like que les messages reçus
     const next = !msg.is_liked;
+    if (next) triggerHaptic(12); // micro-vibration au like (cohérent avec le Feed)
     setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, is_liked: next } : m)));
     try {
       const { data, error } = await supabase.rpc('toggle_message_like', { p_id: msg.id, p_liked: next });
@@ -1072,7 +1115,7 @@ export default function FlammesScreen() {
             ) : messages.map(msg => {
               const mine = msg.sender_id === userId;
               return (
-              <View key={msg.id} style={[styles.msgRow, mine ? styles.msgRowRight : styles.msgRowLeft]}>
+              <AnimatedMsgRow key={msg.id} mine={mine} style={[styles.msgRow, mine ? styles.msgRowRight : styles.msgRowLeft]}>
                 <TouchableOpacity
                   activeOpacity={0.9}
                   onPress={() => handleBubbleTap(msg)}
@@ -1127,12 +1170,14 @@ export default function FlammesScreen() {
                     )}
                   </View>
                   {msg.is_liked && !msg.is_deleted && (
-                    <View style={[styles.likeBadge, mine ? styles.likeBadgeLeft : styles.likeBadgeRight, { backgroundColor: theme.bg }]}>
-                      <Text style={styles.likeBadgeText}>❤️</Text>
-                    </View>
+                    <LikeBadge
+                      style={[styles.likeBadge, mine ? styles.likeBadgeLeft : styles.likeBadgeRight]}
+                      bg={theme.bg}
+                      textStyle={styles.likeBadgeText}
+                    />
                   )}
                 </TouchableOpacity>
-              </View>
+              </AnimatedMsgRow>
               );
             })}
           </ScrollView>

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, memo, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, Animated,
+  View, Text, StyleSheet, Animated, Easing,
   TouchableOpacity, ActivityIndicator,
   RefreshControl, Modal, FlatList, useWindowDimensions,
 } from 'react-native';
@@ -55,27 +55,32 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
   const avatarInitial = item.profiles?.username?.[0]?.toUpperCase() || '?';
 
   const heartScale = useRef(new Animated.Value(1)).current;
-  const overlayHeartScale = useRef(new Animated.Value(0.1)).current;
+  const overlayHeartScale = useRef(new Animated.Value(0.3)).current;
   const overlayHeartOpacity = useRef(new Animated.Value(0)).current;
+  const overlayHeartRotate = useRef(new Animated.Value(0)).current;
   const lastTapRef = useRef(0);
   const touchStartY = useRef(0);
 
   const handleLike = () => {
     Animated.sequence([
-      Animated.spring(heartScale, { toValue: 1.45, useNativeDriver: true, speed: 35, bounciness: 14 }),
+      Animated.spring(heartScale, { toValue: 1.35, useNativeDriver: true, speed: 35, bounciness: 12 }),
       Animated.spring(heartScale, { toValue: 1.0,  useNativeDriver: true, speed: 20, bounciness: 8  }),
     ]).start();
     onToggleLike(item.id, isLiked, likeObj?.id);
   };
 
   const playOverlayHeart = () => {
-    overlayHeartScale.setValue(0.1);
+    // Anti-pattern évité : on ne part PAS de scale 0. Pop élastique (overshoot),
+    // léger redressement (rotation), puis sortie rapide (timing asymétrique).
+    overlayHeartScale.setValue(0.3);
+    overlayHeartRotate.setValue(0);
     overlayHeartOpacity.setValue(1);
     Animated.parallel([
-      Animated.spring(overlayHeartScale, { toValue: 1.0, useNativeDriver: true, speed: 20, bounciness: 8 }),
+      Animated.spring(overlayHeartScale, { toValue: 1.0, useNativeDriver: true, speed: 16, bounciness: 16 }),
+      Animated.timing(overlayHeartRotate, { toValue: 1, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.sequence([
-        Animated.delay(350),
-        Animated.timing(overlayHeartOpacity, { toValue: 0, duration: 280, useNativeDriver: true }),
+        Animated.delay(280),
+        Animated.timing(overlayHeartOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
       ]),
     ]).start();
   };
@@ -167,7 +172,14 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
         pointerEvents="none"
         style={[StyleSheet.absoluteFillObject, styles.heartOverlayWrap, { opacity: overlayHeartOpacity }]}
       >
-        <Animated.Text style={[styles.heartOverlayIcon, { transform: [{ scale: overlayHeartScale }] }]}>
+        <Animated.Text
+          style={[styles.heartOverlayIcon, {
+            transform: [
+              { scale: overlayHeartScale },
+              { rotate: overlayHeartRotate.interpolate({ inputRange: [0, 1], outputRange: ['-12deg', '0deg'] }) },
+            ],
+          }]}
+        >
           ❤️
         </Animated.Text>
       </Animated.View>
