@@ -364,6 +364,7 @@ export default function FeedScreen() {
     const { data, error } = await supabase
       .from('ootds')
       .select(`id, user_id, image_url, caption, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
+      .eq('is_public', true)
       .order('created_at', { ascending: false })
       .range(0, PAGE_SIZE - 1);
     if (error) {
@@ -390,6 +391,7 @@ export default function FeedScreen() {
     const { data, error } = await supabase
       .from('ootds')
       .select(`id, user_id, image_url, caption, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
+      .eq('is_public', true)
       .order('created_at', { ascending: false })
       .range(start, end);
     if (!error && data) {

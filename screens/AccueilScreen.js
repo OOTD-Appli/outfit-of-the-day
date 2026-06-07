@@ -22,6 +22,7 @@ import { dismissDeliveredFlammeReminder } from '../lib/notifications';
 import Gauge from '../components/Gauge';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
+import CustomizationScreen from './CustomizationScreen';
 
 const ACCENT      = '#ED93B1';
 const BG          = '#FAF4F1';
@@ -102,6 +103,8 @@ export default function AccueilScreen({ navigation }) {
   const [sendingFlammesAll, setSendingFlammesAll] = useState(false);
   const [flammesPicker, setFlammesPicker] = useState({ visible: false, friends: [], loading: false });
   const [selectedMusic, setSelectedMusic] = useState(null); // { title, artist, previewUrl, coverUrl }
+  const [showCustomization, setShowCustomization] = useState(false);
+  const [savingForSelf, setSavingForSelf] = useState(false);
   const [musicPicker, setMusicPicker] = useState({ visible: false, query: '', results: [], searching: false });
   const musicSearchTimeout = useRef(null);
   const [caption, setCaption] = useState('');
@@ -197,10 +200,9 @@ export default function AccueilScreen({ navigation }) {
     setMusicPicker(prev => ({ ...prev, searching: true }));
     musicSearchTimeout.current = setTimeout(async () => {
       try {
-        const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&limit=8&country=FR`;
-        const res = await fetch(url);
-        const json = await res.json();
-        setMusicPicker(prev => ({ ...prev, results: json.results || [], searching: false }));
+        // Recherche via le proxy Deezer (extraits 30 s) — CORS-safe pour la PWA.
+        const { data } = await supabase.functions.invoke('deezer-search', { body: { q: query } });
+        setMusicPicker(prev => ({ ...prev, results: data?.results || [], searching: false }));
       } catch (_) {
         setMusicPicker(prev => ({ ...prev, results: [], searching: false }));
       }
@@ -208,11 +210,12 @@ export default function AccueilScreen({ navigation }) {
   };
 
   const selectTrack = (track) => {
+    // Le proxy renvoie déjà { title, artist, previewUrl, coverUrl }
     setSelectedMusic({
-      title: track.trackName,
-      artist: track.artistName,
+      title: track.title,
+      artist: track.artist,
       previewUrl: track.previewUrl || null,
-      coverUrl: track.artworkUrl100 || null,
+      coverUrl: track.coverUrl || null,
     });
     setMusicPicker({ visible: false, query: '', results: [], searching: false });
   };
@@ -366,6 +369,7 @@ export default function AccueilScreen({ navigation }) {
       setSentFlammesToAll(false);
       lastAnalyzedRef.current = { uri: image.uri, ts: Date.now() };
       setScore(parsed);
+      setShowCustomization(true); // ouvre l'écran de personnalisation après l'analyse
     } catch (e) {
       showToast(e.message || "Une erreur est survenue pendant l'analyse.", { type: "error" });
       console.log("analyzeOutfit error:", e);
@@ -417,6 +421,7 @@ export default function AccueilScreen({ navigation }) {
         score_tendance: score.detail,
         conseil: score.conseil,
         caption: caption.trim() || null,
+        is_public: true, // publié dans le feed (audience régie par la confidentialité du compte)
         audio_title: selectedMusic?.title || null,
         audio_artist: selectedMusic?.artist || null,
         audio_preview_url: selectedMusic?.previewUrl || null,
@@ -431,10 +436,49 @@ export default function AccueilScreen({ navigation }) {
       setCaption('');
       setSelectedMusic(null);
       showToast(`Ta tenue est dans le feed. +${pointsGagnes} points.`, { type: 'success' });
+      // Ferme la personnalisation et redirige vers le feed
+      setShowCustomization(false);
+      try { navigation.navigate('Accueil'); } catch (_) {}
     } catch (e) {
       showToast(e?.message || 'Erreur inconnue', { type: 'error' });
     }
     setPostingFeed(false);
+  };
+
+  // 💾 Enregistrer pour soi : stocke l'outfit dans la galerie perso uniquement
+  // (is_public:false → absent du feed). Pas de publication ni d'envoi.
+  const saveForSelf = async () => {
+    if (!score || savingForSelf) return;
+    setSavingForSelf(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Session expirée. Reconnecte-toi.');
+      const publicUrl = await uploadAnalyzedImageIfNeeded();
+      const { data: ins, error } = await supabase.from('ootds').insert({
+        user_id: user.id,
+        image_url: publicUrl,
+        score_global: score.global,
+        score_couleurs: score.harmonie,
+        score_coupe: score.fit,
+        score_tendance: score.detail,
+        conseil: score.conseil,
+        caption: caption.trim() || null,
+        is_public: false,
+        audio_title: selectedMusic?.title || null,
+        audio_artist: selectedMusic?.artist || null,
+        audio_preview_url: selectedMusic?.previewUrl || null,
+        audio_cover_url: selectedMusic?.coverUrl || null,
+      }).select('id').single();
+      if (error) throw new Error(error.message);
+      try { await supabase.rpc('award_points_for_ootd', { p_ootd_id: ins.id }); } catch (_) {}
+      setCaption('');
+      setSelectedMusic(null);
+      setShowCustomization(false);
+      showToast('Enregistré dans ta galerie 💾', { type: 'success' });
+    } catch (e) {
+      showToast(e?.message || 'Erreur inconnue', { type: 'error' });
+    }
+    setSavingForSelf(false);
   };
 
   // Ouvre le sélecteur d'amis avant d'envoyer
@@ -519,6 +563,18 @@ export default function AccueilScreen({ navigation }) {
       if (sent > 0) {
         setSentFlammesToAll(true);
         dismissDeliveredFlammeReminder(); // photo envoyée → on retire le rappel affiché
+        // Enregistrement parallèle dans la galerie perso (hors feed)
+        try {
+          await supabase.from('ootds').insert({
+            user_id: user.id, image_url: publicUrl, is_public: false,
+            score_global: score.global, score_couleurs: score.harmonie,
+            score_coupe: score.fit, score_tendance: score.detail,
+            conseil: score.conseil, caption: caption.trim() || null,
+            audio_title: selectedMusic?.title || null, audio_artist: selectedMusic?.artist || null,
+            audio_preview_url: selectedMusic?.previewUrl || null, audio_cover_url: selectedMusic?.coverUrl || null,
+          });
+        } catch (_) {}
+        setShowCustomization(false);
       }
       const msg = sent > 0
         ? `${sent} ami(s) ont reçu ton outfit 🔥${skipped > 0 ? ` · ${skipped} ignoré(s) (déjà envoyé aujourd'hui)` : ''}`
@@ -961,6 +1017,29 @@ export default function AccueilScreen({ navigation }) {
         )}
 
       </ScrollView>
+
+      {/* Écran de personnalisation (modal plein écran) ouvert après l'analyse */}
+      <CustomizationScreen
+        visible={showCustomization && !!score}
+        onClose={() => setShowCustomization(false)}
+        theme={theme}
+        imageUri={image?.uri}
+        score={score}
+        caption={caption}
+        setCaption={setCaption}
+        selectedMusic={selectedMusic}
+        setSelectedMusic={setSelectedMusic}
+        musicPicker={musicPicker}
+        setMusicPicker={setMusicPicker}
+        searchMusic={searchMusic}
+        selectTrack={selectTrack}
+        onPublish={publishToFeed}
+        onFlammes={() => { setShowCustomization(false); openFlammesPicker(); }}
+        onSaveForSelf={saveForSelf}
+        posting={postingFeed}
+        sendingFlammes={sendingFlammesAll}
+        saving={savingForSelf}
+      />
     </SafeAreaView>
   );
 }
