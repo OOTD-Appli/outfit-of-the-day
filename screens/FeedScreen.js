@@ -1,9 +1,13 @@
 import { useState, useCallback, useRef, memo, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, Animated, Easing,
+  View, Text, StyleSheet, Animated,
   TouchableOpacity, ActivityIndicator,
   RefreshControl, Modal, FlatList, useWindowDimensions,
 } from 'react-native';
+import ReAnimated, {
+  useSharedValue, useAnimatedStyle,
+  withSpring, withTiming, withDelay, Easing as ReEasing,
+} from 'react-native-reanimated';
 import { Image as ExpoImage } from 'expo-image';
 import { Audio } from 'expo-av';
 import { BlurView } from 'expo-blur';
@@ -57,9 +61,22 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
   const avatarInitial = item.profiles?.username?.[0]?.toUpperCase() || '?';
 
   const heartScale = useRef(new Animated.Value(1)).current;
-  const overlayHeartScale = useRef(new Animated.Value(0.3)).current;
-  const overlayHeartOpacity = useRef(new Animated.Value(0)).current;
-  const overlayHeartRotate = useRef(new Animated.Value(0)).current;
+
+  // Overlay cœur double-tap — thread UI via Reanimated 3 worklets
+  const overlayScale = useSharedValue(0.3);
+  const overlayOpacity = useSharedValue(0);
+  const overlayRotate = useSharedValue(0);
+
+  const overlayWrapStyle = useAnimatedStyle(() => ({
+    opacity: overlayOpacity.value,
+  }));
+  const overlayIconStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: overlayScale.value },
+      { rotate: `${overlayRotate.value * -12 + 12}deg` }, // 0→'-12deg', 1→'0deg'
+    ],
+  }));
+
   const lastTapRef = useRef(0);
   const touchStartY = useRef(0);
 
@@ -74,17 +91,12 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
   const playOverlayHeart = () => {
     // Anti-pattern évité : on ne part PAS de scale 0. Pop élastique (overshoot),
     // léger redressement (rotation), puis sortie rapide (timing asymétrique).
-    overlayHeartScale.setValue(0.3);
-    overlayHeartRotate.setValue(0);
-    overlayHeartOpacity.setValue(1);
-    Animated.parallel([
-      Animated.spring(overlayHeartScale, { toValue: 1.0, useNativeDriver: true, speed: 16, bounciness: 16 }),
-      Animated.timing(overlayHeartRotate, { toValue: 1, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.sequence([
-        Animated.delay(280),
-        Animated.timing(overlayHeartOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]),
-    ]).start();
+    overlayScale.value = 0.3;
+    overlayRotate.value = 0;
+    overlayOpacity.value = 1;
+    overlayScale.value = withSpring(1.0, { speed: 16, bounciness: 16 });
+    overlayRotate.value = withTiming(1, { duration: 200, easing: ReEasing.out(ReEasing.cubic) });
+    overlayOpacity.value = withDelay(280, withTiming(0, { duration: 200 }));
   };
 
   const handleDoubleTap = () => {
@@ -170,21 +182,14 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
       />
 
       {/* Overlay cœur feedback double-tap */}
-      <Animated.View
+      <ReAnimated.View
         pointerEvents="none"
-        style={[StyleSheet.absoluteFillObject, styles.heartOverlayWrap, { opacity: overlayHeartOpacity }]}
+        style={[StyleSheet.absoluteFillObject, styles.heartOverlayWrap, overlayWrapStyle]}
       >
-        <Animated.Text
-          style={[styles.heartOverlayIcon, {
-            transform: [
-              { scale: overlayHeartScale },
-              { rotate: overlayHeartRotate.interpolate({ inputRange: [0, 1], outputRange: ['-12deg', '0deg'] }) },
-            ],
-          }]}
-        >
+        <ReAnimated.Text style={[styles.heartOverlayIcon, overlayIconStyle]}>
           ❤️
-        </Animated.Text>
-      </Animated.View>
+        </ReAnimated.Text>
+      </ReAnimated.View>
 
       {/* Logo badge */}
       {logoConfig.postIcon ? (

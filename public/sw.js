@@ -49,7 +49,7 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Réception d'une notification push (l'envoi serveur via VAPID reste à brancher).
+// Réception d'une notification push — payload JSON envoyé par l'Edge Function send-web-push.
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (_) { data = { body: event.data && event.data.text() }; }
