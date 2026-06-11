@@ -1,8 +1,9 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+const ORIGIN = Deno.env.get('APP_ORIGIN') ?? '*';
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': ORIGIN,
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
@@ -121,6 +122,15 @@ serve(async (req: Request) => {
 
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Session invalide ou expirée' }, 401);
+
+    // Rate-limit : max 5 requêtes/minute (protection indépendante des crédits)
+    const { data: rateLimitOk, error: rateErr } = await supabaseClient.rpc(
+      'check_analyze_rate_limit',
+      { p_max_per_minute: 5 },
+    );
+    if (rateErr || !rateLimitOk) {
+      return json({ error: 'Trop de requêtes, réessaie dans une minute' }, 429);
+    }
 
     const { data: creditResult, error: creditError } = await supabaseClient.rpc(
       'consume_daily_credit',

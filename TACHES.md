@@ -1,6 +1,6 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-05-31 — Refonte boutique : abonnements Stripe (test), grille tarifaire points par rareté, Pass Analyse 24h, Gel de Flamme.
+> Dernière mise à jour : 2026-06-11 — Sécurité : SEC-09 (image_url CHECK), SEC-14 (profiles_private), SEC-15 (CORS APP_ORIGIN), SEC-16 (rate-limit analyze-outfit).
 
 ---
 
@@ -49,7 +49,7 @@
 
 - [x] **SEC-07 — Monétisation via RPC** : `buyPass` → `buy_pass(pass_type)`, `buyItem` → `buy_cosmetic(item_type, item_id)`, `equipItem` → `equip_cosmetic(item_type, item_id)`. Les RPCs SECURITY DEFINER valident les points, l'ownership et les IDs; le client ne peut plus s'auto-attribuer passes ou cosmétiques.
 - [x] **SEC-08 — Stories visibles uniquement par amis** : policy `stories_select_friends_only` — expire_at > now() ET (own story OR friendship accepted).
-- [ ] **SEC-09 — Validation `image_url` (ootds/messages)** : ajouter une contrainte `CHECK (image_url ~ '^https://.*\.supabase\.co/storage/')` sur `ootds.image_url` et `messages.image_url`. **À faire manuellement dans SQL Editor Supabase** (risque de casser des données existantes si les URLs ne matchent pas).
+- [x] **SEC-09 — Validation `image_url` (ootds/messages)** : contraintes `CHECK ... NOT VALID` ajoutées dans `20260611150000_image_url_constraints.sql`. Pattern `^https://[a-z0-9-]+\.supabase\.co/storage/`. `NOT VALID` = nouvelles lignes validées, existantes non bloquées (lancer `VALIDATE CONSTRAINT` manuellement après nettoyage éventuel des anciennes URLs).
 - [ ] **SEC-10 — Limites taille/type sur buckets Storage** : configurer `file_size_limit` et `allowed_mime_types` sur les buckets `avatars` (5 Mo, image/*), `ootds` (10 Mo, image/*), `stories` (100 Mo, video/mp4). **À faire dans Supabase Dashboard > Storage > Edit bucket**.
 
 ### 🟡 MOYENS
@@ -57,9 +57,9 @@
 - [x] **SEC-11 — Validation `base64Image` dans l'Edge Function** : vérification longueur max 10 Mo + MIME prefix valide (jpeg/png/webp). `supabase/functions/analyze-outfit/index.ts`.
 - [x] **SEC-12 — `alert()` dans `notifications.js`** : remplacé par `console.warn` (évite crash sur certains contextes RN).
 - [x] **SEC-13 — Logs sensibles supprimés** : `console.log('[publishStory] url publique:')` retiré de `FlammesScreen.js`.
-- [ ] **SEC-14 — Fuite `push_token` via `profiles SELECT`** : `profiles_select_authenticated USING (true)` expose les push_tokens de tous les utilisateurs à tout utilisateur authentifié. **Fix complet** : créer table `profiles_private(id, push_token)` avec policy `id = uid`, migrer les lectures/écritures. Laisser `profiles` sans push_token. **Travail important, à planifier**.
-- [ ] **SEC-15 — CORS `*` sur l'Edge Function** : remplacer `'Access-Control-Allow-Origin': '*'` par l'origine de l'app. Faible impact sans cookies, mais bonne hygiène.
-- [ ] **SEC-16 — Rate-limit applicatif Edge Function** : en complément du `consume_daily_credit`, ajouter une table `analyze_rate_limit` (uid, window_1min, count) pour limiter les appels même si les crédits sont manipulés.
+- [x] **SEC-14 — Fuite `push_token` via `profiles SELECT`** : migration `20260611140000_profiles_private.sql` — table `profiles_private(id, push_token)` avec RLS owner-only, migration des tokens existants, suppression de `profiles.push_token`. `lib/notifications.js` ciblait déjà `profiles_private`.
+- [x] **SEC-15 — CORS `*` sur l'Edge Function** : toutes les Edge Functions lisent désormais `Deno.env.get('APP_ORIGIN') ?? '*'`. Ajouter le secret `APP_ORIGIN` dans Supabase Dashboard pour restreindre à l'origine de la PWA.
+- [x] **SEC-16 — Rate-limit applicatif Edge Function** : migration `20260611160000_analyze_rate_limit.sql` — table `analyze_rate_limit` + RPC `check_analyze_rate_limit` (SECURITY DEFINER, fenêtre 1 min). `analyze-outfit` appelle la RPC avant `consume_daily_credit` ; 5 req/min max par user → 429 si dépassé.
 
 ---
 
