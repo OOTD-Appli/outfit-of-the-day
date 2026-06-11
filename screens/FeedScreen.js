@@ -4,10 +4,7 @@ import {
   TouchableOpacity, ActivityIndicator,
   RefreshControl, Modal, FlatList, useWindowDimensions,
 } from 'react-native';
-import ReAnimated, {
-  useSharedValue, useAnimatedStyle,
-  withSpring, withTiming, withDelay, Easing as ReEasing,
-} from 'react-native-reanimated';
+import HeartOverlay from '../components/HeartOverlay';
 import { Image as ExpoImage } from 'expo-image';
 import { Audio } from 'expo-av';
 import { BlurView } from 'expo-blur';
@@ -61,21 +58,7 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
   const avatarInitial = item.profiles?.username?.[0]?.toUpperCase() || '?';
 
   const heartScale = useRef(new Animated.Value(1)).current;
-
-  // Overlay cœur double-tap — thread UI via Reanimated 3 worklets
-  const overlayScale = useSharedValue(0.3);
-  const overlayOpacity = useSharedValue(0);
-  const overlayRotate = useSharedValue(0);
-
-  const overlayWrapStyle = useAnimatedStyle(() => ({
-    opacity: overlayOpacity.value,
-  }));
-  const overlayIconStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: overlayScale.value },
-      { rotate: `${overlayRotate.value * -12 + 12}deg` }, // 0→'-12deg', 1→'0deg'
-    ],
-  }));
+  const heartOverlayRef = useRef(null);
 
   const lastTapRef = useRef(0);
   const touchStartY = useRef(0);
@@ -88,16 +71,7 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
     onToggleLike(item.id, isLiked, likeObj?.id);
   };
 
-  const playOverlayHeart = () => {
-    // Anti-pattern évité : on ne part PAS de scale 0. Pop élastique (overshoot),
-    // léger redressement (rotation), puis sortie rapide (timing asymétrique).
-    overlayScale.value = 0.3;
-    overlayRotate.value = 0;
-    overlayOpacity.value = 1;
-    overlayScale.value = withSpring(1.0, { speed: 16, bounciness: 16 });
-    overlayRotate.value = withTiming(1, { duration: 200, easing: ReEasing.out(ReEasing.cubic) });
-    overlayOpacity.value = withDelay(280, withTiming(0, { duration: 200 }));
-  };
+  const playOverlayHeart = () => { heartOverlayRef.current?.play(); };
 
   const handleDoubleTap = () => {
     const now = Date.now();
@@ -182,14 +156,7 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
       />
 
       {/* Overlay cœur feedback double-tap */}
-      <ReAnimated.View
-        pointerEvents="none"
-        style={[StyleSheet.absoluteFillObject, styles.heartOverlayWrap, overlayWrapStyle]}
-      >
-        <ReAnimated.Text style={[styles.heartOverlayIcon, overlayIconStyle]}>
-          ❤️
-        </ReAnimated.Text>
-      </ReAnimated.View>
+      <HeartOverlay ref={heartOverlayRef} />
 
       {/* Logo badge */}
       {logoConfig.postIcon ? (
