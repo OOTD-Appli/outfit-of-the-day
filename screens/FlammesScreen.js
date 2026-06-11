@@ -4,7 +4,7 @@ import {
   View, Text, StyleSheet, Animated, Easing,
   FlatList, TouchableOpacity, ActivityIndicator,
   TextInput, ScrollView, Alert, KeyboardAvoidingView, Platform, Modal,
-  useWindowDimensions,
+  useWindowDimensions, PanResponder,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -62,6 +62,58 @@ function LikeBadge({ style, bg, textStyle }) {
   return (
     <Animated.View style={[style, { backgroundColor: bg, transform: [{ scale: s }] }]}>
       <Text style={textStyle}>❤️</Text>
+    </Animated.View>
+  );
+}
+
+// Icônes de statut de lecture — 3 états :
+//   sending  : id optimiste → 1 flèche grise
+//   delivered: read_at null → 2 flèches grises
+//   read     : read_at set  → 2 flèches bleues
+function ReadStatus({ msg, accentColor, subColor }) {
+  const isSending = typeof msg.id === 'string' && msg.id.startsWith('opt-');
+  const isRead = !!msg.read_at;
+  const color = isRead ? accentColor : subColor;
+  if (isSending) {
+    return <Feather name="chevron-right" size={11} color={subColor} style={{ marginLeft: 3 }} />;
+  }
+  return (
+    <View style={{ flexDirection: 'row', marginLeft: 3, gap: -4 }}>
+      <Feather name="chevron-right" size={11} color={color} />
+      <Feather name="chevron-right" size={11} color={color} />
+    </View>
+  );
+}
+
+// Bulle de message avec swipe-to-reply (PanResponder)
+// mine=false → swipe droite déclenche la réponse
+function SwipeableMessageBubble({ msg, mine, onReply, children, style }) {
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gs) =>
+        !mine && Math.abs(gs.dx) > 6 && Math.abs(gs.dy) < gs.dx,
+      onPanResponderMove: (_, gs) => {
+        if (!mine && gs.dx > 0) swipeX.setValue(Math.min(gs.dx, 72));
+      },
+      onPanResponderRelease: (_, gs) => {
+        if (!mine && gs.dx > 48) {
+          onReply(msg);
+        }
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 8 }).start();
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 8 }).start();
+      },
+    }),
+  ).current;
+
+  return (
+    <Animated.View
+      style={[style, { transform: [{ translateX: swipeX }] }]}
+      {...panResponder.panHandlers}
+    >
+      {children}
     </Animated.View>
   );
 }
@@ -188,6 +240,7 @@ export default function FlammesScreen() {
   const [restoreModal, setRestoreModal] = useState({ visible: false, friend: null });
   const [restoring, setRestoring] = useState(false);
   const [profileModal, setProfileModal] = useState({ visible: false, profile: null, loading: false });
+  const [replyingTo, setReplyingTo] = useState(null); // { id, content, senderName, imageUrl }
   const [friendTyping, setFriendTyping] = useState(false);
   const typingChannelRef = useRef(null);
   const typingSentAtRef = useRef(0);
@@ -698,7 +751,7 @@ export default function FlammesScreen() {
     const now = new Date().toISOString();
     const { data } = await supabase
       .from('messages')
-      .select('id, sender_id, receiver_id, content, image_url, is_liked, is_deleted, read_at, created_at, expires_at')
+      .select('id, sender_id, receiver_id, content, image_url, is_liked, is_deleted, read_at, reply_to_id, created_at, expires_at')
       .or(`and(sender_id.eq.${userId},receiver_id.eq.${friend.id}),and(sender_id.eq.${friend.id},receiver_id.eq.${userId})`)
       .gt('expires_at', now)
       .order('created_at', { ascending: true })
@@ -726,6 +779,7 @@ export default function FlammesScreen() {
     setFriendTyping(false);
     setView('list');
     setMessages([]);
+    setReplyingTo(null);
   };
 
   // ── Auto-scroll vers le bas du fil de messages ─────────────────────────────
@@ -901,7 +955,9 @@ export default function FlammesScreen() {
   const sendTextMessage = async () => {
     if (!messageText.trim() || !selectedFriend || sendingMessage) return;
     const text = messageText.trim();
+    const replyId = replyingTo?.id ?? null;
     setMessageText('');
+    setReplyingTo(null);
     // Stoppe l'indicateur « en train d'écrire » immédiatement
     if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
     typingSentAtRef.current = 0;
@@ -911,12 +967,15 @@ export default function FlammesScreen() {
     const tempMsg = {
       id: tempId, sender_id: userId, receiver_id: selectedFriend.id, content: text,
       image_url: null, is_liked: false, is_deleted: false, read_at: null,
+      reply_to_id: replyId,
       created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(),
     };
     setMessages(prev => [...prev, tempMsg]);
     setLastMessages(prev => ({ ...prev, [selectedFriend.id]: tempMsg })); // remonte la conv en haut
     try {
-      const { error } = await supabase.from('messages').insert({ sender_id: userId, receiver_id: selectedFriend.id, content: text });
+      const insertPayload = { sender_id: userId, receiver_id: selectedFriend.id, content: text };
+      if (replyId) insertPayload.reply_to_id = replyId;
+      const { error } = await supabase.from('messages').insert(insertPayload);
       if (error) throw error;
       notifyFriend(selectedFriend.id, myProfile?.username || 'Nouveau message', text.slice(0, 120));
     } catch (e) {
@@ -1133,8 +1192,26 @@ export default function FlammesScreen() {
               </View>
             ) : messages.map(msg => {
               const mine = msg.sender_id === userId;
+              // Message cité (reply preview) : on cherche le message parent dans la liste
+              const parentMsg = msg.reply_to_id
+                ? messages.find(m => m.id === msg.reply_to_id)
+                : null;
               return (
               <AnimatedMsgRow key={msg.id} mine={mine} style={[styles.msgRow, mine ? styles.msgRowRight : styles.msgRowLeft]}>
+                <SwipeableMessageBubble
+                  msg={msg}
+                  mine={mine}
+                  onReply={(m) => {
+                    const isFromMe = m.sender_id === userId;
+                    setReplyingTo({
+                      id: m.id,
+                      content: m.is_deleted ? 'Message supprimé' : (m.content || (m.image_url ? '📸 Photo' : '')),
+                      senderName: isFromMe ? 'Toi' : selectedFriend.username,
+                      imageUrl: m.image_url,
+                    });
+                  }}
+                  style={[styles.swipeableBubbleWrap, mine ? styles.msgRowRight : styles.msgRowLeft]}
+                >
                 <TouchableOpacity
                   activeOpacity={0.9}
                   onPress={() => handleBubbleTap(msg)}
@@ -1147,6 +1224,17 @@ export default function FlammesScreen() {
                       : [styles.bubbleRecv, { backgroundColor: theme.card }],
                   ]}
                 >
+                  {/* Citation du message parent */}
+                  {parentMsg && !msg.is_deleted && (
+                    <View style={[styles.replyQuote, { borderLeftColor: mine ? theme.accent : theme.accent + '88', backgroundColor: mine ? theme.accent + '11' : theme.border + '55' }]}>
+                      <Text style={[styles.replyQuoteSender, { color: mine ? theme.accent : theme.textSub }]}>
+                        {parentMsg.sender_id === userId ? 'Toi' : selectedFriend.username}
+                      </Text>
+                      <Text style={[styles.replyQuoteText, { color: theme.textSub }]} numberOfLines={1}>
+                        {parentMsg.is_deleted ? 'Message supprimé' : (parentMsg.content || (parentMsg.image_url ? '📸 Photo' : ''))}
+                      </Text>
+                    </View>
+                  )}
                   {msg.is_deleted ? (
                     <Text style={[styles.bubbleDeleted, { color: theme.textSub }]}>Ce message a été supprimé</Text>
                   ) : (() => {
@@ -1180,12 +1268,7 @@ export default function FlammesScreen() {
                       {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                     </Text>
                     {mine && !msg.is_deleted && (
-                      <Feather
-                        name={msg.read_at ? 'check-circle' : 'check'}
-                        size={12}
-                        color={msg.read_at ? theme.accent : theme.textSub}
-                        style={{ marginLeft: 4 }}
-                      />
+                      <ReadStatus msg={msg} accentColor={theme.accent} subColor={theme.textSub} />
                     )}
                   </View>
                   {msg.is_liked && !msg.is_deleted && (
@@ -1196,31 +1279,48 @@ export default function FlammesScreen() {
                     />
                   )}
                 </TouchableOpacity>
+                </SwipeableMessageBubble>
               </AnimatedMsgRow>
               );
             })}
           </ScrollView>
 
           <View style={[styles.inputBar, { backgroundColor: theme.bg, borderTopColor: theme.border }]}>
-            <TextInput
-              style={[styles.msgInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textPri }]}
-              placeholder="Écrire un message..."
-              placeholderTextColor={theme.textSub}
-              value={messageText}
-              onChangeText={onChangeMessageText}
-              multiline
-              maxLength={500}
-            />
-            <Bouncy
-              style={[styles.sendBtn, { backgroundColor: theme.accent }, (!messageText.trim() || sendingMessage) && { opacity: 0.45 }]}
-              onPress={sendTextMessage}
-              disabled={!messageText.trim() || sendingMessage}
-            >
-              {sendingMessage
-                ? <ActivityIndicator color="#fff" size="small" />
-                : <Feather name="send" size={16} color="#fff" />
-              }
-            </Bouncy>
+            {/* Barre de réponse */}
+            {replyingTo && (
+              <View style={[styles.replyBar, { backgroundColor: theme.card, borderLeftColor: theme.accent, borderTopColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.replyBarSender, { color: theme.accent }]}>{replyingTo.senderName}</Text>
+                  <Text style={[styles.replyBarText, { color: theme.textSub }]} numberOfLines={1}>
+                    {replyingTo.content || (replyingTo.imageUrl ? '📸 Photo' : '')}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setReplyingTo(null)} hitSlop={8}>
+                  <Feather name="x" size={18} color={theme.textSub} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <View style={styles.inputRow}>
+              <TextInput
+                style={[styles.msgInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textPri }]}
+                placeholder="Écrire un message..."
+                placeholderTextColor={theme.textSub}
+                value={messageText}
+                onChangeText={onChangeMessageText}
+                multiline
+                maxLength={500}
+              />
+              <Bouncy
+                style={[styles.sendBtn, { backgroundColor: theme.accent }, (!messageText.trim() || sendingMessage) && { opacity: 0.45 }]}
+                onPress={sendTextMessage}
+                disabled={!messageText.trim() || sendingMessage}
+              >
+                {sendingMessage
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Feather name="send" size={16} color="#fff" />
+                }
+              </Bouncy>
+            </View>
           </View>
         </KeyboardAvoidingView>
         {renderRestoreModal()}
@@ -1709,9 +1809,19 @@ const styles = StyleSheet.create({
   likeBadgeLeft:   { left: -6 },
   likeBadgeRight:  { right: -6 },
   likeBadgeText:   { fontSize: 13 },
-  inputBar:        { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 8, borderTopWidth: StyleSheet.hairlineWidth },
+  inputBar:        { flexDirection: 'column', borderTopWidth: StyleSheet.hairlineWidth },
+  inputRow:        { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 8 },
   msgInput:        { flex: 1, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 100, borderWidth: 1 },
   sendBtn:         { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+
+  /* Reply bar & quote */
+  replyBar:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, borderLeftWidth: 3, borderTopWidth: StyleSheet.hairlineWidth, gap: 8 },
+  replyBarSender:  { fontSize: 12, fontWeight: '700', marginBottom: 1 },
+  replyBarText:    { fontSize: 12 },
+  replyQuote:      { borderLeftWidth: 3, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5, marginBottom: 6 },
+  replyQuoteSender:{ fontSize: 11, fontWeight: '700', marginBottom: 2 },
+  replyQuoteText:  { fontSize: 12 },
+  swipeableBubbleWrap: { maxWidth: '78%' },
 
   /* Story modal */
   storyModalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },

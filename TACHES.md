@@ -1,6 +1,6 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-06-11 — Sécurité : SEC-09 (image_url CHECK), SEC-14 (profiles_private), SEC-15 (CORS APP_ORIGIN), SEC-16 (rate-limit analyze-outfit).
+> Dernière mise à jour : 2026-06-12 — Social + UX : read receipts 3 états, swipe-to-reply, nouveau flux post-analyse, section stories dans l'onglet Analyse, tab bar glassmorphism.
 
 ---
 
@@ -60,6 +60,39 @@
 - [x] **SEC-14 — Fuite `push_token` via `profiles SELECT`** : migration `20260611140000_profiles_private.sql` — table `profiles_private(id, push_token)` avec RLS owner-only, migration des tokens existants, suppression de `profiles.push_token`. `lib/notifications.js` ciblait déjà `profiles_private`.
 - [x] **SEC-15 — CORS `*` sur l'Edge Function** : toutes les Edge Functions lisent désormais `Deno.env.get('APP_ORIGIN') ?? '*'`. Ajouter le secret `APP_ORIGIN` dans Supabase Dashboard pour restreindre à l'origine de la PWA.
 - [x] **SEC-16 — Rate-limit applicatif Edge Function** : migration `20260611160000_analyze_rate_limit.sql` — table `analyze_rate_limit` + RPC `check_analyze_rate_limit` (SECURITY DEFINER, fenêtre 1 min). `analyze-outfit` appelle la RPC avant `consume_daily_credit` ; 5 req/min max par user → 429 si dépassé.
+
+---
+
+## Social & UX — 2026-06-12
+
+### Read receipts (messagerie) — migration `20260602120000` + `FlammesScreen.js`
+- [x] **3 états visuels** : 1 chevron gris (optimiste = envoi en cours) · 2 chevrons gris (livré, `read_at = null`) · 2 chevrons couleur accent (lu, `read_at ≠ null`). Composant `ReadStatus` inline.
+- [x] `mark_messages_read` RPC appelé à l'ouverture du chat ET à la réception Realtime — inchangé, déjà fonctionnel.
+
+### Swipe-to-reply — migration `20260612100000_messages_reply_to.sql` + `FlammesScreen.js`
+- [x] Migration SQL : colonne `reply_to_id uuid FK messages(id) ON DELETE SET NULL` + index.
+- [x] `SwipeableMessageBubble` : `PanResponder` sur les bulles reçues (swipe droite ≥48px → déclenche la réponse + haptic).
+- [x] Barre de reply au-dessus du `TextInput` : affiche sender + aperçu message · bouton ✕ · disparaît après envoi.
+- [x] `sendTextMessage` passe `reply_to_id` à l'INSERT si `replyingTo` est défini.
+- [x] Quote du message parent affichée dans la bulle (si `reply_to_id` trouvé dans la liste).
+- [ ] **À faire manuellement** : exécuter la migration `20260612100000_messages_reply_to.sql` dans Supabase SQL Editor.
+
+### Nouveau flux post-analyse — `AccueilScreen.js`
+- [x] Suppression de l'auto-ouverture de `CustomizationScreen` après `analyzeOutfit()`.
+- [x] Remplacement de l'`actionsCard` (avec doublons music/caption) par 2 boutons : **Personnaliser et partager** (ouvre `CustomizationScreen`) + **Analyser une nouvelle tenue** (reset).
+- [x] `CustomizationScreen` reste la seule surface de modification (caption, musique, publish, flammes, save).
+
+### Section stories dans l'onglet Analyse — `AccueilScreen.js`
+- [x] Section "Ma story" en bas du scroll (toujours visible, après les résultats d'analyse).
+- [x] Si story active : aperçu thumbnail + badge "En ligne" + tap → viewer vidéo/image.
+- [x] Si pas de story : bouton "Publier une story" (photo ou vidéo, galerie ou caméra, TTL 24h).
+- [x] Modal de publication : preview média + champs overlay_text + caption + boutons Annuler/Publier.
+- [x] `fetchMyStory()` au focus de l'onglet (idempotent, RLS respected).
+- [ ] Optionnel : afficher aussi les stories des amis dans cette section (actuellement dans Chat uniquement).
+
+### Tab bar glassmorphism — `App.js`
+- [x] Fond semi-transparent (`+E8` sur hex) + `backdropFilter: blur(20px)` sur web.
+- [x] Ombre portée renforcée (shadowRadius 20, elevation 16).
 
 ---
 

@@ -105,8 +105,10 @@ function ThemedNavigator({ userId }) {
     return () => supabase.removeChannel(channel);
   }, [userId]);
 
+  // Glassmorphism sur web : fond semi-transparent + blur
+  const isWeb = Platform.OS === 'web';
   const tabBarStyle = {
-    backgroundColor: theme.tabBar,
+    backgroundColor: isWeb ? (theme.tabBar + 'E8') : theme.tabBar,
     borderTopWidth: 0,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
@@ -114,10 +116,11 @@ function ThemedNavigator({ userId }) {
     paddingTop: 10,
     height: 72 + insets.bottom,
     shadowColor: '#1A1412',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.10,
-    shadowRadius: 18,
-    elevation: 14,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 16,
+    ...(isWeb ? { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } : {}),
   };
 
   const openConversation = (friendId) => {

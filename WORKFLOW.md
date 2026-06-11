@@ -1,13 +1,18 @@
 # WORKFLOW.md — Développement et déploiement OOTD
 
+> Dernière mise à jour : 2026-06-11
+
 ## Prérequis
 
-- Node.js 18+
+- Node.js 20+
 - npm (livré avec Node)
 - Compte Expo / EAS CLI : `npm install -g eas-cli`
 - Compte Supabase avec un projet actif
 - Supabase CLI : `npm install -g supabase` (requis pour déployer les Edge Functions)
-- Compte Groq (https://console.groq.com) — la clé API est stockée comme secret Supabase, **jamais dans le bundle client**
+- Compte Google AI Studio (Gemini) : https://aistudio.google.com — clé stockée comme secret Supabase
+- Compte Groq (fallback IA) : https://console.groq.com — clé stockée comme secret Supabase
+- Compte Stripe (paiements) : https://stripe.com — mode TEST pour le dev
+- Vercel CLI (web/PWA) : `npm install -g vercel`
 
 ---
 
@@ -23,11 +28,12 @@ npm install
 # 3. Créer le fichier d'env (ne jamais committer .env)
 cp .env.example .env
 # → éditer .env avec EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY
-# → NE PAS ajouter EXPO_PUBLIC_GROQ_API_KEY ici, elle est stockée dans les secrets Supabase
+# → EXPO_PUBLIC_GROQ_API_KEY : uniquement pour usage local direct
+#    (en production : la clé est un secret Supabase côté Edge Function)
 
 # 4. Appliquer les migrations Supabase (voir section ci-dessous)
 
-# 5. Déployer l'Edge Function analyze-outfit (voir section ci-dessous)
+# 5. Déployer les Edge Functions (voir section ci-dessous)
 ```
 
 ---
@@ -36,99 +42,172 @@ cp .env.example .env
 
 ```bash
 npm start          # Expo dev server (QR code → Expo Go)
-npm run android    # Lancer directement sur émulateur/device Android
+npm run android    # Lancer sur émulateur/device Android
 npm run ios        # Lancer sur simulateur iOS (Mac uniquement)
+npm run web        # Lancer dans le navigateur (PWA dev)
 ```
 
-> **Expo Go vs build natif** : les notifications push ne fonctionnent pas dans Expo Go (le code le détecte via `Constants.appOwnership === 'expo'` et skip l'enregistrement push). Pour tester les notifs, utiliser un build preview via EAS.
+> **Expo Go vs build natif** : les notifications push et certaines fonctionnalités natives ne fonctionnent pas dans Expo Go. Pour tester les notifs, utiliser un build preview EAS.
 
 ---
 
 ## Migrations Supabase
 
-Les fichiers SQL sont dans `supabase/migrations/`. Ordre d'application sur un **projet vide** :
+Les fichiers SQL sont dans `supabase/migrations/`. Appliquer **dans l'ordre** sur un projet vide.
 
-| Fichier | Contenu |
-|---------|---------|
-| `20260510120000_initial_schema.sql` | Schéma complet (fresh install) |
-| `20260510121500_existing_project_align.sql` | Migrations si tables existent déjà (idempotent) |
-| `20260511130000_comments.sql` | Table `comments` |
-| `20260522140000_messages_stories.sql` | Tables `messages` et `stories`, bucket `stories` |
-| `20260522150000_add_caption_to_ootds.sql` | Colonne `caption` sur `ootds` |
-| `20260523160000_stories_video.sql` | Support vidéo stories + colonnes `overlay_text`, `caption` |
-| `20260525170000_daily_credits.sql` | Système crédits quotidiens + RPC `consume_daily_credit` |
-| `20260525180000_shop_columns.sql` | Colonnes shop dans `profiles` (passes, cosmétiques) |
-| `20260528100000_security_hardening.sql` | Durcissement sécurité (trigger guard + RPCs SECURITY DEFINER + RLS renforcées) |
-| `20260529120000_stories_gc.sql` | Garbage collector : trigger `AFTER DELETE` stories → supprime `storage.objects` + job pg_cron horaire |
+| # | Fichier | Contenu |
+|---|---------|---------|
+| 1 | `20260510120000_initial_schema.sql` | Tables core + RLS + buckets `avatars`/`ootds` |
+| 2 | `20260510121500_existing_project_align.sql` | Alignement projet existant (idempotent) |
+| 3 | `20260511130000_comments.sql` | Table `comments` + RLS + indexes |
+| 4 | `20260522140000_messages_stories.sql` | Tables `messages` + `stories` + bucket `stories` |
+| 5 | `20260522150000_add_caption_to_ootds.sql` | Colonne `caption` sur `ootds` |
+| 6 | `20260523160000_stories_video.sql` | Colonnes `video_url`, `overlay_text`, `caption` sur `stories` |
+| 7 | `20260525170000_daily_credits.sql` | Crédits quotidiens + RPC `consume_daily_credit` |
+| 8 | `20260525180000_shop_columns.sql` | Colonnes shop dans `profiles` (passes, cosmétiques) |
+| 9 | `20260528100000_security_hardening.sql` | Trigger guard + RPCs SECURITY DEFINER + RLS renforcées |
+| 10 | `20260529120000_stories_gc.sql` | ⚠️ Trigger cleanup Storage + job pg_cron horaire (À exécuter dans SQL Editor) |
+| 11 | `20260531120000_subscriptions_stripe.sql` | Table `subscriptions` + helpers Stripe |
+| 12 | `20260531130000_shop_revamp.sql` | RPCs `buy_cosmetic`, `equip_cosmetic` v2 |
+| 13 | `20260531140000_shop_express.sql` | Achats one-time + `apply_one_time_purchase` RPC |
+| 14 | `20260531150000_flamme_restore.sql` | RPC `restore_flamme` + colonne `flame_freezes` |
+| 15 | `20260601120000_web_push.sql` | Table `web_push_subscriptions` + policies Storage |
+| 16 | `20260602120000_messages_interactions.sql` | Colonnes `is_liked`, `is_deleted`, `read_at` + RPCs like/delete/read |
+| 17 | `20260602140000_profile_privacy.sql` | Colonne `is_private` sur `profiles` |
+| 18 | `20260602160000_fix_delete_message_constraint.sql` | Fix FK constraint suppression messages |
+| 19 | `20260602180000_profile_bio.sql` | Colonne `bio` sur `profiles` |
+| 20 | `20260603100000_performance_indexes.sql` | Index de performance (created_at DESC, receiver_id, etc.) |
+| 21 | `20260603120000_ootds_audio.sql` | Colonnes audio Deezer sur `ootds` |
+| 22 | `20260603140000_default_star_logo.sql` | `active_logo` DEFAULT 'star' |
+| 23 | `20260604120000_read_receipts.sql` | Colonne `read_at` + RPC `mark_messages_read` |
+| 24 | `20260607120000_ootds_is_public.sql` | Colonne `is_public` + RLS feed privé |
+| 25 | `20260611130000_performance_indexes.sql` | Index supplémentaires (expires_at, is_public) |
+| 26 | `20260611140000_profiles_private.sql` | Table `profiles_private` (push_token, RLS stricte) |
+| 27 | `20260611150000_image_url_constraints.sql` | CHECK NOT VALID sur `ootds.image_url` + `messages.image_url` |
+| 28 | `20260611160000_analyze_rate_limit.sql` | Table `analyze_rate_limit` + RPC `check_analyze_rate_limit` |
+| 29 | `20260612100000_messages_reply_to.sql` | Colonne `reply_to_id` sur `messages` (swipe-to-reply) + index |
 
-**Sur un projet vide** : exécuter `initial_schema.sql` puis toutes les migrations suivantes dans l'ordre.
-
-**Sur un projet existant** : utiliser `existing_project_align.sql` (IF NOT EXISTS, idempotent) puis les migrations à partir de `20260511130000_comments.sql`.
-
+**Sur un projet vide** : exécuter `initial_schema.sql` puis les migrations 3 à 28 dans l'ordre.  
+**Sur un projet existant** : utiliser `existing_project_align.sql` (IF NOT EXISTS) puis les migrations 3 à 28.  
 **Ne jamais re-exécuter** `initial_schema.sql` si les tables existent déjà.
 
-> Exécuter via SQL Editor sur app.supabase.com ou via CLI : `supabase db push`
+```bash
+# Via CLI (après `supabase link`)
+supabase db push
+
+# Via SQL Editor : copier-coller chaque fichier dans l'ordre
+```
+
+> ⚠️ La migration `20260529120000_stories_gc.sql` utilise pg_cron — à exécuter dans le SQL Editor Supabase (pas via CLI).
 
 ---
 
 ## Edge Functions Supabase
 
-### Premier déploiement
+### Lier le projet + définir les secrets
+
+```powershell
+# Créer un token sur https://supabase.com/dashboard/account/tokens
+$env:SUPABASE_ACCESS_TOKEN = "sbp_..."
+
+# Lier au projet Supabase
+supabase link --project-ref <project-ref>
+
+# Définir tous les secrets d'un coup
+supabase secrets set `
+  GEMINI_API_KEY=AIza... `
+  GROQ_API_KEY=gsk_... `
+  STRIPE_SECRET_KEY=sk_test_... `
+  STRIPE_WEBHOOK_SECRET=whsec_... `
+  STRIPE_PRICE_PLUS=price_... `
+  STRIPE_PRICE_ELITE=price_... `
+  STRIPE_PRICE_FLAME_FREEZE=price_... `
+  STRIPE_PRICE_POINTS_2000=price_... `
+  APP_REDIRECT_URL=ootd://shop `
+  APP_ORIGIN=https://ootd-fr-ootd.vercel.app `
+  VAPID_PUBLIC_KEY=BKq... `
+  VAPID_PRIVATE_KEY=abc... `
+  VAPID_SUBJECT=mailto:contact@ootd.app
+```
+
+> `APP_ORIGIN` restreint le CORS des Edge Functions. Par défaut `*` si absent.
+
+### Déployer toutes les Edge Functions
 
 ```bash
-# 1. Se connecter au CLI Supabase (via token personnel)
-# Créer un token sur : https://supabase.com/dashboard/account/tokens
-export SUPABASE_ACCESS_TOKEN="sbp_..."   # Linux/macOS
-$env:SUPABASE_ACCESS_TOKEN = "sbp_..."   # PowerShell Windows
+# Fonction principale (IA + rate-limit)
+supabase functions deploy analyze-outfit
 
-# 2. Lier le projet local au projet Supabase distant
-supabase link --project-ref jjqisirnrodilxfkcbiq
+# Proxy Deezer (pas de JWT requis)
+supabase functions deploy deezer-search --no-verify-jwt
 
-# 3. Définir le secret GROQ_API_KEY
-supabase secrets set GROQ_API_KEY=gsk_...
+# Stripe — Checkout et portail
+supabase functions deploy create-checkout-session
+supabase functions deploy create-payment-session
+supabase functions deploy create-portal-session
 
-# 4. Déployer la fonction
-supabase functions deploy analyze-outfit --no-verify-jwt
-# Note: --no-verify-jwt laisse Supabase gérer la vérif JWT automatiquement
-# La fonction vérifie elle-même la présence du header Authorization
+# Stripe Webhook (Stripe ne fournit pas de JWT Supabase)
+supabase functions deploy stripe-webhook --no-verify-jwt
+
+# Web Push
+supabase functions deploy send-web-push
 ```
 
 ### Mises à jour
 
 ```bash
-# Redéployer après modification de supabase/functions/analyze-outfit/index.ts
-supabase functions deploy analyze-outfit --no-verify-jwt
+# Après modification d'une fonction, re-déployer uniquement celle-ci
+supabase functions deploy <nom-fonction>
 ```
 
 ### Vérifier les secrets
 
 ```bash
 supabase secrets list
-# Doit afficher GROQ_API_KEY (valeur masquée)
 ```
 
 ---
 
-## Build et déploiement (EAS)
+## Déploiement Web / PWA (Vercel)
+
+```bash
+# Preview
+vercel
+
+# Production
+vercel --prod
+```
+
+Le build est défini par `"vercel-build": "expo export --platform web && node scripts/inject-pwa.js"`.
+
+**Variables d'environnement Vercel** (définir dans Dashboard Vercel → Settings → Environment Variables) :
+```
+EXPO_PUBLIC_SUPABASE_URL
+EXPO_PUBLIC_SUPABASE_ANON_KEY
+EXPO_PUBLIC_GROQ_API_KEY   # optionnel, uniquement si analyse côté client sur web
+```
+
+> La clé Gemini/Groq pour les Edge Functions est dans les secrets Supabase, **pas dans Vercel**.
+
+---
+
+## Build et déploiement mobile (EAS)
 
 ```bash
 # APK Android (test / distribution interne)
 npm run eas:build:preview
-# → produit un .apk téléchargeable depuis expo.dev
 
 # AAB Android (Play Store)
 npm run eas:build:prod
 ```
 
-**Variables d'env pour les builds EAS** (à définir sur expo.dev → Project Settings → Environment Variables) :
+**Variables EAS** (expo.dev → Project Settings → Environment Variables) :
 ```
-EXPO_PUBLIC_SUPABASE_URL       # URL du projet Supabase
-EXPO_PUBLIC_SUPABASE_ANON_KEY  # Clé anon Supabase
+EXPO_PUBLIC_SUPABASE_URL
+EXPO_PUBLIC_SUPABASE_ANON_KEY
 ```
 
-> **Ne pas ajouter `EXPO_PUBLIC_GROQ_API_KEY`** — la clé Groq est un secret Supabase côté serveur, elle ne doit jamais être dans le bundle mobile.
-
-Le versioning est géré par EAS (remote) : `eas.json → cli.appVersionSource: "remote"`.
+> Versioning géré par EAS remote : `eas.json → cli.appVersionSource: "remote"`.
 
 ---
 
@@ -140,7 +219,10 @@ Le versioning est géré par EAS (remote) : `eas.json → cli.appVersionSource: 
 3. Implémenter le changement
 4. Vérifier la checklist ci-dessous
 5. Mettre à jour TACHES.md (marquer terminé / ajouter nouveaux items)
-6. Commit : git add -p && git commit -m "description"
+6. Commit : git add <fichiers> && git commit -m "description"
+7. git push
+8. vercel --prod (si changement web)
+9. supabase functions deploy <fn> (si changement Edge Function)
 ```
 
 ---
@@ -153,56 +235,58 @@ Le versioning est géré par EAS (remote) : `eas.json → cli.appVersionSource: 
 - [ ] `ToastProvider` + `ThemeProvider` enveloppent bien le retour de `App()` pour les deux branches
 
 **Imports React Native**
-- [ ] `Alert` importé depuis `react-native` dans chaque fichier qui l'utilise
-- [ ] `TouchableOpacity`, `Image`, `ActivityIndicator` importés si utilisés dans le JSX
+- [ ] `Alert`, `TouchableOpacity`, `Image`, `ActivityIndicator` importés si utilisés dans le JSX
 
 **Utilitaires partagés**
 - [ ] `computeNiveau`, `computeLevelInfo`, `timeAgo` → importer depuis `lib/utils` (pas de copie locale)
-- [ ] `getLogoConfig` → importer depuis `lib/logoConfig` pour afficher les logos/cadres
+- [ ] `getLogoConfig` → importer depuis `lib/logoConfig`
+- [ ] Si la logique de niveau change → mettre à jour **aussi** `compute_niveau()` en Postgres (migration SQL)
 
 **Invariants métier**
-- [ ] Les paires flammes passent par `flammeOrderedIds()` avant insert/query (user1 < user2)
-- [ ] `hasSnapUsedTodayForPair()` vérifié avant tout insert dans `snaps`
-- [ ] Streak flammes : comparaison par jours calendaires ISO (pas fenêtre 24h glissante)
-- [ ] Upload de fichier (galerie, caméra) : utiliser `fetch(uri).blob()` — compatible Android et iOS
+- [ ] Paires flammes : `flammeOrderedIds()` avant tout insert/query (user1 < user2)
+- [ ] Snap quotidien : `hasSnapUsedTodayForPair()` vérifié avant insert dans `snaps`
+- [ ] Streak flammes : jours calendaires ISO (pas fenêtre 24h glissante)
+- [ ] Upload fichier : `fetch(uri).blob()` — compatible Android, iOS et web
 
 **Sécurité**
-- [ ] Jamais de clé API dans le code client ou dans `.env` versionné
-- [ ] Toute nouvelle Edge Function vérifie la présence du header `Authorization`
-- [ ] Nouveaux champs dans les tables → migration SQL dans `supabase/migrations/`
-- [ ] Ne jamais appeler `supabase.from('profiles').update({points, niveau, has_*_pass, daily_credits, unlocked_*, active_*})` directement — passer par les RPCs SECURITY DEFINER (`award_points_for_ootd`, `buy_pass`, `buy_cosmetic`, `equip_cosmetic`)
-- [ ] Ne jamais supprimer des stories côté client — la suppression côté serveur (pg_cron `cleanup_expired_stories`) déclenche automatiquement le trigger qui nettoie `storage.objects`
-- [ ] `savePushToken` écrit dans `profiles_private`, pas dans `profiles`
-- [ ] Toute mutation économique (points, passes, crédits, cosmétiques) passe par un RPC, jamais par UPDATE direct
+- [ ] Jamais de clé API dans le code client ou `.env` versionné
+- [ ] Toute nouvelle Edge Function vérifie le header `Authorization` (sauf `--no-verify-jwt` intentionnel)
+- [ ] Toute nouvelle Edge Function hérite du pattern CORS : `Deno.env.get('APP_ORIGIN') ?? '*'`
+- [ ] Nouveaux champs DB → migration SQL dans `supabase/migrations/` (nom : `YYYYMMDDHHMMSS_description.sql`)
+- [ ] Ne jamais écrire directement sur les colonnes sensibles de `profiles` — RPCs SECURITY DEFINER uniquement
+- [ ] `savePushToken` → `profiles_private`, jamais `profiles`
+- [ ] Ne jamais supprimer les stories côté client (pg_cron gère la purge + trigger Storage)
+- [ ] Toute mutation économique (points, passes, crédits, gels, cosmétiques) → RPC, jamais UPDATE direct
 
 **UI**
 - [ ] Textes UI en français
 - [ ] Couleurs via `theme.xxx` — pas de couleurs hardcodées dans les composants thématisés
-- [ ] Thème dark Shop (ShopScreen garde ses couleurs propres : NEON `#39FF14`, BG `#0a0a0a`)
 - [ ] Pas de `alert()` natif — utiliser `showToast()` ou `Alert.alert()`
-- [ ] Pas de bouton qui accorde des points sans validation réelle (pas de `claimPointsPack`)
+- [ ] Pas de bouton qui accorde des points sans validation réelle
 
 ---
 
 ## Architecture des données en bref (pour les agents)
 
 ```
-profiles          — 1 ligne par user (auth.users). Créée par ensureProfile().
-                   Contient : points, niveau, daily_credits, crédits, passes,
-                   unlocked_themes[], unlocked_logos[], active_theme, active_logo.
-                   ⚠️ Ne jamais UPDATE les colonnes sensibles directement — utiliser les RPCs.
-profiles_private  — Données privées par user : push_token. Non lisible par les autres users (RLS stricte).
-ootds             — Posts (tenues). Lié à profiles via user_id. Colonnes caption, scores IA.
-likes             — Likes sur les ootds. UNIQUE(user_id, ootd_id).
-comments          — Commentaires sur ootds. Lié à profiles.id. Body 1–1000 chars.
-friendships       — Demandes d'amitié (pending → accepted). PK(user_id, friend_id).
-flammes           — Streaks entre amis. PK sur (user1_id, user2_id) avec user1 < user2.
-                   Streak incrémenté par jours calendaires (pas fenêtre 24h glissante).
-messages          — Textes/photos éphémères (24h) entre amis. Images dans bucket ootds/messages/.
-stories           — Stories vidéo éphémères (24h). Bucket stories. Supportent overlay_text + caption.
+profiles          — 1 ligne par user. Contient points, niveau, crédits, passes, cosmétiques,
+                   flame_freezes, is_private, bio.
+                   ⚠️ Ne jamais UPDATE les colonnes sensibles directement → RPCs.
+profiles_private  — push_token uniquement. RLS owner-only + service_role.
+ootds             — Posts (tenues). image_url, scores IA, caption, audio, is_public.
+likes             — UNIQUE(user_id, ootd_id). Append-only.
+comments          — body 1–1000 chars. user_id → profiles.id.
+friendships       — PK(user_id, friend_id). Direction : user_id=demandeur. Agrégé bidir côté app.
+flammes           — user1_id < user2_id (invariant). Streak par jours calendaires.
+messages          — Éphémères 24h. is_liked, is_deleted (soft), read_at. image_url CHECK NOT VALID.
+snaps             — Legacy (envoi tenue à amis). 1/jour/paire.
+stories           — Éphémères 24h. video_url ou image_url. overlay_text + caption.
+subscriptions     — Stripe (Plus/Elite). RLS read-only. Mutations via service_role uniquement.
+web_push_subscriptions — endpoint/p256dh/auth Web Push. RLS owner-only.
+analyze_rate_limit — rate-limit 5 req/min par user. Sans RLS (SECURITY DEFINER uniquement).
 ```
 
-Storage buckets : `avatars` (`<uid>/avatar.jpg`), `ootds` (`<uid>/outfit_<ts>.jpg` + `messages/<uid>/<ts>.jpg`), `stories` (`<uid>/<ts>.mp4`).
+**Storage** : `avatars` (`<uid>/avatar.jpg`), `ootds` (`<uid>/outfit_<ts>.{jpg,webp}` + `messages/<uid>/<ts>.jpg`), `stories` (`<uid>/<ts>.mp4`).
 
 ---
 
@@ -216,22 +300,25 @@ Chaque agent qui prend un ticket doit :
 4. **Ne pas introduire de state global** (pas Redux, pas Zustand) — state local dans les écrans
 5. **Ne pas changer la langue de l'UI** — tout en français
 6. **Mettre à jour TACHES.md** à la fin de chaque intervention
-7. **Ne pas committer `.env`** — il est gitignored, c'est intentionnel
-8. **Upload de fichiers** : utiliser `fetch(uri).blob()` (fonctionne Android + iOS, y compris URI `content://`)
-9. **Utilitaires** : toujours importer depuis `lib/utils` plutôt que copier les fonctions localement
-10. **Mutations économiques** : ne jamais écrire directement sur les colonnes sensibles de `profiles` — utiliser les RPCs SECURITY DEFINER uniquement
-11. **Push token** : `savePushToken()` cible `profiles_private`, jamais `profiles`
+7. **Ne pas committer `.env`** — il est gitignored
+8. **Upload de fichiers** : `fetch(uri).blob()` (fonctionne Android + iOS + web, y compris URI `content://`)
+9. **Utilitaires** : toujours importer depuis `lib/utils` / `lib/logoConfig` / etc. — jamais copier localement
+10. **Mutations économiques** : RPCs SECURITY DEFINER uniquement
+11. **Push token** : `savePushToken()` → `profiles_private`, jamais `profiles`
+12. **CORS** : toute nouvelle Edge Function doit utiliser `Deno.env.get('APP_ORIGIN') ?? '*'`
+13. **Rate-limit** : le check `check_analyze_rate_limit` doit rester **avant** `consume_daily_credit` dans `analyze-outfit`
 
 ### Répartition logique des domaines (pour parallélisation)
 
 | Domaine | Fichiers concernés |
 |---------|-------------------|
-| Auth & profil | `AuthScreen.js`, `ProfilScreen.js`, `lib/ensureProfile.js`, `lib/notifications.js` |
+| Auth & profil | `AuthScreen.js`, `ResetPasswordScreen.js`, `ProfilScreen.js`, `lib/ensureProfile.js`, `lib/notifications.js`, `lib/pwa.js` |
 | Feed & social | `FeedScreen.js`, `components/FeedCommentsModal.js` |
-| Analyse IA | `AccueilScreen.js` (bloc `analyzeOutfit`), `supabase/functions/analyze-outfit/` |
-| Flammes & messages | `FlammesScreen.js`, `AccueilScreen.js` (bloc `sendOutfitToAllFlammes`), `lib/flammesUtils.js` |
-| Shop & cosmétiques | `ShopScreen.js`, `lib/themeContext.js`, `lib/logoConfig.js` |
-| Utilitaires partagés | `lib/utils.js`, `lib/toast.js`, `lib/toastContext.js` |
+| Analyse IA | `AccueilScreen.js` (bloc analyse), `CustomizationScreen.js`, `supabase/functions/analyze-outfit/`, `supabase/functions/deezer-search/` |
+| Flammes & messages | `FlammesScreen.js`, `AccueilScreen.js` (bloc sendOutfitToAllFlammes), `lib/flammesUtils.js`, `lib/activeChat.js` |
+| Shop & cosmétiques | `ShopScreen.js`, `lib/themeContext.js`, `lib/logoConfig.js`, `supabase/functions/create-*`, `supabase/functions/stripe-webhook/` |
+| Notifications | `lib/notifications.js`, `lib/pwa.js`, `lib/webPush.js`, `supabase/functions/send-web-push/` |
+| Utilitaires partagés | `lib/utils.js`, `lib/toastContext.js`, `lib/haptics.js` |
 | Infrastructure | `App.js`, `lib/supabase.js`, `lib/env.js`, `supabase/migrations/` |
 | Composants UI | `components/Button.js`, `components/Avatar.js`, `components/FeedCommentsModal.js` |
 

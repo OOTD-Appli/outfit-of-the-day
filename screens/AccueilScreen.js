@@ -14,11 +14,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
+import { Video, ResizeMode } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import { dismissDeliveredFlammeReminder } from '../lib/notifications';
+import { ENV } from '../lib/env';
 import Gauge from '../components/Gauge';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
@@ -112,6 +115,11 @@ export default function AccueilScreen({ navigation }) {
   const [maxCredits, setMaxCredits] = useState(2);
   const [unlimited, setUnlimited] = useState(false);
   const [topOotds, setTopOotds] = useState([]);
+  // Stories
+  const [userId, setUserId] = useState(null);
+  const [myStory, setMyStory] = useState(null);
+  const [storyPreview, setStoryPreview] = useState({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', posting: false });
+  const [storyViewer, setStoryViewer] = useState({ visible: false, story: null });
   const { showToast } = useToast();
   const cachedPublicUrlRef = useRef(null);
   const lastAnalyzedRef = useRef({ uri: null, ts: 0 });
@@ -138,6 +146,115 @@ export default function AccueilScreen({ navigation }) {
       }),
     ]).start();
   }, [score, barsProgress, resultFade, resultRise]);
+
+  const fetchMyStory = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    setUserId(user.id);
+    const { data } = await supabase
+      .from('stories')
+      .select('id, user_id, image_url, video_url, overlay_text, caption, expires_at')
+      .eq('user_id', user.id)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    setMyStory(data || null);
+  }, []);
+
+  const openStoryPicker = async () => {
+    if (Platform.OS === 'web') {
+      if (typeof document === 'undefined') return;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*,video/*';
+      input.onchange = () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const uri = URL.createObjectURL(file);
+        const isVideo = file.type.startsWith('video/');
+        setStoryPreview({ visible: true, videoUri: isVideo ? uri : null, imageUri: !isVideo ? uri : null, overlayText: '', caption: '', posting: false });
+      };
+      input.click();
+      return;
+    }
+    Alert.alert('Publier une story', 'Choisir le type de contenu', [
+      { text: 'Vidéo (caméra)', onPress: async () => {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) { showToast('Permission caméra refusée', { type: 'warning' }); return; }
+        const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['videos'], videoMaxDuration: 30, allowsEditing: false });
+        if (!res.canceled) setStoryPreview({ visible: true, videoUri: res.assets[0].uri, imageUri: null, overlayText: '', caption: '', posting: false });
+      }},
+      { text: 'Photo / vidéo (galerie)', onPress: async () => {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) { showToast('Permission galerie refusée', { type: 'warning' }); return; }
+        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], allowsEditing: false });
+        if (!res.canceled) {
+          const asset = res.assets[0];
+          const isVideo = asset.type === 'video' || (asset.uri || '').match(/\.(mp4|mov|avi)$/i);
+          setStoryPreview({ visible: true, videoUri: isVideo ? asset.uri : null, imageUri: !isVideo ? asset.uri : null, overlayText: '', caption: '', posting: false });
+        }
+      }},
+      { text: 'Annuler', style: 'cancel' },
+    ]);
+  };
+
+  const publishStory = async () => {
+    const { videoUri, imageUri } = storyPreview;
+    if (!videoUri && !imageUri) return;
+    if (storyPreview.posting) return;
+    setStoryPreview(prev => ({ ...prev, posting: true }));
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Session expirée. Reconnecte-toi.');
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Non authentifié');
+
+      const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+      let storyData = { user_id: user.id, expires_at: expiresAt, overlay_text: storyPreview.overlayText.trim() || null, caption: storyPreview.caption.trim() || null };
+
+      if (videoUri) {
+        const fileName = `${user.id}/${Date.now()}.mp4`;
+        if (Platform.OS === 'web') {
+          const resp = await fetch(videoUri);
+          const blob = await resp.blob();
+          const { error: upErr } = await supabase.storage.from('stories').upload(fileName, blob, { contentType: blob.type || 'video/mp4', upsert: false });
+          if (upErr) throw upErr;
+        } else {
+          await new Promise((resolve, reject) => {
+            const form = new FormData();
+            form.append('', { uri: videoUri, name: `${Date.now()}.mp4`, type: 'video/mp4' });
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${ENV.supabaseUrl}/storage/v1/object/stories/${fileName}`);
+            xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+            xhr.setRequestHeader('x-upsert', 'false');
+            xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload ${xhr.status}`)));
+            xhr.onerror = () => reject(new Error('Erreur réseau'));
+            xhr.send(form);
+          });
+        }
+        const { data: urlData } = supabase.storage.from('stories').getPublicUrl(fileName);
+        storyData.video_url = urlData.publicUrl;
+      } else if (imageUri) {
+        const fileName = `${user.id}/${Date.now()}.jpg`;
+        const resp = await fetch(imageUri);
+        const blob = await resp.blob();
+        const { error: upErr } = await supabase.storage.from('stories').upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
+        if (upErr) throw upErr;
+        const { data: urlData } = supabase.storage.from('stories').getPublicUrl(fileName);
+        storyData.image_url = urlData.publicUrl;
+      }
+
+      const { error: insErr } = await supabase.from('stories').insert(storyData);
+      if (insErr) throw insErr;
+      setStoryPreview({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', posting: false });
+      showToast('Story publiée ! Elle disparaît dans 24h ✨', { type: 'success' });
+      fetchMyStory();
+    } catch (e) {
+      setStoryPreview(prev => ({ ...prev, posting: false }));
+      showToast(e?.message || 'Impossible de publier la story', { type: 'error' });
+    }
+  };
 
   const fetchCredits = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -191,7 +308,8 @@ export default function AccueilScreen({ navigation }) {
   useFocusEffect(useCallback(() => {
     fetchCredits();
     fetchTopOotds();
-  }, [fetchCredits, fetchTopOotds]));
+    fetchMyStory();
+  }, [fetchCredits, fetchTopOotds, fetchMyStory]));
 
   const searchMusic = (query) => {
     setMusicPicker(prev => ({ ...prev, query }));
@@ -369,7 +487,6 @@ export default function AccueilScreen({ navigation }) {
       setSentFlammesToAll(false);
       lastAnalyzedRef.current = { uri: image.uri, ts: Date.now() };
       setScore(parsed);
-      setShowCustomization(true); // ouvre l'écran de personnalisation après l'analyse
     } catch (e) {
       showToast(e.message || "Une erreur est survenue pendant l'analyse.", { type: "error" });
       console.log("analyzeOutfit error:", e);
@@ -810,195 +927,14 @@ export default function AccueilScreen({ navigation }) {
               </View>
             )}
 
-            {/* Actions */}
-            <View style={s.actionsCard}>
-              <TextInput
-                style={s.captionInput}
-                placeholder="Ajoute une description à ta tenue..."
-                placeholderTextColor={TEXT_SEC}
-                value={caption}
-                onChangeText={setCaption}
-                multiline
-                maxLength={200}
-              />
-
-              {/* Musique sélectionnée */}
-              {selectedMusic ? (
-                <View style={s.musicChip}>
-                  {selectedMusic.coverUrl
-                    ? <Image source={{ uri: selectedMusic.coverUrl }} style={s.musicChipCover} />
-                    : <Text style={s.musicChipNote}>♪</Text>}
-                  <View style={s.musicChipInfo}>
-                    <Text style={s.musicChipTitle} numberOfLines={1}>{selectedMusic.title}</Text>
-                    <Text style={s.musicChipArtist} numberOfLines={1}>{selectedMusic.artist}</Text>
-                  </View>
-                  <TouchableOpacity onPress={() => setSelectedMusic(null)} hitSlop={8}>
-                    <Text style={s.musicChipRemove}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
-
-              {/* Bouton ajouter musique */}
-              {!publishedToFeed && (
-                <TouchableOpacity
-                  style={s.musicBtn}
-                  onPress={() => setMusicPicker(prev => ({ ...prev, visible: true }))}
-                  activeOpacity={0.8}
-                >
-                  <Text style={s.musicBtnText}>
-                    {selectedMusic ? '🎵 Changer la musique' : '🎵 Ajouter une musique'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Modale sélecteur musique */}
-              <Modal
-                visible={musicPicker.visible}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setMusicPicker(prev => ({ ...prev, visible: false }))}
-              >
-                <View style={s.pickerOverlay}>
-                  <View style={s.musicSheet}>
-                    <View style={s.pickerHandle} />
-                    <Text style={s.pickerTitle}>Choisir une musique</Text>
-                    <TextInput
-                      style={s.musicSearchInput}
-                      placeholder="Rechercher un titre, un artiste..."
-                      placeholderTextColor={TEXT_SEC}
-                      value={musicPicker.query}
-                      onChangeText={searchMusic}
-                      autoFocus
-                      returnKeyType="search"
-                    />
-                    {musicPicker.searching && (
-                      <ActivityIndicator color={theme.accent} style={{ marginVertical: 12 }} />
-                    )}
-                    <FlatList
-                      data={musicPicker.results}
-                      keyExtractor={t => String(t.trackId)}
-                      keyboardShouldPersistTaps="handled"
-                      style={s.musicResultsList}
-                      renderItem={({ item: track }) => (
-                        <TouchableOpacity style={s.musicResultRow} onPress={() => selectTrack(track)} activeOpacity={0.75}>
-                          {track.artworkUrl100
-                            ? <Image source={{ uri: track.artworkUrl100 }} style={s.musicResultCover} />
-                            : <View style={[s.musicResultCover, { backgroundColor: theme.accent + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
-                          <View style={s.musicResultInfo}>
-                            <Text style={s.musicResultTitle} numberOfLines={1}>{track.trackName}</Text>
-                            <Text style={s.musicResultArtist} numberOfLines={1}>{track.artistName}</Text>
-                          </View>
-                          {track.previewUrl
-                            ? <Text style={s.musicResultBadge}>30s</Text>
-                            : null}
-                        </TouchableOpacity>
-                      )}
-                      ListEmptyComponent={
-                        !musicPicker.searching && musicPicker.query.length >= 2
-                          ? <Text style={s.musicNoResults}>Aucun résultat</Text>
-                          : null
-                      }
-                    />
-                    <TouchableOpacity
-                      style={[s.pickerCancel, { marginTop: 8 }]}
-                      onPress={() => { Keyboard.dismiss(); setMusicPicker(prev => ({ ...prev, visible: false })); }}
-                    >
-                      <Text style={s.pickerCancelText}>Annuler</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </Modal>
-
+            {/* Actions post-analyse */}
+            <View style={s.postAnalysisActions}>
               <Bouncy
-                style={[s.actionPrimary, (publishedToFeed || postingFeed) && s.actionDisabled]}
-                onPress={publishToFeed}
-                disabled={publishedToFeed || postingFeed}
+                style={s.actionPrimary}
+                onPress={() => setShowCustomization(true)}
               >
-                {postingFeed ? (
-                  <ActivityIndicator color="#1a0a10" size="small" />
-                ) : (
-                  <Text style={s.actionPrimaryText}>
-                    {publishedToFeed ? '✓ Publié dans le feed' : '🏠 Publier dans le feed'}
-                  </Text>
-                )}
+                <Text style={s.actionPrimaryText}>✏️ Personnaliser et partager</Text>
               </Bouncy>
-
-              <Bouncy
-                style={[s.actionSecondary, (sentFlammesToAll || sendingFlammesAll) && s.actionDisabled]}
-                onPress={openFlammesPicker}
-                disabled={sentFlammesToAll || sendingFlammesAll}
-              >
-                {sendingFlammesAll ? (
-                  <ActivityIndicator color={theme.accent} size="small" />
-                ) : (
-                  <Text style={s.actionSecondaryText}>
-                    {sentFlammesToAll ? '✓ Envoyé à tes flammes' : '🔥 Envoyer à mes flammes'}
-                  </Text>
-                )}
-              </Bouncy>
-
-              {/* Sélecteur de destinataires flammes */}
-              <Modal
-                visible={flammesPicker.visible}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setFlammesPicker(prev => ({ ...prev, visible: false }))}
-              >
-                <View style={s.pickerOverlay}>
-                  <View style={s.pickerSheet}>
-                    <View style={s.pickerHandle} />
-                    <Text style={s.pickerTitle}>Envoyer à...</Text>
-                    <Text style={s.pickerSub}>Sélectionne les amis qui recevront ton outfit 🔥</Text>
-                    {flammesPicker.loading ? (
-                      <ActivityIndicator color={theme.accent} style={{ paddingVertical: 28 }} />
-                    ) : (
-                      <FlatList
-                        data={flammesPicker.friends || []}
-                        keyExtractor={f => f.id}
-                        style={s.pickerList}
-                        ListEmptyComponent={
-                          <Text style={s.musicNoResults}>Aucun contact à afficher.</Text>
-                        }
-                        renderItem={({ item }) => (
-                          <TouchableOpacity
-                            style={s.pickerRow}
-                            onPress={() => toggleFlammesFriend(item.id)}
-                            activeOpacity={0.75}
-                          >
-                            <View style={[s.pickerAvatar, { backgroundColor: theme.accent + 'BB' }]}>
-                              {item?.avatar_url
-                                ? <Image source={{ uri: item.avatar_url }} style={s.pickerAvatarImg} />
-                                : <Text style={s.pickerAvatarText}>{item?.username?.[0]?.toUpperCase() || '?'}</Text>}
-                            </View>
-                            <Text style={s.pickerName}>{item?.username || 'Utilisateur'}</Text>
-                            <View style={[s.checkbox, item?.selected && s.checkboxOn]}>
-                              {item?.selected && <Text style={s.checkmark}>✓</Text>}
-                            </View>
-                          </TouchableOpacity>
-                        )}
-                      />
-                    )}
-                    <View style={s.pickerBtns}>
-                      <TouchableOpacity
-                        style={s.pickerCancel}
-                        onPress={() => setFlammesPicker(prev => ({ ...prev, visible: false }))}
-                      >
-                        <Text style={s.pickerCancelText}>Annuler</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[s.pickerConfirm, !(flammesPicker.friends || []).some(f => f.selected) && s.actionDisabled]}
-                        onPress={sendOutfitToSelectedFlammes}
-                        disabled={!(flammesPicker.friends || []).some(f => f.selected)}
-                      >
-                        <Text style={s.pickerConfirmText}>
-                          Envoyer ({(flammesPicker.friends || []).filter(f => f.selected).length})
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              </Modal>
-
               <TouchableOpacity
                 style={s.retryBtn}
                 onPress={() => {
@@ -1016,9 +952,125 @@ export default function AccueilScreen({ navigation }) {
           </Animated.View>
         )}
 
+        {/* ===== SECTION STORIES (toujours visible en scrollant) ===== */}
+        <View style={s.storiesSection}>
+          <View style={s.storiesSectionHeader}>
+            <Feather name="circle" size={16} color={ACCENT} />
+            <Text style={s.storiesSectionTitle}>Ma story</Text>
+            <Text style={s.storiesSectionSub}>Disparaît dans 24h</Text>
+          </View>
+
+          {myStory ? (
+            /* Story active — aperçu + option remplacer */
+            <TouchableOpacity style={s.myStoryPreview} onPress={() => setStoryViewer({ visible: true, story: myStory })} activeOpacity={0.85}>
+              {myStory.image_url ? (
+                <ExpoImage source={{ uri: myStory.image_url }} style={s.myStoryThumb} contentFit="cover" />
+              ) : (
+                <View style={[s.myStoryThumb, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Feather name="video" size={28} color="#fff" />
+                </View>
+              )}
+              <View style={s.myStoryOverlay}>
+                <Text style={s.myStoryOverlayText}>Voir ma story</Text>
+              </View>
+              <View style={[s.storyActiveBadge, { backgroundColor: ACCENT }]}>
+                <View style={s.storyActiveDot} />
+                <Text style={s.storyActiveTxt}>En ligne</Text>
+              </View>
+            </TouchableOpacity>
+          ) : (
+            /* Pas de story — bouton publier */
+            <TouchableOpacity style={s.storyPublishBtn} onPress={openStoryPicker} activeOpacity={0.85}>
+              <LinearGradient colors={['#F7A8C4', '#ED7AA6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.storyPublishGradient}>
+                <Feather name="plus" size={26} color="#fff" />
+              </LinearGradient>
+              <View>
+                <Text style={s.storyPublishTitle}>Publier une story</Text>
+                <Text style={s.storyPublishSub}>Photo ou vidéo · visible 24h</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Story viewer modal */}
+        <Modal visible={storyViewer.visible} transparent animationType="fade" onRequestClose={() => setStoryViewer({ visible: false, story: null })}>
+          <View style={s.viewerOverlay}>
+            <View style={s.viewerHeader}>
+              <Text style={s.viewerUsername}>Ma story</Text>
+              <TouchableOpacity onPress={() => setStoryViewer({ visible: false, story: null })}>
+                <Feather name="x" size={26} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            {storyViewer.story?.video_url ? (
+              <Video source={{ uri: storyViewer.story.video_url }} style={s.viewerMedia} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay isLooping={false} />
+            ) : storyViewer.story?.image_url ? (
+              <ExpoImage source={{ uri: storyViewer.story.image_url }} style={s.viewerMedia} contentFit="contain" />
+            ) : null}
+            {storyViewer.story?.overlay_text ? (
+              <View style={s.viewerTextWrap}><Text style={s.viewerText}>{storyViewer.story.overlay_text}</Text></View>
+            ) : null}
+            <TouchableOpacity style={s.replaceStoryBtn} onPress={() => { setStoryViewer({ visible: false, story: null }); openStoryPicker(); }}>
+              <Text style={s.replaceStoryBtnText}>Remplacer la story</Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+
+        {/* Story preview / publication modal */}
+        <Modal
+          visible={storyPreview.visible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => { if (!storyPreview.posting) setStoryPreview(prev => ({ ...prev, visible: false })); }}
+        >
+          <View style={s.storyModalOverlay}>
+            <View style={[s.storyModalSheet, { backgroundColor: theme.card }]}>
+              <View style={[s.storyModalHandle, { backgroundColor: theme.border }]} />
+              <Text style={[s.storyModalTitle, { color: theme.textPri }]}>Publier une story</Text>
+              <View style={s.storyVideoWrap}>
+                {storyPreview.videoUri ? (
+                  <Video source={{ uri: storyPreview.videoUri }} style={s.storyVideoPreview} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay={false} isLooping={false} />
+                ) : storyPreview.imageUri ? (
+                  <ExpoImage source={{ uri: storyPreview.imageUri }} style={s.storyVideoPreview} contentFit="contain" />
+                ) : (
+                  <Feather name="image" size={36} color={TEXT_SEC} />
+                )}
+              </View>
+              <Text style={[s.storyFieldLabel, { color: TEXT_SEC }]}>Texte sur la story (optionnel)</Text>
+              <TextInput
+                style={[s.storyFieldInput, { backgroundColor: theme.bg, borderColor: BORDER, color: TEXT_PRI }]}
+                placeholder="Ex : Mon look du jour ✨"
+                placeholderTextColor={TEXT_SEC}
+                value={storyPreview.overlayText}
+                onChangeText={t => setStoryPreview(prev => ({ ...prev, overlayText: t }))}
+                maxLength={60}
+                editable={!storyPreview.posting}
+              />
+              <Text style={[s.storyFieldLabel, { color: TEXT_SEC }]}>Description (optionnel)</Text>
+              <TextInput
+                style={[s.storyFieldInput, s.storyFieldInputMulti, { backgroundColor: theme.bg, borderColor: BORDER, color: TEXT_PRI }]}
+                placeholder="Décris ta tenue..."
+                placeholderTextColor={TEXT_SEC}
+                value={storyPreview.caption}
+                onChangeText={t => setStoryPreview(prev => ({ ...prev, caption: t }))}
+                maxLength={200}
+                multiline
+                editable={!storyPreview.posting}
+              />
+              <View style={s.storyModalBtns}>
+                <TouchableOpacity style={[s.storyModalCancel, { backgroundColor: theme.border }]} onPress={() => setStoryPreview(prev => ({ ...prev, visible: false }))} disabled={storyPreview.posting}>
+                  <Text style={[s.storyModalCancelText, { color: TEXT_PRI }]}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.storyModalPublish, { backgroundColor: ACCENT }, storyPreview.posting && { opacity: 0.6 }]} onPress={publishStory} disabled={storyPreview.posting}>
+                  {storyPreview.posting ? <ActivityIndicator color="#3a0d1e" size="small" /> : <Text style={s.storyModalPublishText}>Publier</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
       </ScrollView>
 
-      {/* Écran de personnalisation (modal plein écran) ouvert après l'analyse */}
+      {/* Écran de personnalisation (modal plein écran) */}
       <CustomizationScreen
         visible={showCustomization && !!score}
         onClose={() => setShowCustomization(false)}
@@ -1302,5 +1354,53 @@ function createStyles(theme) {
   pickerCancelText:{ fontWeight: '600', fontSize: 15, color: PRI_T },
   pickerConfirm:   { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: ACC_T },
   pickerConfirmText:{ fontWeight: '800', fontSize: 15, color: '#fff' },
+
+  /* Post-analyse actions */
+  postAnalysisActions: { gap: 10, marginTop: 20, marginBottom: 4 },
+
+  /* Section Stories */
+  storiesSection:    { marginTop: 28, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: BRD_T },
+  storiesSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
+  storiesSectionTitle:  { fontWeight: '800', fontSize: 17, color: PRI_T, flex: 1 },
+  storiesSectionSub:    { fontSize: 12, color: SUB_T },
+
+  myStoryPreview:    { borderRadius: 20, overflow: 'hidden', height: 200, marginBottom: 14, position: 'relative' },
+  myStoryThumb:      { width: '100%', height: '100%' },
+  myStoryOverlay:    { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 14, backgroundColor: 'rgba(0,0,0,0.32)' },
+  myStoryOverlayText:{ color: '#fff', fontWeight: '700', fontSize: 14 },
+  storyActiveBadge:  { position: 'absolute', top: 10, right: 10, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 },
+  storyActiveDot:    { width: 7, height: 7, borderRadius: 4, backgroundColor: '#fff' },
+  storyActiveTxt:    { color: '#fff', fontSize: 11, fontWeight: '700' },
+
+  storyPublishBtn:   { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 18, borderRadius: 20, borderWidth: 1.5, borderColor: ACC_T + '44', borderStyle: 'dashed' },
+  storyPublishGradient: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  storyPublishTitle: { fontWeight: '700', fontSize: 15, color: PRI_T },
+  storyPublishSub:   { fontSize: 12, color: SUB_T, marginTop: 2 },
+
+  /* Story viewer */
+  viewerOverlay:  { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+  viewerHeader:   { position: 'absolute', top: 56, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 10 },
+  viewerUsername: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  viewerMedia:    { width: '100%', height: '70%' },
+  viewerTextWrap: { position: 'absolute', bottom: 140, left: 20, right: 20, alignItems: 'center' },
+  viewerText:     { color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'center' },
+  replaceStoryBtn:    { position: 'absolute', bottom: 60, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 22, backgroundColor: ACC_T },
+  replaceStoryBtnText:{ color: '#3a0d1e', fontWeight: '800', fontSize: 14 },
+
+  /* Story preview modal */
+  storyModalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  storyModalSheet:      { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 36 },
+  storyModalHandle:     { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  storyModalTitle:      { fontSize: 17, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
+  storyVideoWrap:       { borderRadius: 16, overflow: 'hidden', height: 200, marginBottom: 20, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  storyVideoPreview:    { width: '100%', height: '100%' },
+  storyFieldLabel:      { fontSize: 12, fontWeight: '600', marginBottom: 6 },
+  storyFieldInput:      { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginBottom: 14, borderWidth: 1 },
+  storyFieldInputMulti: { minHeight: 72, textAlignVertical: 'top' },
+  storyModalBtns:       { flexDirection: 'row', gap: 10, marginTop: 4 },
+  storyModalCancel:     { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  storyModalCancelText: { fontWeight: '600', fontSize: 15 },
+  storyModalPublish:    { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  storyModalPublishText:{ color: '#3a0d1e', fontWeight: '800', fontSize: 15 },
   });
 }
