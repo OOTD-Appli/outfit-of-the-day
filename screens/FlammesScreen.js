@@ -67,20 +67,20 @@ function LikeBadge({ style, bg, textStyle }) {
 }
 
 // Icônes de statut de lecture — 3 états :
-//   sending  : id optimiste → 1 flèche grise
-//   delivered: read_at null → 2 flèches grises
-//   read     : read_at set  → 2 flèches bleues
+//   sending  : id optimiste → 1 coche grise
+//   delivered: read_at null → 2 coches grises
+//   read     : read_at set  → 2 coches colorées (accent)
 function ReadStatus({ msg, accentColor, subColor }) {
   const isSending = typeof msg.id === 'string' && msg.id.startsWith('opt-');
   const isRead = !!msg.read_at;
   const color = isRead ? accentColor : subColor;
   if (isSending) {
-    return <Feather name="chevron-right" size={11} color={subColor} style={{ marginLeft: 3 }} />;
+    return <Feather name="check" size={11} color={subColor} style={{ marginLeft: 3 }} />;
   }
   return (
-    <View style={{ flexDirection: 'row', marginLeft: 3, gap: -4 }}>
-      <Feather name="chevron-right" size={11} color={color} />
-      <Feather name="chevron-right" size={11} color={color} />
+    <View style={{ flexDirection: 'row', marginLeft: 3, gap: -6 }}>
+      <Feather name="check" size={11} color={color} />
+      <Feather name="check" size={11} color={color} />
     </View>
   );
 }
