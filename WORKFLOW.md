@@ -1,6 +1,6 @@
 # WORKFLOW.md — Développement et déploiement OOTD
 
-> Dernière mise à jour : 2026-06-11
+> Dernière mise à jour : 2026-06-12
 
 ## Prérequis
 

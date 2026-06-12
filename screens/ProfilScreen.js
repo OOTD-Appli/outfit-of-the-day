@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { computeLevelInfo } from '../lib/utils';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Switch,
+  View, Text, StyleSheet, TouchableOpacity, Switch, Animated,
   FlatList, Image, ActivityIndicator, TextInput, ScrollView,
   useWindowDimensions, Modal, Alert, Platform,
 } from 'react-native';
@@ -18,6 +18,52 @@ import Bouncy from '../components/Bouncy';
 import { getLogoConfig } from '../lib/logoConfig';
 import { isPwaStandalone, promptInstall } from '../lib/pwa';
 
+function DarkLightToggle({ isDark, onToggle, accent }) {
+  const anim = useRef(new Animated.Value(isDark ? 1 : 0)).current;
+  const prevIsDark = useRef(isDark);
+
+  useEffect(() => {
+    if (prevIsDark.current === isDark) return;
+    prevIsDark.current = isDark;
+    Animated.spring(anim, {
+      toValue: isDark ? 1 : 0,
+      useNativeDriver: true,
+      speed: 18,
+      bounciness: 5,
+    }).start();
+  }, [isDark, anim]);
+
+  const translateX = anim.interpolate({ inputRange: [0, 1], outputRange: [3, 27] });
+
+  return (
+    <TouchableOpacity onPress={onToggle} activeOpacity={0.85}>
+      <View style={{ width: 54, height: 30, borderRadius: 15, overflow: 'hidden' }}>
+        <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: '#888', borderRadius: 15 }} />
+        <Animated.View style={{
+          ...StyleSheet.absoluteFillObject,
+          backgroundColor: accent,
+          borderRadius: 15,
+          opacity: anim,
+        }} />
+        <Animated.View style={{
+          position: 'absolute',
+          top: 3,
+          width: 24,
+          height: 24,
+          borderRadius: 12,
+          backgroundColor: '#fff',
+          elevation: 3,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.25,
+          shadowRadius: 3,
+          transform: [{ translateX }],
+        }} />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 export default function ProfilScreen() {
   const [profile, setProfile] = useState(null);
   const [subscription, setSubscription] = useState(null);
@@ -28,7 +74,7 @@ export default function ProfilScreen() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarLoadError, setAvatarLoadError] = useState(false);
   const { showToast } = useToast();
-  const { theme } = useTheme();
+  const { theme, colorMode, setColorMode } = useTheme();
   const [lightbox, setLightbox] = useState({ visible: false, index: 0 });
   const [loadingMoreOotds, setLoadingMoreOotds] = useState(false);
   const ootdsPageRef = useRef(0);
@@ -497,6 +543,26 @@ export default function ProfilScreen() {
                   onValueChange={togglePrivacy}
                   trackColor={{ false: '#ddd', true: theme.accent + '88' }}
                   thumbColor={profile?.is_private ? theme.accent : '#f4f3f4'}
+                />
+              </View>
+
+              {/* Apparence */}
+              <Text style={[styles.settingsLabel, { color: theme.textSub }]}>Apparence</Text>
+              <View style={[styles.settingsPrivacyRow, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <Ionicons
+                    name={colorMode === 'dark' ? 'moon-outline' : 'sunny-outline'}
+                    size={18}
+                    color={theme.textPri}
+                  />
+                  <Text style={[styles.settingsFieldValue, { color: theme.textPri }]}>
+                    {colorMode === 'dark' ? 'Mode sombre' : 'Mode clair'}
+                  </Text>
+                </View>
+                <DarkLightToggle
+                  isDark={colorMode === 'dark'}
+                  onToggle={() => setColorMode(colorMode === 'dark' ? 'light' : 'dark')}
+                  accent={theme.accent}
                 />
               </View>
 

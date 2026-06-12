@@ -1,6 +1,6 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-06-12 — Social + UX : read receipts 3 états, swipe-to-reply, nouveau flux post-analyse, section stories dans l'onglet Analyse, tab bar glassmorphism.
+> Dernière mise à jour : 2026-06-12 — Dark/Light mode toggle : palette duale (sombre/clair) pour les 5 thèmes, toggle animé iOS dans Paramètres, init système, persistence AsyncStorage + user_metadata Supabase.
 
 ---
 
