@@ -799,6 +799,15 @@ export default function FlammesScreen() {
     const channel = supabase
       .channel(`chat-${userId}-${selectedFriend.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
+        // UPDATE traité en priorité par id — sans inPair (sender_id/receiver_id peuvent être absents)
+        if (payload.eventType === 'UPDATE' && payload.new?.id) {
+          setMessages((prev) =>
+            prev.some((m) => m.id === payload.new.id)
+              ? prev.map((m) => (m.id === payload.new.id ? { ...m, ...payload.new } : m))
+              : prev
+          );
+          return;
+        }
         const row = payload.new && payload.new.id ? payload.new : payload.old;
         if (!row) return;
         const inPair =
@@ -820,8 +829,6 @@ export default function FlammesScreen() {
             setFriendTyping(false);
             supabase.rpc('mark_messages_read', { p_friend_id: selectedFriend.id }).catch(() => {});
           }
-        } else if (payload.eventType === 'UPDATE') {
-          setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? { ...m, ...payload.new } : m)));
         } else if (payload.eventType === 'DELETE') {
           setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
         }
@@ -829,6 +836,28 @@ export default function FlammesScreen() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [userId, selectedFriend]);
+
+  // Subscription dédiée aux accusés de lecture (filtre serveur = livraison garantie)
+  useEffect(() => {
+    if (!userId) return;
+    const ch = supabase
+      .channel(`read-receipts-${userId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'messages',
+        filter: `sender_id=eq.${userId}`,
+      }, (payload) => {
+        if (!payload.new?.id) return;
+        setMessages((prev) =>
+          prev.some((m) => m.id === payload.new.id)
+            ? prev.map((m) => (m.id === payload.new.id ? { ...m, ...payload.new } : m))
+            : prev
+        );
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [userId]);
 
   // ── Indicateur « en train d'écrire… » via Supabase Broadcast ───────────────
   // Canal partagé déterministe (ids triés) entre les deux participants.
