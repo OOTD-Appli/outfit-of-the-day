@@ -41,48 +41,48 @@ const REQUEST_TIMEOUT_MS = 25000;
 
 const CRITERION_META = {
   fit: {
-    icon: ‘shirt-outline’, name: ‘Fit’, color: ‘#ED93B1’, track: ‘#F8E5EC’,
+    icon: 'shirt-outline', name: 'Fit', color: '#ED93B1', track: '#F8E5EC',
     labels: [
-      [8, ‘Ajustement parfait !’],
-      [6, ‘Bonne silhouette’],
-      [4, ‘À ajuster’],
-      [0, ‘Coupes à rééquilibrer’],
+      [8, 'Ajustement parfait !'],
+      [6, 'Bonne silhouette'],
+      [4, 'À ajuster'],
+      [0, 'Coupes à rééquilibrer'],
     ],
     descs: [
-      [8, ‘Les volumes et proportions valorisent parfaitement ta silhouette.’],
-      [6, ‘La coupe est équilibrée, quelques détails pourraient l’affiner.’],
-      [4, ‘L’équilibre des volumes et des longueurs mérite attention.’],
-      [0, ‘Les proportions et coupes gagneraient à être repensées.’],
+      [8, "Les volumes et proportions valorisent parfaitement ta silhouette."],
+      [6, "La coupe est équilibrée, quelques ajustements pourraient l'affiner."],
+      [4, "L'équilibre des volumes et des longueurs mérite attention."],
+      [0, "Les proportions et coupes gagneraient à être repensées."],
     ],
   },
   harmonie: {
-    icon: ‘color-palette-outline’, name: ‘Harmonie’, color: ‘#B0809A’, track: ‘#EFE3EA’,
+    icon: 'color-palette-outline', name: 'Harmonie', color: '#B0809A', track: '#EFE3EA',
     labels: [
-      [8, ‘Palette maîtrisée !’],
-      [6, ‘Bon accord couleurs & matières’],
-      [4, ‘Quelques contrastes à harmoniser’],
-      [0, ‘Combinaison à rééquilibrer’],
+      [8, 'Palette maîtrisée !'],
+      [6, 'Bon accord couleurs & matières'],
+      [4, 'Quelques contrastes à harmoniser'],
+      [0, 'Combinaison à rééquilibrer'],
     ],
     descs: [
-      [8, ‘Couleurs et matières se complètent avec élégance.’],
-      [6, ‘L’accord chromatique fonctionne, les textures peuvent s’affiner.’],
-      [4, ‘Certaines couleurs ou matières créent une légère dissonance.’],
-      [0, ‘La palette et les matières manquent de cohérence.’],
+      [8, "Couleurs et matières se complètent avec élégance."],
+      [6, "L'accord chromatique fonctionne, les textures peuvent s'affiner."],
+      [4, "Certaines couleurs ou matières créent une légère dissonance."],
+      [0, "La palette et les matières manquent de cohérence."],
     ],
   },
   detail: {
-    icon: ‘sparkles-outline’, name: ‘Détails’, color: ‘#C9A47A’, track: ‘#F1E8DC’,
+    icon: 'sparkles-outline', name: 'Détails', color: '#C9A47A', track: '#F1E8DC',
     labels: [
-      [8, ‘Styling soigné !’],
-      [6, ‘Bons accessoires & finitions’],
-      [4, ‘Des détails à ajouter’],
-      [0, ‘Finitions à soigner’],
+      [8, 'Styling soigné !'],
+      [6, 'Bons accessoires & finitions'],
+      [4, 'Des détails à ajouter'],
+      [0, 'Finitions à soigner'],
     ],
     descs: [
-      [8, ‘Les accessoires et finitions élèvent la tenue au niveau supérieur.’],
-      [6, ‘Les détails renforcent le style, quelques ajouts sublimeront l’ensemble.’],
-      [4, ‘L’outfit manque d’une touche finale pour se démarquer.’],
-      [0, ‘Les accessoires et finitions nécessitent une attention particulière.’],
+      [8, "Les accessoires et finitions élèvent la tenue au niveau supérieur."],
+      [6, "Les détails renforcent le style, quelques ajouts sublimeront l'ensemble."],
+      [4, "L'outfit manque d'une touche finale pour se démarquer."],
+      [0, "Les accessoires et finitions nécessitent une attention particulière."],
     ],
   },
 };
@@ -91,14 +91,14 @@ function criterionLabel(meta, value) {
   for (const [threshold, text] of meta.labels) {
     if (value >= threshold) return text;
   }
-  return ‘’;
+  return '';
 }
 
 function criterionDesc(meta, value) {
   for (const [threshold, text] of meta.descs) {
     if (value >= threshold) return text;
   }
-  return ‘’;
+  return '';
 }
 
 function ConseilBlock({ conseil, s }) {
@@ -905,7 +905,7 @@ export default function AccueilScreen({ navigation }) {
             <View style={s.howRow}>
               {[
                 { icon: 'camera-outline',     title: '1. Prends ta photo',        text: 'Prends une photo de ta tenue en pied, dans un endroit bien éclairé.' },
-                { icon: 'sparkles-outline',   title: '2. Analyse personnalisée',  text: 'Notre IA analyse ton look selon plusieurs critères de style et d’harmonie.' },
+                { icon: 'sparkles-outline',   title: '2. Analyse personnalisée',  text: "Notre IA analyse ton look selon plusieurs critères de style et d'harmonie." },
                 { icon: 'star-outline',       title: '3. Reçois ton feedback',    text: 'Découvre ta note, des conseils et des astuces pour tes prochains looks !' },
               ].map((item, i) => (
                 <View key={i} style={s.howCard}>
