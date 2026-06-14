@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView,
+  View, Text, StyleSheet, ScrollView, Image,
   TouchableOpacity, ActivityIndicator, Linking, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,16 +21,20 @@ const THEMES = [
 ];
 
 const LOGOS = [
-  { id: 'default', name: 'Classic',    emoji: '⭐', free: true },
-  { id: 'diamond', name: 'Diamond',    emoji: '💎' },
-  { id: 'crown',   name: 'Couronne',   emoji: '👑' },
-  { id: 'fire',    name: 'Flamme',     emoji: '🔥' },
-  { id: 'star',    name: 'Étoile Pro', emoji: '🌟' },
+  { id: 'default',     name: 'Classique',   emoji: '⭐', free: true },
+  { id: 'bleu_neon',   name: 'Bleu Neon',   image: require('../assets/logos/bleu_neon.jpg') },
+  { id: 'sunset',      name: 'Sunset',      image: require('../assets/logos/sunset.jpg') },
+  { id: 'vert_neon',   name: 'Vert Neon',   image: require('../assets/logos/vert_neon.jpg') },
+  { id: 'rose_flashy', name: 'Rose Flashy', image: require('../assets/logos/rose_flashy.jpg') },
+  { id: 'rose_pastel', name: 'Rose Pastel', image: require('../assets/logos/rose_pastel.jpg') },
 ];
 
-// Prix par rareté — DOIT rester aligné avec buy_cosmetic côté serveur (migration shop_express)
+// Prix par rareté — DOIT rester aligné avec buy_cosmetic côté serveur (migration new_logo_variants)
 const THEME_PRICES = { midnight: 1000, emerald: 1000, gold: 1500, sakura: 1500 };
-const LOGO_PRICES  = { fire: 150, diamond: 200, star: 200, crown: 200 };
+const LOGO_PRICES  = {
+  fire: 150, diamond: 200, star: 200, crown: 200,
+  bleu_neon: 500, sunset: 600, vert_neon: 500, rose_flashy: 650, rose_pastel: 750,
+};
 
 // Achats express Stripe (paiement unique en euros, crédit posé par le webhook)
 const EXPRESS = [
@@ -247,16 +251,22 @@ export default function ShopScreen() {
 
   // ── Render cosmétique ──────────────────────────────────────────────────────
   const renderCosItem = (item, itemType) => {
-    const owned    = itemType === 'theme' ? isThemeOwned(item.id) : isLogoOwned(item.id);
-    const isActive = itemType === 'theme' ? profile?.active_theme === item.id : profile?.active_logo === item.id;
-    const isBuying = buying === itemType + '_' + item.id;
-    const price    = itemType === 'theme' ? THEME_PRICES[item.id] : LOGO_PRICES[item.id];
+    const owned     = itemType === 'theme' ? isThemeOwned(item.id) : isLogoOwned(item.id);
+    const isActive  = itemType === 'theme' ? profile?.active_theme === item.id : profile?.active_logo === item.id;
+    const isBuying  = buying === itemType + '_' + item.id;
+    const price     = itemType === 'theme' ? THEME_PRICES[item.id] : LOGO_PRICES[item.id];
     const canAfford = pts >= price;
 
     return (
       <View key={item.id} style={[s.cosCard, { backgroundColor: theme.card, borderColor: theme.border }, isActive && { borderColor: theme.accent, borderWidth: 2 }]}>
-        <Text style={s.cosEmoji}>{item.emoji}</Text>
+        {item.image
+          ? <Image source={item.image} style={s.cosImg} />
+          : <Text style={s.cosEmoji}>{item.emoji}</Text>
+        }
         <Text style={[s.cosName, { color: theme.textPri }]} numberOfLines={2}>{item.name}</Text>
+        {!item.free && price != null && (
+          <Text style={[s.cosPriceLbl, { color: theme.textSub }]}>{fmtPts(price)}</Text>
+        )}
 
         {isActive ? (
           <View style={[s.tag, { backgroundColor: theme.accent }]}><Text style={s.tagTextLight}>Équipé</Text></View>
@@ -276,7 +286,7 @@ export default function ShopScreen() {
           >
             {isBuying
               ? <ActivityIndicator color="#fff" size="small" />
-              : <Text style={[s.buyText, !canAfford && { color: theme.textSub }]}>{fmtPts(price)}</Text>}
+              : <Text style={[s.buyText, !canAfford && { color: theme.textSub }]}>Acheter</Text>}
           </TouchableOpacity>
         )}
       </View>
@@ -445,7 +455,7 @@ export default function ShopScreen() {
         </ScrollView>
 
         {/* Logos */}
-        <Text style={[s.subSection, { color: theme.textSub }]}>Logos · 150–200 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
+        <Text style={[s.subSection, { color: theme.textSub }]}>Logos · 500–750 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hContent}>
           {LOGOS.map(l => renderCosItem(l, 'logo'))}
         </ScrollView>
@@ -512,10 +522,12 @@ const s = StyleSheet.create({
   passBtnTxt: { fontSize: 12, fontWeight: '800', color: '#fff' },
 
   // Cosmétiques
-  hContent: { gap: 10, paddingRight: 4, paddingBottom: 4 },
-  cosCard:  { borderRadius: 16, borderWidth: 1, width: 116, padding: 14, alignItems: 'center', gap: 8 },
-  cosEmoji: { fontSize: 30 },
-  cosName:  { fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  hContent:    { gap: 10, paddingRight: 4, paddingBottom: 4 },
+  cosCard:     { borderRadius: 16, borderWidth: 1, width: 120, padding: 14, alignItems: 'center', gap: 6 },
+  cosEmoji:    { fontSize: 30 },
+  cosImg:      { width: 72, height: 72, borderRadius: 10 },
+  cosName:     { fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  cosPriceLbl: { fontSize: 10, fontWeight: '600', textAlign: 'center', marginTop: -2 },
 
   tag:        { borderRadius: 9, paddingHorizontal: 10, paddingVertical: 4 },
   tagText:    { fontSize: 10, fontWeight: '700' },
