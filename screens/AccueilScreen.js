@@ -786,7 +786,7 @@ export default function AccueilScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
+    <SafeAreaView style={s.safe} edges={[]}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
         {/* ===== AVANT — pas encore de score ===== */}

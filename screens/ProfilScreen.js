@@ -330,7 +330,7 @@ export default function ProfilScreen() {
     : null;
 
   if (loading) return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={[]}>
       <View style={styles.skeletonHeader}>
         <Skeleton width={120} height={22} borderRadius={6} />
         <Skeleton width={90} height={14} borderRadius={6} style={{ marginTop: 8 }} />
@@ -351,7 +351,7 @@ export default function ProfilScreen() {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={[]}>
       <FlatList
         data={ootds}
         keyExtractor={item => item.id}

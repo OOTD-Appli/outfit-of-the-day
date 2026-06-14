@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Image,
+  View, Text, StyleSheet, ScrollView, Image, Platform,
   TouchableOpacity, ActivityIndicator, Linking, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,8 +20,17 @@ const THEMES = [
   { id: 'sakura',   name: 'Sakura',         emoji: '🌺' },
 ];
 
+// Icônes de profil — badges affichés sur l'avatar et les posts
+const ICONS = [
+  { id: 'default',  name: 'Classic',    emoji: '⭐', free: true },
+  { id: 'diamond',  name: 'Diamond',    emoji: '💎' },
+  { id: 'crown',    name: 'Couronne',   emoji: '👑' },
+  { id: 'fire',     name: 'Flamme',     emoji: '🔥' },
+  { id: 'star',     name: 'Étoile Pro', emoji: '🌟' },
+];
+
+// Logos visuels — changent l'icône de l'app et l'identité visuelle
 const LOGOS = [
-  { id: 'default',     name: 'Classique',   emoji: '⭐', free: true },
   { id: 'bleu_neon',   name: 'Bleu Neon',   image: require('../assets/logos/bleu_neon.jpg') },
   { id: 'sunset',      name: 'Sunset',      image: require('../assets/logos/sunset.jpg') },
   { id: 'vert_neon',   name: 'Vert Neon',   image: require('../assets/logos/vert_neon.jpg') },
@@ -31,10 +40,8 @@ const LOGOS = [
 
 // Prix par rareté — DOIT rester aligné avec buy_cosmetic côté serveur (migration new_logo_variants)
 const THEME_PRICES = { midnight: 1000, emerald: 1000, gold: 1500, sakura: 1500 };
-const LOGO_PRICES  = {
-  fire: 150, diamond: 200, star: 200, crown: 200,
-  bleu_neon: 500, sunset: 600, vert_neon: 500, rose_flashy: 650, rose_pastel: 750,
-};
+const ICON_PRICES  = { fire: 150, diamond: 200, star: 200, crown: 200 };
+const LOGO_PRICES  = { bleu_neon: 500, sunset: 600, vert_neon: 500, rose_flashy: 650, rose_pastel: 750 };
 
 // Achats express Stripe (paiement unique en euros, crédit posé par le webhook)
 const EXPRESS = [
@@ -218,6 +225,18 @@ export default function ShopScreen() {
       if (!data?.ok) throw new Error(data?.error || 'Équipement impossible');
       showToast('Style appliqué !', { type: 'success' });
       await refreshTheme();
+      // Web : met à jour le favicon avec le nouveau logo
+      if (itemType === 'logo' && Platform.OS === 'web' && typeof document !== 'undefined') {
+        const logoItem = LOGOS.find(l => l.id === itemId);
+        if (logoItem?.image) {
+          try {
+            const { uri } = Image.resolveAssetSource(logoItem.image);
+            let link = document.querySelector('link[rel="icon"]') || document.querySelector('link[rel="shortcut icon"]');
+            if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+            link.href = uri;
+          } catch (_) {}
+        }
+      }
       fetchData();
     } catch (e) {
       showToast(e.message || 'Erreur', { type: 'error' });
@@ -250,11 +269,12 @@ export default function ShopScreen() {
   const pts          = profile?.points || 0;
 
   // ── Render cosmétique ──────────────────────────────────────────────────────
-  const renderCosItem = (item, itemType) => {
+  // priceMap permet de distinguer ICON_PRICES et LOGO_PRICES pour les deux sous-sections logo
+  const renderCosItem = (item, itemType, priceMap) => {
     const owned     = itemType === 'theme' ? isThemeOwned(item.id) : isLogoOwned(item.id);
     const isActive  = itemType === 'theme' ? profile?.active_theme === item.id : profile?.active_logo === item.id;
     const isBuying  = buying === itemType + '_' + item.id;
-    const price     = itemType === 'theme' ? THEME_PRICES[item.id] : LOGO_PRICES[item.id];
+    const price     = priceMap ? priceMap[item.id] : (itemType === 'theme' ? THEME_PRICES[item.id] : ICON_PRICES[item.id]);
     const canAfford = pts >= price;
 
     return (
@@ -368,14 +388,14 @@ export default function ShopScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={[s.bg, { backgroundColor: theme.bg }]} edges={['top']}>
+      <SafeAreaView style={[s.bg, { backgroundColor: theme.bg }]} edges={[]}>
         <ActivityIndicator color={theme.accent} style={{ marginTop: 80 }} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={[s.bg, { backgroundColor: theme.bg }]} edges={['top']}>
+    <SafeAreaView style={[s.bg, { backgroundColor: theme.bg }]} edges={[]}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
         {/* Header */}
@@ -448,16 +468,22 @@ export default function ShopScreen() {
         <Text style={[s.sectionTitle, { color: theme.textPri, marginTop: 18 }]}>🪙 Boutique Points</Text>
         <Text style={[s.sectionSub, { color: theme.textSub }]}>Débloque des cosmétiques avec tes points OOTD</Text>
 
-        {/* Thèmes */}
+        {/* 3a — Thèmes */}
         <Text style={[s.subSection, { color: theme.textSub }]}>Thèmes · 1000–1500 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hContent}>
           {THEMES.map(t => renderCosItem(t, 'theme'))}
         </ScrollView>
 
-        {/* Logos */}
-        <Text style={[s.subSection, { color: theme.textSub }]}>Logos · 500–750 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
+        {/* 3b — Icônes de profil (badges avatar & posts) */}
+        <Text style={[s.subSection, { color: theme.textSub, marginTop: 14 }]}>Icônes · 150–200 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hContent}>
-          {LOGOS.map(l => renderCosItem(l, 'logo'))}
+          {ICONS.map(i => renderCosItem(i, 'logo', ICON_PRICES))}
+        </ScrollView>
+
+        {/* 3c — Logos visuels (icône app + header) */}
+        <Text style={[s.subSection, { color: theme.textSub, marginTop: 14 }]}>Logo App · 500–750 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hContent}>
+          {LOGOS.map(l => renderCosItem(l, 'logo', LOGO_PRICES))}
         </ScrollView>
 
         <View style={{ height: 48 }} />

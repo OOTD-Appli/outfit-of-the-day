@@ -13,6 +13,7 @@ import { ensureUserProfile } from './lib/ensureProfile';
 import { ToastProvider } from './lib/toastContext';
 import { ThemeProvider, useTheme } from './lib/themeContext';
 import InAppBanner from './components/InAppBanner';
+import AppHeader from './components/AppHeader';
 
 const navigationRef = createNavigationContainerRef();
 
@@ -133,9 +134,9 @@ function ThemedNavigator({ userId }) {
     <NavigationContainer ref={navigationRef}>
       <Tab.Navigator
         screenOptions={{
-          headerShown: false,
-          // Transition douce entre onglets (fondu + léger glissement) — n'affecte
-          // ni les boutons ni la logique, juste le changement d'écran.
+          // Le header est activé par défaut — FeedScreen (full-screen) le désactive
+          headerShown: true,
+          header: () => <AppHeader />,
           animation: 'shift',
           tabBarStyle,
           tabBarActiveTintColor: theme.accent,
@@ -147,6 +148,7 @@ function ThemedNavigator({ userId }) {
           name="Accueil"
           component={FeedScreen}
           options={{
+            headerShown: false,
             tabBarIcon: ({ color, focused }) => (
               <TabIconPill name="home-outline" focused={focused} color={color} accent={theme.accent} />
             ),

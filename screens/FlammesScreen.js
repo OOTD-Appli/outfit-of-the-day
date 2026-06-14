@@ -1157,7 +1157,7 @@ export default function FlammesScreen() {
     const chatLogoConfig = getLogoConfig(selectedFriend.active_logo);
     const chatFlamme = getFlammeInfo(selectedFriend.id);
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={['top']}>
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={[]}>
         {/* Header chat */}
         <View style={[styles.chatHeader, { borderBottomColor: theme.border }]}>
           <TouchableOpacity onPress={leaveChat} style={styles.backBtn}>
@@ -1416,7 +1416,7 @@ export default function FlammesScreen() {
         </View>
       </Modal>
 
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1 }} edges={[]}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={[styles.title, { color: theme.textPri }]}>Chat</Text>
