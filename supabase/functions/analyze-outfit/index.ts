@@ -10,15 +10,34 @@ const CORS = {
 // Modèle Gemini. 2.5-flash dispose du quota sur la clé fournie (2.0-flash = 0).
 const GEMINI_MODEL = 'gemini-2.5-flash';
 
-const PROMPT = `Tu es un critique de mode de haute couture, froid, analytique, impartial et extrêmement strict. Ton rôle est d'évaluer la photo d'un outfit sans aucune complaisance ni politesse artificielle. Tu dois utiliser l'intégralité de l'échelle de notation de 1 à 10. Si un outfit est basique ou négligé, sa note doit être basse (entre 2 et 4). Si un outfit est correct mais sans recherche, sa note doit être de 5. Pour chaque critère, applique rigoureusement le barème suivant :
+const PROMPT = `Tu es un critique de mode haute couture — analytique, impartial, sans complaisance. Évalue uniquement ce qui est VISIBLE sur la photo. Utilise toute l'échelle 0–10 (outfit basique/négligé = 2–4 ; correct sans recherche = 5).
 
-- CRITÈRE 1: HARMONIE DES COULEURS (Départ à 10/10). Enlève 3 points si plus de 3 couleurs non neutres (hors noir, blanc, gris). Enlève 2 points si conflit de couleurs saturées incompatibles. Enlève 2 points si monochrome total plat et sans relief de texture.
-- CRITÈRE 2: COUPE ET SILHOUETTE (Départ à 0/10). Donne 4 points si les volumes sont équilibrés (ample/ajusté ou ajusté/ample), sinon 0. Donne 3 points si la ligne de taille est marquée (vêtement rentré, ceinture, crop). Donne 3 points si le tombé et les longueurs sont impeccables.
-- CRITÈRE 3: EFFORT DE STYLE (Départ à 0/10). Donne 3 points si présence de layering (superposition). Donne jusqu'à 4 points pour les accessoires (1pt par catégorie : bijoux, sac, couvre-chef/lunettes, détails/chaussettes). Donne 3 points si les chaussures sont parfaitement cohérentes avec le style global.
+CRITÈRE 1 — HARMONIE COULEURS & MATIÈRES (départ 10/10)
+• −3 pts : plus de 3 couleurs non neutres (hors noir/blanc/gris/beige)
+• −2 pts : couleurs saturées incompatibles (conflit chaud/froid brutal)
+• −2 pts : monochrome plat sans variation de texture ou de volume
+• −2 pts : matières incompatibles (ex : lin d'été + grosse laine, satin + polaire)
+Score minimum : 0.
 
-N'évalue que ce qui est VISIBLE sur la photo. N'invente aucun élément non visible.
-Réponds EXCLUSIVEMENT en JSON valide (sans markdown), à la structure exacte :
-{"couleurs_note": 0, "couleurs_analyse": "...", "coupe_note": 0, "coupe_analyse": "...", "style_note": 0, "style_analyse": "..."}`;
+CRITÈRE 2 — COUPE & SILHOUETTE (départ 0/10)
+• +4 pts : volumes équilibrés haut/bas (ample+ajusté ou inverse)
+• +2 pts : ligne de taille marquée (French tuck, vêtement rentré, ceinture, crop top)
+• +2 pts : tombé et longueurs impeccables (ni trop long ni trop court)
+• +2 pts : type de coupe maîtrisé (oversized assumé, slim net, regular propre)
+
+CRITÈRE 3 — STYLE & FINITIONS (départ 0/10)
+• +3 pts : layering cohérent (superposition de couches)
+• +1 pt chacun : accessoire présent et pertinent (bijoux, sac, couvre-chef/lunettes, ceinture) — max 4 pts
+• +3 pts : chaussures cohérentes avec le style global
+• −2 pts : vêtement visible froissé ou taché
+
+Réponds EXCLUSIVEMENT en JSON valide sans markdown ni balises :
+{"couleurs_note":0,"couleurs_analyse":"...","coupe_note":0,"coupe_analyse":"...","style_note":0,"style_analyse":"...","points_forts":["...","..."],"axes_amelioration":["...","..."]}
+
+Règles de contenu :
+- couleurs_analyse / coupe_analyse / style_analyse : 1 phrase concise (10–15 mots max).
+- points_forts : 2 à 3 éléments positifs notables (5–8 mots max chacun).
+- axes_amelioration : 2 à 3 pistes d'amélioration concrètes (5–8 mots max chacun).`;
 
 function json(body: unknown, status: number) {
   return new Response(JSON.stringify(body), {
@@ -52,7 +71,7 @@ async function analyzeWithGemini(base64Image: string): Promise<string> {
         // tout le budget de tokens va à la sortie JSON, réponse rapide.
         generationConfig: {
           temperature: 0.8,
-          maxOutputTokens: 1024,
+          maxOutputTokens: 1500,
           responseMimeType: 'application/json',
           thinkingConfig: { thinkingBudget: 0 },
         },
@@ -76,7 +95,7 @@ async function analyzeWithGroq(base64Image: string): Promise<string> {
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
     body: JSON.stringify({
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      max_tokens: 500,
+      max_tokens: 900,
       temperature: 0.8,
       messages: [{
         role: 'user',
@@ -170,12 +189,16 @@ serve(async (req: Request) => {
     // Moyenne globale calculée mathématiquement côté serveur
     const global = Math.round((harmonie + fit + detail) / 3);
 
-    // Mapping vers la structure attendue par le client et la DB
-    // (score_couleurs=harmonie, score_coupe=fit, score_tendance=detail).
-    const conseil =
-      `Couleurs (${harmonie}/10) : ${raw.couleurs_analyse.trim()} ` +
-      `Coupe (${fit}/10) : ${raw.coupe_analyse.trim()} ` +
-      `Style (${detail}/10) : ${raw.style_analyse.trim()}`;
+    // Structurer les points forts et axes d'amélioration (avec fallback si l'IA ne les retourne pas)
+    const pts: string[] = (Array.isArray(raw.points_forts) && raw.points_forts.every((x: unknown) => typeof x === 'string') && raw.points_forts.length > 0)
+      ? raw.points_forts.slice(0, 4)
+      : [`Harmonie des couleurs (${harmonie}/10)`, `Coupe et silhouette (${fit}/10)`, `Effort de style (${detail}/10)`];
+    const axes: string[] = (Array.isArray(raw.axes_amelioration) && raw.axes_amelioration.every((x: unknown) => typeof x === 'string') && raw.axes_amelioration.length > 0)
+      ? raw.axes_amelioration.slice(0, 4)
+      : ['Travailler les proportions et volumes', 'Soigner les accessoires et finitions'];
+
+    // conseil stocké en JSON pour un affichage structuré côté client (rétrocompat : ancien = texte brut)
+    const conseil = JSON.stringify({ points_forts: pts, axes_amelioration: axes });
 
     return json({
       global,

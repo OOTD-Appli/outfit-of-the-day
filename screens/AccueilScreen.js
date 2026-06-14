@@ -41,19 +41,49 @@ const REQUEST_TIMEOUT_MS = 25000;
 
 const CRITERION_META = {
   fit: {
-    icon: 'shirt-outline', name: 'Fit', color: '#ED93B1', track: '#F8E5EC',
-    desc: 'Tes coupes mettent bien ta silhouette en valeur.',
-    labels: [[8, 'Très bon fit !'], [6, 'Bon fit'], [0, 'Fit à retravailler']],
+    icon: ‘shirt-outline’, name: ‘Fit’, color: ‘#ED93B1’, track: ‘#F8E5EC’,
+    labels: [
+      [8, ‘Ajustement parfait !’],
+      [6, ‘Bonne silhouette’],
+      [4, ‘À ajuster’],
+      [0, ‘Coupes à rééquilibrer’],
+    ],
+    descs: [
+      [8, ‘Les volumes et proportions valorisent parfaitement ta silhouette.’],
+      [6, ‘La coupe est équilibrée, quelques détails pourraient l’affiner.’],
+      [4, ‘L’équilibre des volumes et des longueurs mérite attention.’],
+      [0, ‘Les proportions et coupes gagneraient à être repensées.’],
+    ],
   },
   harmonie: {
-    icon: 'color-palette-outline', name: 'Harmonie', color: '#B0809A', track: '#EFE3EA',
-    desc: 'Les couleurs que tu choisis s’accordent bien ensemble.',
-    labels: [[8, 'Belle harmonie !'], [6, 'Bonne harmonie'], [0, 'Harmonie à revoir']],
+    icon: ‘color-palette-outline’, name: ‘Harmonie’, color: ‘#B0809A’, track: ‘#EFE3EA’,
+    labels: [
+      [8, ‘Palette maîtrisée !’],
+      [6, ‘Bon accord couleurs & matières’],
+      [4, ‘Quelques contrastes à harmoniser’],
+      [0, ‘Combinaison à rééquilibrer’],
+    ],
+    descs: [
+      [8, ‘Couleurs et matières se complètent avec élégance.’],
+      [6, ‘L’accord chromatique fonctionne, les textures peuvent s’affiner.’],
+      [4, ‘Certaines couleurs ou matières créent une légère dissonance.’],
+      [0, ‘La palette et les matières manquent de cohérence.’],
+    ],
   },
   detail: {
-    icon: 'sparkles-outline', name: 'Détails', color: '#C9A47A', track: '#F1E8DC',
-    desc: 'Les accessoires ajoutent un petit plus à tes tenues.',
-    labels: [[8, 'Jolis détails !'], [6, 'Bons détails'], [0, 'Détails à soigner']],
+    icon: ‘sparkles-outline’, name: ‘Détails’, color: ‘#C9A47A’, track: ‘#F1E8DC’,
+    labels: [
+      [8, ‘Styling soigné !’],
+      [6, ‘Bons accessoires & finitions’],
+      [4, ‘Des détails à ajouter’],
+      [0, ‘Finitions à soigner’],
+    ],
+    descs: [
+      [8, ‘Les accessoires et finitions élèvent la tenue au niveau supérieur.’],
+      [6, ‘Les détails renforcent le style, quelques ajouts sublimeront l’ensemble.’],
+      [4, ‘L’outfit manque d’une touche finale pour se démarquer.’],
+      [0, ‘Les accessoires et finitions nécessitent une attention particulière.’],
+    ],
   },
 };
 
@@ -61,7 +91,59 @@ function criterionLabel(meta, value) {
   for (const [threshold, text] of meta.labels) {
     if (value >= threshold) return text;
   }
-  return '';
+  return ‘’;
+}
+
+function criterionDesc(meta, value) {
+  for (const [threshold, text] of meta.descs) {
+    if (value >= threshold) return text;
+  }
+  return ‘’;
+}
+
+function ConseilBlock({ conseil, s }) {
+  let structured = null;
+  try {
+    const p = JSON.parse(conseil);
+    if (Array.isArray(p?.points_forts) && Array.isArray(p?.axes_amelioration)) structured = p;
+  } catch (_) {}
+
+  return (
+    <View style={s.conseilCard}>
+      <Text style={s.conseilEmoji}>💁‍♀️</Text>
+      <View style={s.conseilTexts}>
+        <Text style={s.conseilTitle}>Analyse complète</Text>
+        {structured ? (
+          <View>
+            {structured.points_forts.length > 0 && (
+              <View style={{ marginBottom: 10 }}>
+                <Text style={s.conseilSectionTitle}>Points forts</Text>
+                {structured.points_forts.map((pt, i) => (
+                  <View key={i} style={s.conseilBullet}>
+                    <Text style={s.conseilBulletDot}>✦</Text>
+                    <Text style={s.conseilBulletText}>{pt}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {structured.axes_amelioration.length > 0 && (
+              <View>
+                <Text style={s.conseilSectionTitle}>À améliorer</Text>
+                {structured.axes_amelioration.map((ax, i) => (
+                  <View key={i} style={s.conseilBullet}>
+                    <Text style={s.conseilBulletDot}>→</Text>
+                    <Text style={s.conseilBulletText}>{ax}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        ) : (
+          <Text style={s.conseilBody}>{conseil}</Text>
+        )}
+      </View>
+    </View>
+  );
 }
 
 function globalMessage(value) {
@@ -869,7 +951,7 @@ export default function AccueilScreen({ navigation }) {
                     <Text style={s.criterionName}>{meta.name}</Text>
                     <Gauge value={val} size={ringSize} thickness={Math.round(ringSize * 0.1)} color={meta.color} track={meta.track} textColor={theme.textPri} />
                     <Text style={[s.criterionLabel, { color: meta.color }]}>{criterionLabel(meta, val)}</Text>
-                    <Text style={s.criterionDesc}>{meta.desc}</Text>
+                    <Text style={s.criterionDesc}>{criterionDesc(meta, val)}</Text>
                   </View>
                 );
               })}
@@ -894,14 +976,8 @@ export default function AccueilScreen({ navigation }) {
               </View>
             </View>
 
-            {/* Conseil */}
-            <View style={s.conseilCard}>
-              <Text style={s.conseilEmoji}>💁‍♀️</Text>
-              <View style={s.conseilTexts}>
-                <Text style={s.conseilTitle}>Conseil pour améliorer tes OOTD</Text>
-                <Text style={s.conseilBody}>{score.conseil}</Text>
-              </View>
-            </View>
+            {/* Conseil structuré */}
+            <ConseilBlock conseil={score.conseil} s={s} />
 
             {/* Top OOTDs */}
             {topOotds.length > 0 && (
@@ -1272,7 +1348,11 @@ function createStyles(theme) {
   conseilEmoji:  { fontSize: 34 },
   conseilTexts:  { flex: 1 },
   conseilTitle:  { fontSize: 13.5, fontWeight: '800', color: PRI_T, marginBottom: 4 },
-  conseilBody:   { fontSize: 12.5, lineHeight: 18, color: SUB_T },
+  conseilBody:         { fontSize: 12.5, lineHeight: 18, color: SUB_T },
+  conseilSectionTitle: { fontSize: 11.5, fontWeight: '800', color: PRI_T, marginTop: 4, marginBottom: 5, letterSpacing: 0.3 },
+  conseilBullet:       { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 4, gap: 7 },
+  conseilBulletDot:    { fontSize: 11, lineHeight: 18, color: ACC_T, width: 12 },
+  conseilBulletText:   { fontSize: 12.5, lineHeight: 18, color: SUB_T, flex: 1 },
 
   // Top OOTDs
   topSection: { marginBottom: 16 },
