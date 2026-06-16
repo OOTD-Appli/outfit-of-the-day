@@ -1053,14 +1053,19 @@ export default function FlammesScreen() {
     setSendingMessage(true);
     try {
       await recording.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+      try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }); } catch (_) {}
       const uri = recording.getURI();
       if (!uri) throw new Error('Enregistrement vide');
-      const fileName = `audio/${userId}/${Date.now()}.m4a`;
+      // Sur web expo-av enregistre en webm/opus ; sur mobile en m4a (container mp4)
+      const isWeb = Platform.OS === 'web';
+      const fileExt = isWeb ? 'webm' : 'm4a';
+      const contentType = isWeb ? 'audio/webm' : 'audio/mp4';
+      const fileName = `audio/${userId}/${Date.now()}.${fileExt}`;
       const fetchResponse = await fetch(uri);
-      if (!fetchResponse.ok) throw new Error("Impossible de lire l'audio");
+      if (!fetchResponse.ok) throw new Error("Impossible de lire l'enregistrement");
       const blob = await fetchResponse.blob();
-      await supabase.storage.from('ootds').upload(fileName, blob, { contentType: 'audio/m4a' });
+      const { error: uploadError } = await supabase.storage.from('ootds').upload(fileName, blob, { contentType });
+      if (uploadError) throw new Error(`Upload échoué : ${uploadError.message}`);
       const { data: urlData } = supabase.storage.from('ootds').getPublicUrl(fileName);
       const insertPayload = {
         sender_id: userId,
@@ -1072,25 +1077,42 @@ export default function FlammesScreen() {
       if (error) throw error;
       setReplyingTo(null);
       notifyFriend(selectedFriend.id, myProfile?.username || 'OOTD', '🎤 t\'a envoyé un message vocal');
-    } catch (e) { showToast(e?.message || 'Erreur envoi vocal', { type: 'error' }); }
+    } catch (e) {
+      console.error('[stopAndSendRecording]', e?.message || e);
+      showToast(e?.message || 'Erreur envoi vocal', { type: 'error' });
+    }
     setSendingMessage(false);
   };
 
   const playAudioMsg = async (msgId, url) => {
+    if (!url || !url.startsWith('http')) {
+      showToast('URL audio invalide', { type: 'error' });
+      return;
+    }
+    // Stoppe et décharge le son précédent
     if (audioSoundRef.current) {
       try { await audioSoundRef.current.stopAsync(); await audioSoundRef.current.unloadAsync(); } catch (_) {}
       audioSoundRef.current = null;
     }
+    // Deuxième clic sur le même message = pause
     if (playingAudioId === msgId) { setPlayingAudioId(null); return; }
     try {
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false });
-      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true });
+      // setAudioModeAsync peut échouer silencieusement sur web
+      try { await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false }); } catch (_) {}
+      const { sound, status } = await Audio.Sound.createAsync(
+        { uri: url },
+        { shouldPlay: true },
+        (s) => { if (s.didJustFinish || s.error) { setPlayingAudioId(null); audioSoundRef.current = null; } },
+      );
+      if (!status.isLoaded) {
+        throw new Error(status.error ? `Codec non supporté : ${status.error}` : 'Fichier audio non chargé');
+      }
       audioSoundRef.current = sound;
       setPlayingAudioId(msgId);
-      sound.setOnPlaybackStatusUpdate(status => {
-        if (status.didJustFinish) { setPlayingAudioId(null); audioSoundRef.current = null; }
-      });
-    } catch (e) { showToast('Lecture impossible', { type: 'error' }); }
+    } catch (e) {
+      console.error('[playAudioMsg]', e?.message || e);
+      showToast(e?.message || 'Lecture impossible', { type: 'error' });
+    }
   };
 
   const sendPhotoMessage = async () => {
