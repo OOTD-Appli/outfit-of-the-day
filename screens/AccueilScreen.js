@@ -939,7 +939,7 @@ export default function AccueilScreen({ navigation }) {
                   onPress={() => { setShowContextPanel(p => !p); setContextResult(null); }}
                   activeOpacity={0.85}
                 >
-                  <Ionicons name="location-outline" size={16} color={ACCENT} />
+                  <Ionicons name="location-outline" size={16} color="#1a0a10" />
                   <Text style={s.contextBtnText}>
                     {showContextPanel ? 'Masquer le conseil contextuel' : 'Conseil contextuel'}
                   </Text>
@@ -1552,12 +1552,12 @@ function createStyles(theme) {
   postAnalysisActions: { gap: 10, marginTop: 20, marginBottom: 4 },
 
   /* Conseil contextuel */
-  contextBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 16, backgroundColor: CARD_T, borderRadius: 12, borderWidth: 1, borderColor: BRD_T, marginTop: 12, marginBottom: 4, justifyContent: 'center' },
-  contextBtnText: { fontSize: 14, fontWeight: '700', color: ACC_T },
+  contextBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 16, backgroundColor: ACC_T, borderRadius: 16, marginTop: 12, marginBottom: 4, justifyContent: 'center', shadowColor: ACC_T, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
+  contextBtnText: { fontSize: 16, fontWeight: '700', color: '#1a0a10' },
   contextPanel: { backgroundColor: CARD_T, borderRadius: 18, padding: 16, marginTop: 4, marginBottom: 4, borderWidth: 1, borderColor: BRD_T },
   contextLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, color: SUB_T, marginBottom: 8 },
   contextInput: { borderRadius: 10, borderWidth: 1, borderColor: BRD_T, backgroundColor: BG_T, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: PRI_T, minHeight: 56, textAlignVertical: 'top' },
-  contextAnalyzeBtn: { borderRadius: 14, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
+  contextAnalyzeBtn: { borderRadius: 14, paddingVertical: 12, alignItems: 'center', marginTop: 10, backgroundColor: '#D1FF26' },
   contextResultCard: { marginTop: 14, borderRadius: 14, borderWidth: 2, padding: 14 },
   contextVerdictRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   contextVerdict: { fontSize: 26, fontWeight: '900' },
