@@ -772,7 +772,7 @@ export default function FlammesScreen() {
     const now = new Date().toISOString();
     const { data } = await supabase
       .from('messages')
-      .select('id, sender_id, receiver_id, content, image_url, is_liked, is_deleted, read_at, reply_to_id, created_at, expires_at')
+      .select('id, sender_id, receiver_id, content, image_url, audio_url, is_liked, is_deleted, read_at, reply_to_id, created_at, expires_at')
       .or(`and(sender_id.eq.${userId},receiver_id.eq.${friend.id}),and(sender_id.eq.${friend.id},receiver_id.eq.${userId})`)
       .gt('expires_at', now)
       .order('created_at', { ascending: true })
@@ -1073,8 +1073,26 @@ export default function FlammesScreen() {
         audio_url: urlData.publicUrl,
       };
       if (replyingTo?.id) insertPayload.reply_to_id = replyingTo.id;
-      const { error } = await supabase.from('messages').insert(insertPayload);
+      const { data: inserted, error } = await supabase.from('messages').insert(insertPayload).select('id, created_at, expires_at').single();
       if (error) throw error;
+      // Affichage immédiat sans attendre Realtime (évite la race condition lecture locale)
+      setMessages(prev => {
+        if (prev.some(m => m.id === inserted.id)) return prev;
+        return [...prev, {
+          id: inserted.id,
+          sender_id: userId,
+          receiver_id: selectedFriend.id,
+          audio_url: urlData.publicUrl,
+          content: null,
+          image_url: null,
+          is_liked: false,
+          is_deleted: false,
+          read_at: null,
+          reply_to_id: replyingTo?.id ?? null,
+          created_at: inserted.created_at,
+          expires_at: inserted.expires_at,
+        }];
+      });
       setReplyingTo(null);
       notifyFriend(selectedFriend.id, myProfile?.username || 'OOTD', '🎤 t\'a envoyé un message vocal');
     } catch (e) {
