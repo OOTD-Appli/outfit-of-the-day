@@ -117,7 +117,7 @@ export default function ProfilScreen() {
 
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats')
+        .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats, specialized_feed')
         .eq('id', user.id)
         .single();
 
@@ -219,6 +219,16 @@ export default function ProfilScreen() {
     if (error) {
       setProfile(prev => ({ ...prev, is_private: !newVal }));
       showToast('Erreur mise à jour confidentialité', { type: 'error' });
+    }
+  };
+
+  const toggleSpecializedFeed = async () => {
+    const newVal = !profile?.specialized_feed;
+    setProfile(prev => ({ ...prev, specialized_feed: newVal }));
+    const { error } = await supabase.from('profiles').update({ specialized_feed: newVal }).eq('id', profile.id);
+    if (error) {
+      setProfile(prev => ({ ...prev, specialized_feed: !newVal }));
+      showToast('Erreur mise à jour', { type: 'error' });
     }
   };
 
@@ -561,6 +571,23 @@ export default function ProfilScreen() {
                   onValueChange={togglePrivacy}
                   trackColor={{ false: '#ddd', true: theme.accent + '88' }}
                   thumbColor={profile?.is_private ? theme.accent : '#f4f3f4'}
+                />
+              </View>
+
+              {/* Flux spécialisé */}
+              <Text style={[styles.settingsLabel, { color: theme.textSub }]}>Contenu</Text>
+              <View style={[styles.settingsPrivacyRow, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.settingsFieldValue, { color: theme.textPri }]}>Contenu spécialisé</Text>
+                  <Text style={{ fontSize: 11, color: theme.textSub, marginTop: 2 }}>
+                    Priorise les styles qui te correspondent dans POUR TOI
+                  </Text>
+                </View>
+                <Switch
+                  value={!!profile?.specialized_feed}
+                  onValueChange={toggleSpecializedFeed}
+                  trackColor={{ false: '#ddd', true: theme.accent + '88' }}
+                  thumbColor={profile?.specialized_feed ? theme.accent : '#f4f3f4'}
                 />
               </View>
 

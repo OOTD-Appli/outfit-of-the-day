@@ -1,6 +1,6 @@
-import { useState, useCallback, useRef, memo, useEffect } from 'react';
+import { useState, useCallback, useRef, memo, useEffect, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, Animated,
+  View, Text, StyleSheet, Animated, TextInput,
   TouchableOpacity, ActivityIndicator,
   RefreshControl, Modal, FlatList, useWindowDimensions,
 } from 'react-native';
@@ -260,6 +260,10 @@ export default function FeedScreen() {
   const userIdRef = useRef(null);
   const [isMuted, setIsMuted] = useState(false);
   const [currentlyPlayingId, setCurrentlyPlayingId] = useState(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [specializedFeed, setSpecializedFeed] = useState(false);
+  const [userTopStyles, setUserTopStyles] = useState([]);
   const soundRef = useRef(null);
   const isMutedRef = useRef(false);
   // audioActiveRef = true uniquement quand le Feed est au premier plan.
@@ -318,6 +322,36 @@ export default function FeedScreen() {
   const { showToast } = useToast();
   const { theme } = useTheme();
 
+  // Filtre / tri selon la recherche ou le flux spécialisé
+  const displayedOotds = useMemo(() => {
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      return ootds.filter(o =>
+        o.profiles?.username?.toLowerCase().includes(q) ||
+        o.caption?.toLowerCase().includes(q) ||
+        (Array.isArray(o.styles) && o.styles.some(s => s.toLowerCase().includes(q))),
+      );
+    }
+    if (specializedFeed && feedTab === 'pourtoi' && userTopStyles.length > 0) {
+      const matching = ootds.filter(o =>
+        Array.isArray(o.styles) && o.styles.some(s => userTopStyles.includes(s)),
+      );
+      const global = ootds.filter(o =>
+        !Array.isArray(o.styles) || !o.styles.some(s => userTopStyles.includes(s)),
+      );
+      // Interleave 2:1 (matching:global) pour ~70% spécialisé / 30% global
+      const result = [];
+      let mi = 0, gi = 0;
+      while (mi < matching.length || gi < global.length) {
+        if (mi < matching.length) result.push(matching[mi++]);
+        if (mi < matching.length) result.push(matching[mi++]);
+        if (gi < global.length) result.push(global[gi++]);
+      }
+      return result;
+    }
+    return ootds;
+  }, [ootds, searchQuery, specializedFeed, feedTab, userTopStyles]);
+
   const handleThreadCount = useCallback((ootdId, count) => {
     setOotds(prev => prev.map(o => o.id !== ootdId ? o : { ...o, comments: [{ count }] }));
   }, []);
@@ -333,13 +367,20 @@ export default function FeedScreen() {
     setUserId(user?.id);
     userIdRef.current = user?.id;
 
-    // Récupère les amis pour le filtre confidentialité
+    // Récupère les amis + les préférences flux de l'utilisateur en parallèle
     if (user) {
-      const [{ data: fd1 }, { data: fd2 }] = await Promise.all([
+      const [{ data: fd1 }, { data: fd2 }, { data: profilePrefs }] = await Promise.all([
         supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'accepted'),
         supabase.from('friendships').select('user_id').eq('friend_id', user.id).eq('status', 'accepted'),
+        supabase.from('profiles').select('specialized_feed, style_stats').eq('id', user.id).single(),
       ]);
       friendIdsRef.current = [...new Set([...(fd1 || []).map(r => r.friend_id), ...(fd2 || []).map(r => r.user_id)])];
+      setSpecializedFeed(!!profilePrefs?.specialized_feed);
+      const top3 = Object.entries(profilePrefs?.style_stats || {})
+        .sort(([, a], [, b]) => Number(b) - Number(a))
+        .slice(0, 3)
+        .map(([style]) => style);
+      setUserTopStyles(top3);
     }
 
     const { data, error } = await supabase
@@ -584,8 +625,8 @@ export default function FeedScreen() {
               <Text style={[styles.tabText, feedTab === 'pourtoi' && styles.tabTextActive, feedTab === 'pourtoi' && { color: theme.accent }]}>POUR TOI</Text>
               {feedTab === 'pourtoi' && <View style={[styles.tabUnderline, { backgroundColor: theme.accent }]} />}
             </TouchableOpacity>
-            <TouchableOpacity style={styles.searchBtn}>
-              <Feather name="search" size={20} color="rgba(255,255,255,0.85)" />
+            <TouchableOpacity style={styles.searchBtn} onPress={() => { setShowSearch(p => !p); setSearchQuery(''); }}>
+              <Feather name={showSearch ? 'x' : 'search'} size={20} color="rgba(255,255,255,0.85)" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.muteBtn} onPress={toggleMute}>
               <Feather name={isMuted ? 'volume-x' : 'volume-2'} size={20} color="rgba(255,255,255,0.85)" />
@@ -593,6 +634,32 @@ export default function FeedScreen() {
           </View>
         </BlurView>
       </View>
+
+      {/* Barre de recherche */}
+      {showSearch && (
+        <View style={[styles.searchBar, { top: tabTop + 52 }]} pointerEvents="box-none">
+          <BlurView intensity={60} tint="dark" style={{ overflow: 'hidden', borderRadius: 14 }}>
+            <View style={styles.searchInputRow} pointerEvents="auto">
+              <Feather name="search" size={15} color="rgba(255,255,255,0.55)" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Hashtag, description, @utilisateur..."
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+                autoCapitalize="none"
+                returnKeyType="search"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8}>
+                  <Feather name="x" size={15} color="rgba(255,255,255,0.55)" />
+                </TouchableOpacity>
+              )}
+            </View>
+          </BlurView>
+        </View>
+      )}
 
       {/* Feed */}
       {(loading || pageH === 0) ? (
@@ -610,7 +677,7 @@ export default function FeedScreen() {
         </View>
       ) : (
         <FlatList
-          data={ootds}
+          data={displayedOotds}
           keyExtractor={item => item.id}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
@@ -773,6 +840,9 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#fff', fontWeight: '800' },
   tabUnderline: { height: 2.5, width: '100%', borderRadius: 2, marginTop: 4 },
   searchBtn: { position: 'absolute', right: 16, bottom: 12 },
+  searchBar: { position: 'absolute', left: 12, right: 12, zIndex: 15 },
+  searchInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10 },
+  searchInput: { flex: 1, color: '#fff', fontSize: 14, paddingVertical: 2 },
 
   /* Empty */
   empty: { alignItems: 'center', justifyContent: 'center', flexGrow: 1, backgroundColor: '#0a0a0a', gap: 12 },

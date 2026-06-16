@@ -430,6 +430,9 @@ export default function AccueilScreen({ navigation }) {
     cachedPublicUrlRef.current = null;
     setPublishedToFeed(false);
     setSentFlammesToAll(false);
+    setShowContextPanel(false);
+    setContextText('');
+    setContextResult(null);
     setImage(asset);
   };
 
@@ -928,6 +931,70 @@ export default function AccueilScreen({ navigation }) {
               </Bouncy>
             )}
 
+            {/* Conseil contextuel — saisi avant l'analyse */}
+            {image && (
+              <View>
+                <TouchableOpacity
+                  style={s.contextBtn}
+                  onPress={() => { setShowContextPanel(p => !p); setContextResult(null); }}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="location-outline" size={16} color={ACCENT} />
+                  <Text style={s.contextBtnText}>
+                    {showContextPanel ? 'Masquer le conseil contextuel' : 'Conseil contextuel'}
+                  </Text>
+                </TouchableOpacity>
+                {showContextPanel && (
+                  <View style={s.contextPanel}>
+                    <Text style={s.contextLabel}>Decris le contexte de ta tenue</Text>
+                    <TextInput
+                      style={s.contextInput}
+                      placeholder="Ex : soiree formelle, rendez-vous professionnel..."
+                      placeholderTextColor={TEXT_SEC}
+                      value={contextText}
+                      onChangeText={setContextText}
+                      maxLength={120}
+                      multiline
+                    />
+                    <Bouncy
+                      style={[s.contextAnalyzeBtn, (loadingContext || !contextText.trim()) && s.analyzeBtnDisabled]}
+                      onPress={analyzeContext}
+                      disabled={loadingContext || !contextText.trim()}
+                    >
+                      {loadingContext ? (
+                        <View style={s.analyzeBtnInner}>
+                          <ActivityIndicator color="#1a0a10" size="small" />
+                          <Text style={s.analyzeBtnText}>  Analyse...</Text>
+                        </View>
+                      ) : (
+                        <Text style={s.analyzeBtnText}>Analyser le contexte</Text>
+                      )}
+                    </Bouncy>
+                    {contextResult && (
+                      <View style={[s.contextResultCard, { borderColor: contextResult.coherent ? '#4AFF7A' : '#FF4A4A' }]}>
+                        <View style={s.contextVerdictRow}>
+                          <Ionicons
+                            name={contextResult.coherent ? 'checkmark-circle' : 'close-circle'}
+                            size={28}
+                            color={contextResult.coherent ? '#4AFF7A' : '#FF4A4A'}
+                          />
+                          <Text style={[s.contextVerdict, { color: contextResult.coherent ? '#4AFF7A' : '#FF4A4A' }]}>
+                            {contextResult.verdict}
+                          </Text>
+                        </View>
+                        {!!contextResult.explication && (
+                          <Text style={s.contextExplication}>{contextResult.explication}</Text>
+                        )}
+                        {!!contextResult.conseil && (
+                          <Text style={s.contextConseil}>{contextResult.conseil}</Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Carte conseil */}
             <View style={s.tipCard}>
               <View style={s.tipIconWrap}>
@@ -1019,67 +1086,6 @@ export default function AccueilScreen({ navigation }) {
 
             {/* Conseil structuré */}
             <ConseilBlock conseil={score.conseil} s={s} />
-
-            {/* Conseil contextuel */}
-            <TouchableOpacity
-              style={s.contextBtn}
-              onPress={() => { setShowContextPanel(p => !p); setContextResult(null); }}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="location-outline" size={16} color={ACCENT} />
-              <Text style={s.contextBtnText}>
-                {showContextPanel ? 'Masquer le conseil contextuel' : 'Conseil contextuel'}
-              </Text>
-            </TouchableOpacity>
-
-            {showContextPanel && (
-              <View style={s.contextPanel}>
-                <Text style={s.contextLabel}>Decris le contexte de ta tenue</Text>
-                <TextInput
-                  style={s.contextInput}
-                  placeholder="Ex : soiree formelle, rendez-vous professionnel..."
-                  placeholderTextColor={TEXT_SEC}
-                  value={contextText}
-                  onChangeText={setContextText}
-                  maxLength={120}
-                  multiline
-                />
-                <Bouncy
-                  style={[s.contextAnalyzeBtn, (loadingContext || !contextText.trim()) && s.analyzeBtnDisabled]}
-                  onPress={analyzeContext}
-                  disabled={loadingContext || !contextText.trim()}
-                >
-                  {loadingContext ? (
-                    <View style={s.analyzeBtnInner}>
-                      <ActivityIndicator color="#1a0a10" size="small" />
-                      <Text style={s.analyzeBtnText}>  Analyse...</Text>
-                    </View>
-                  ) : (
-                    <Text style={s.analyzeBtnText}>Analyser le contexte</Text>
-                  )}
-                </Bouncy>
-                {contextResult && (
-                  <View style={[s.contextResultCard, { borderColor: contextResult.coherent ? '#4AFF7A' : '#FF4A4A' }]}>
-                    <View style={s.contextVerdictRow}>
-                      <Ionicons
-                        name={contextResult.coherent ? 'checkmark-circle' : 'close-circle'}
-                        size={28}
-                        color={contextResult.coherent ? '#4AFF7A' : '#FF4A4A'}
-                      />
-                      <Text style={[s.contextVerdict, { color: contextResult.coherent ? '#4AFF7A' : '#FF4A4A' }]}>
-                        {contextResult.verdict}
-                      </Text>
-                    </View>
-                    {!!contextResult.explication && (
-                      <Text style={s.contextExplication}>{contextResult.explication}</Text>
-                    )}
-                    {!!contextResult.conseil && (
-                      <Text style={s.contextConseil}>{contextResult.conseil}</Text>
-                    )}
-                  </View>
-                )}
-              </View>
-            )}
 
             {/* Top OOTDs */}
             {topOotds.length > 0 && (

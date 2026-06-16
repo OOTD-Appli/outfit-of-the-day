@@ -10,7 +10,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Video, ResizeMode } from 'expo-av';
+import { Video, ResizeMode, Audio } from 'expo-av';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
@@ -24,6 +24,23 @@ import { dismissChatNotifications } from '../lib/webPush';
 import { triggerHaptic } from '../lib/haptics';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
+
+function AudioMessage({ url, isPlaying, onPlay, theme }) {
+  const bars = [3, 6, 10, 7, 12, 8, 4, 9, 5, 11, 7, 9];
+  return (
+    <TouchableOpacity style={styles.audioMsgRow} onPress={onPlay} activeOpacity={0.75}>
+      <View style={[styles.audioPlayCircle, { backgroundColor: theme.accent + '33' }]}>
+        <Feather name={isPlaying ? 'pause' : 'play'} size={14} color={theme.accent} />
+      </View>
+      <View style={styles.audioWaveform}>
+        {bars.map((h, i) => (
+          <View key={i} style={[styles.audioBar, { height: h, backgroundColor: isPlaying ? theme.accent : (theme.textSub + '99') }]} />
+        ))}
+      </View>
+      <Text style={[styles.audioLabel, { color: theme.textSub }]}>🎤</Text>
+    </TouchableOpacity>
+  );
+}
 
 // Entrée d'une bulle de message : fade + léger glissement (vertical + côté) + scale.
 // L'animation ne joue qu'au MONTAGE (key=msg.id stable) → seules les nouvelles
@@ -221,6 +238,10 @@ export default function FlammesScreen() {
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [playingAudioId, setPlayingAudioId] = useState(null);
+  const audioRecordingRef = useRef(null);
+  const audioSoundRef = useRef(null);
   const [stories, setStories] = useState([]);
   const [myStory, setMyStory] = useState(null);
   const [flammes, setFlammes] = useState([]);
@@ -1013,6 +1034,65 @@ export default function FlammesScreen() {
     }
   };
 
+  const startRecording = async () => {
+    try {
+      const { granted } = await Audio.requestPermissionsAsync();
+      if (!granted) { showToast('Permission micro refusée', { type: 'warning' }); return; }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      audioRecordingRef.current = recording;
+      setIsRecording(true);
+    } catch (e) { showToast(e?.message || 'Erreur micro', { type: 'error' }); }
+  };
+
+  const stopAndSendRecording = async () => {
+    const recording = audioRecordingRef.current;
+    if (!recording) return;
+    setIsRecording(false);
+    audioRecordingRef.current = null;
+    setSendingMessage(true);
+    try {
+      await recording.stopAndUnloadAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+      const uri = recording.getURI();
+      if (!uri) throw new Error('Enregistrement vide');
+      const fileName = `audio/${userId}/${Date.now()}.m4a`;
+      const fetchResponse = await fetch(uri);
+      if (!fetchResponse.ok) throw new Error("Impossible de lire l'audio");
+      const blob = await fetchResponse.blob();
+      await supabase.storage.from('ootds').upload(fileName, blob, { contentType: 'audio/m4a' });
+      const { data: urlData } = supabase.storage.from('ootds').getPublicUrl(fileName);
+      const insertPayload = {
+        sender_id: userId,
+        receiver_id: selectedFriend.id,
+        audio_url: urlData.publicUrl,
+      };
+      if (replyingTo?.id) insertPayload.reply_to_id = replyingTo.id;
+      const { error } = await supabase.from('messages').insert(insertPayload);
+      if (error) throw error;
+      setReplyingTo(null);
+      notifyFriend(selectedFriend.id, myProfile?.username || 'OOTD', '🎤 t\'a envoyé un message vocal');
+    } catch (e) { showToast(e?.message || 'Erreur envoi vocal', { type: 'error' }); }
+    setSendingMessage(false);
+  };
+
+  const playAudioMsg = async (msgId, url) => {
+    if (audioSoundRef.current) {
+      try { await audioSoundRef.current.stopAsync(); await audioSoundRef.current.unloadAsync(); } catch (_) {}
+      audioSoundRef.current = null;
+    }
+    if (playingAudioId === msgId) { setPlayingAudioId(null); return; }
+    try {
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false });
+      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true });
+      audioSoundRef.current = sound;
+      setPlayingAudioId(msgId);
+      sound.setOnPlaybackStatusUpdate(status => {
+        if (status.didJustFinish) { setPlayingAudioId(null); audioSoundRef.current = null; }
+      });
+    } catch (e) { showToast('Lecture impossible', { type: 'error' }); }
+  };
+
   const sendPhotoMessage = async () => {
     if (!selectedFriend || sendingMessage) return;
     // Tente la caméra en premier ; si refusé → repli galerie
@@ -1234,7 +1314,7 @@ export default function FlammesScreen() {
                     const isFromMe = m.sender_id === userId;
                     setReplyingTo({
                       id: m.id,
-                      content: m.is_deleted ? 'Message supprimé' : (m.content || (m.image_url ? '📸 Photo' : '')),
+                      content: m.is_deleted ? 'Message supprimé' : (m.content || (m.image_url ? '📸 Photo' : (m.audio_url ? '🎤 Audio' : ''))),
                       senderName: isFromMe ? 'Toi' : selectedFriend.username,
                       imageUrl: m.image_url,
                     });
@@ -1260,7 +1340,7 @@ export default function FlammesScreen() {
                         {parentMsg.sender_id === userId ? 'Toi' : selectedFriend.username}
                       </Text>
                       <Text style={[styles.replyQuoteText, { color: theme.textSub }]} numberOfLines={1}>
-                        {parentMsg.is_deleted ? 'Message supprimé' : (parentMsg.content || (parentMsg.image_url ? '📸 Photo' : ''))}
+                        {parentMsg.is_deleted ? 'Message supprimé' : (parentMsg.content || (parentMsg.image_url ? '📸 Photo' : (parentMsg.audio_url ? '🎤 Audio' : '')))}
                       </Text>
                     </View>
                   )}
@@ -1285,10 +1365,21 @@ export default function FlammesScreen() {
                     }
                     return (
                       <>
-                        {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
-                        {msg.image_url ? (
-                          <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
-                        ) : null}
+                        {msg.audio_url ? (
+                          <AudioMessage
+                            url={msg.audio_url}
+                            isPlaying={playingAudioId === msg.id}
+                            onPlay={() => playAudioMsg(msg.id, msg.audio_url)}
+                            theme={theme}
+                          />
+                        ) : (
+                          <>
+                            {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
+                            {msg.image_url ? (
+                              <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
+                            ) : null}
+                          </>
+                        )}
                       </>
                     );
                   })()}
@@ -1332,19 +1423,32 @@ export default function FlammesScreen() {
             <View style={styles.inputRow}>
               <TextInput
                 style={[styles.msgInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textPri }]}
-                placeholder="Écrire un message..."
-                placeholderTextColor={theme.textSub}
+                placeholder={isRecording ? '🎤 Enregistrement en cours...' : 'Écrire un message...'}
+                placeholderTextColor={isRecording ? theme.accent : theme.textSub}
                 value={messageText}
                 onChangeText={onChangeMessageText}
                 multiline
                 maxLength={500}
+                editable={!isRecording}
               />
+              {!messageText.trim() && (
+                <TouchableOpacity
+                  style={[styles.micBtn, { backgroundColor: isRecording ? '#FF4A4A' : theme.card, borderColor: isRecording ? '#FF4A4A44' : theme.border }]}
+                  onPress={isRecording ? stopAndSendRecording : startRecording}
+                  disabled={sendingMessage && !isRecording}
+                >
+                  {sendingMessage && isRecording
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Feather name={isRecording ? 'stop-circle' : 'mic'} size={18} color={isRecording ? '#fff' : theme.textSub} />
+                  }
+                </TouchableOpacity>
+              )}
               <Bouncy
                 style={[styles.sendBtn, { backgroundColor: theme.accent }, (!messageText.trim() || sendingMessage) && { opacity: 0.45 }]}
                 onPress={sendTextMessage}
                 disabled={!messageText.trim() || sendingMessage}
               >
-                {sendingMessage
+                {sendingMessage && !isRecording
                   ? <ActivityIndicator color="#fff" size="small" />
                   : <Feather name="send" size={16} color="#fff" />
                 }
@@ -1842,6 +1946,12 @@ const styles = StyleSheet.create({
   inputRow:        { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 8 },
   msgInput:        { flex: 1, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 100, borderWidth: 1 },
   sendBtn:         { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  micBtn:          { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  audioMsgRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 150, paddingVertical: 2 },
+  audioPlayCircle: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  audioWaveform:   { flexDirection: 'row', alignItems: 'center', gap: 2, flex: 1 },
+  audioBar:        { width: 3, borderRadius: 2, minHeight: 3 },
+  audioLabel:      { fontSize: 13 },
 
   /* Reply bar & quote */
   replyBar:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, borderLeftWidth: 3, borderTopWidth: StyleSheet.hairlineWidth, gap: 8 },
