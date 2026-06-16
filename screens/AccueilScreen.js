@@ -933,7 +933,7 @@ export default function AccueilScreen({ navigation }) {
 
             {/* Conseil contextuel — saisi avant l'analyse */}
             {image && (
-              <View>
+              <View style={{ marginBottom: 15 }}>
                 <TouchableOpacity
                   style={s.contextBtn}
                   onPress={() => { setShowContextPanel(p => !p); setContextResult(null); }}
@@ -1557,7 +1557,7 @@ function createStyles(theme) {
   contextPanel: { backgroundColor: CARD_T, borderRadius: 18, padding: 16, marginTop: 4, marginBottom: 4, borderWidth: 1, borderColor: BRD_T },
   contextLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, color: SUB_T, marginBottom: 8 },
   contextInput: { borderRadius: 10, borderWidth: 1, borderColor: BRD_T, backgroundColor: BG_T, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: PRI_T, minHeight: 56, textAlignVertical: 'top' },
-  contextAnalyzeBtn: { borderRadius: 14, paddingVertical: 12, alignItems: 'center', marginTop: 10, backgroundColor: '#D1FF26' },
+  contextAnalyzeBtn: { borderRadius: 14, paddingVertical: 12, alignItems: 'center', marginTop: 10, backgroundColor: ACC_T },
   contextResultCard: { marginTop: 14, borderRadius: 14, borderWidth: 2, padding: 14 },
   contextVerdictRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   contextVerdict: { fontSize: 26, fontWeight: '900' },
