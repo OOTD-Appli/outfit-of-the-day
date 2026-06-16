@@ -122,6 +122,15 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
           <Text style={styles.postCaption} numberOfLines={2}>{item.caption}</Text>
         ) : null}
 
+        {/* Hashtags de style */}
+        {item.show_style_hashtag && Array.isArray(item.styles) && item.styles.length > 0 && (
+          <View style={styles.styleHashtagRow}>
+            {item.styles.map(style => (
+              <Text key={style} style={styles.styleHashtag}>{style}</Text>
+            ))}
+          </View>
+        )}
+
         {/* Barre musique */}
         <View style={styles.musicRow}>
           {item.audio_preview_url ? (
@@ -335,7 +344,7 @@ export default function FeedScreen() {
 
     const { data, error } = await supabase
       .from('ootds')
-      .select(`id, user_id, image_url, caption, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
+      .select(`id, user_id, image_url, caption, styles, show_style_hashtag, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
       .eq('is_public', true)
       .order('created_at', { ascending: false })
       .range(0, PAGE_SIZE - 1);
@@ -362,7 +371,7 @@ export default function FeedScreen() {
     const end = start + PAGE_SIZE - 1;
     const { data, error } = await supabase
       .from('ootds')
-      .select(`id, user_id, image_url, caption, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
+      .select(`id, user_id, image_url, caption, styles, show_style_hashtag, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
       .eq('is_public', true)
       .order('created_at', { ascending: false })
       .range(start, end);
@@ -698,6 +707,8 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
+  styleHashtagRow:  { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  styleHashtag:     { color: 'rgba(237,147,177,0.95)', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
   musicRow:         { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   musicText:        { color: 'rgba(255,255,255,0.72)', fontSize: 11.5, fontStyle: 'italic', flex: 1 },
   musicCoverThumb:  { width: 20, height: 20, borderRadius: 4 },

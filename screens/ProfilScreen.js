@@ -117,7 +117,7 @@ export default function ProfilScreen() {
 
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes')
+        .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats')
         .eq('id', user.id)
         .single();
 
@@ -447,6 +447,24 @@ export default function ProfilScreen() {
                   <Text style={[styles.statLabel, { color: theme.textSub }]}>Points</Text>
                 </View>
               </View>
+
+              {/* Top 3 styles */}
+              {(() => {
+                const top3 = Object.entries(profile?.style_stats || {})
+                  .sort(([, a], [, b]) => Number(b) - Number(a))
+                  .slice(0, 3)
+                  .map(([style]) => style);
+                if (!top3.length) return null;
+                return (
+                  <View style={styles.stylesRow}>
+                    {top3.map(style => (
+                      <View key={style} style={[styles.styleChip, { backgroundColor: theme.accent + '18', borderColor: theme.accent + '55' }]}>
+                        <Text style={[styles.styleChipText, { color: theme.accent }]}>{style}</Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
             </AnimatedEntrance>
 
             <View style={[styles.niveauCard, { backgroundColor: theme.card }]}>
@@ -707,4 +725,9 @@ const styles = StyleSheet.create({
   settingsCancelText:   { fontWeight: '600', fontSize: 15 },
   settingsSave:         { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   settingsSaveText:     { color: '#fff', fontWeight: '800', fontSize: 15 },
+
+  /* Top styles */
+  stylesRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, justifyContent: 'center' },
+  styleChip:     { borderRadius: 20, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 5 },
+  styleChipText: { fontSize: 12, fontWeight: '700' },
 });

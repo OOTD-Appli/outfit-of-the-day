@@ -190,6 +190,11 @@ export default function AccueilScreen({ navigation }) {
   const [selectedMusic, setSelectedMusic] = useState(null); // { title, artist, previewUrl, coverUrl }
   const [showCustomization, setShowCustomization] = useState(false);
   const [savingForSelf, setSavingForSelf] = useState(false);
+  const [showStyleHashtag, setShowStyleHashtag] = useState(true);
+  const [showContextPanel, setShowContextPanel] = useState(false);
+  const [contextText, setContextText] = useState('');
+  const [contextResult, setContextResult] = useState(null);
+  const [loadingContext, setLoadingContext] = useState(false);
   const [musicPicker, setMusicPicker] = useState({ visible: false, query: '', results: [], searching: false });
   const musicSearchTimeout = useRef(null);
   const [caption, setCaption] = useState('');
@@ -576,6 +581,35 @@ export default function AccueilScreen({ navigation }) {
     setLoading(false);
   };
 
+  const analyzeContext = async () => {
+    if (!image || !contextText.trim() || loadingContext) return;
+    setLoadingContext(true);
+    try {
+      if (!image.base64) throw new Error('Image introuvable.');
+      const base64Image = `data:image/jpeg;base64,${image.base64}`;
+      const { data: parsed, error: fnError } = await withTimeout(
+        supabase.functions.invoke('contextual-analysis', { body: { base64Image, context: contextText.trim() } }),
+        REQUEST_TIMEOUT_MS,
+        "L'analyse contextuelle est trop longue. Verifie ta connexion.",
+      );
+      if (fnError) {
+        let errMsg = 'Analyse contextuelle indisponible';
+        try {
+          const errBody = await fnError.context?.json?.();
+          if (errBody?.error) errMsg = errBody.error;
+          if (typeof errBody?.credits === 'number') setCredits(errBody.credits);
+        } catch (_) {}
+        throw new Error(errMsg);
+      }
+      if (!parsed || typeof parsed.coherent !== 'boolean') throw new Error('Reponse IA invalide.');
+      if (typeof parsed.credits_remaining === 'number') setCredits(parsed.credits_remaining);
+      setContextResult(parsed);
+    } catch (e) {
+      showToast(e.message || 'Erreur analyse contextuelle.', { type: 'error' });
+    }
+    setLoadingContext(false);
+  };
+
   const uploadAnalyzedImageIfNeeded = useCallback(async () => {
     if (cachedPublicUrlRef.current) return cachedPublicUrlRef.current;
     // Stockage feed : WebP si dispo (web), sinon JPEG (web sans support / natif).
@@ -620,7 +654,9 @@ export default function AccueilScreen({ navigation }) {
         score_tendance: score.detail,
         conseil: score.conseil,
         caption: caption.trim() || null,
-        is_public: true, // publié dans le feed (audience régie par la confidentialité du compte)
+        is_public: true,
+        styles: score.styles || [],
+        show_style_hashtag: showStyleHashtag,
         audio_title: selectedMusic?.title || null,
         audio_artist: selectedMusic?.artist || null,
         audio_preview_url: selectedMusic?.previewUrl || null,
@@ -631,6 +667,9 @@ export default function AccueilScreen({ navigation }) {
       if (awardError) throw new Error(`Points: ${awardError.message}`);
       if (!awardResult?.ok) throw new Error(awardResult?.error || 'Erreur attribution points');
       const pointsGagnes = awardResult.points_earned;
+      if ((score.styles || []).length > 0) {
+        try { await supabase.rpc('increment_style_stats', { p_styles: score.styles }); } catch (_) {}
+      }
       setPublishedToFeed(true);
       setCaption('');
       setSelectedMusic(null);
@@ -663,6 +702,7 @@ export default function AccueilScreen({ navigation }) {
         conseil: score.conseil,
         caption: caption.trim() || null,
         is_public: false,
+        styles: score.styles || [],
         audio_title: selectedMusic?.title || null,
         audio_artist: selectedMusic?.artist || null,
         audio_preview_url: selectedMusic?.previewUrl || null,
@@ -769,6 +809,7 @@ export default function AccueilScreen({ navigation }) {
             score_global: score.global, score_couleurs: score.harmonie,
             score_coupe: score.fit, score_tendance: score.detail,
             conseil: score.conseil, caption: caption.trim() || null,
+            styles: score.styles || [],
             audio_title: selectedMusic?.title || null, audio_artist: selectedMusic?.artist || null,
             audio_preview_url: selectedMusic?.previewUrl || null, audio_cover_url: selectedMusic?.coverUrl || null,
           });
@@ -979,6 +1020,67 @@ export default function AccueilScreen({ navigation }) {
             {/* Conseil structuré */}
             <ConseilBlock conseil={score.conseil} s={s} />
 
+            {/* Conseil contextuel */}
+            <TouchableOpacity
+              style={s.contextBtn}
+              onPress={() => { setShowContextPanel(p => !p); setContextResult(null); }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="location-outline" size={16} color={ACCENT} />
+              <Text style={s.contextBtnText}>
+                {showContextPanel ? 'Masquer le conseil contextuel' : 'Conseil contextuel'}
+              </Text>
+            </TouchableOpacity>
+
+            {showContextPanel && (
+              <View style={s.contextPanel}>
+                <Text style={s.contextLabel}>Decris le contexte de ta tenue</Text>
+                <TextInput
+                  style={s.contextInput}
+                  placeholder="Ex : soiree formelle, rendez-vous professionnel..."
+                  placeholderTextColor={TEXT_SEC}
+                  value={contextText}
+                  onChangeText={setContextText}
+                  maxLength={120}
+                  multiline
+                />
+                <Bouncy
+                  style={[s.contextAnalyzeBtn, (loadingContext || !contextText.trim()) && s.analyzeBtnDisabled]}
+                  onPress={analyzeContext}
+                  disabled={loadingContext || !contextText.trim()}
+                >
+                  {loadingContext ? (
+                    <View style={s.analyzeBtnInner}>
+                      <ActivityIndicator color="#1a0a10" size="small" />
+                      <Text style={s.analyzeBtnText}>  Analyse...</Text>
+                    </View>
+                  ) : (
+                    <Text style={s.analyzeBtnText}>Analyser le contexte</Text>
+                  )}
+                </Bouncy>
+                {contextResult && (
+                  <View style={[s.contextResultCard, { borderColor: contextResult.coherent ? '#4AFF7A' : '#FF4A4A' }]}>
+                    <View style={s.contextVerdictRow}>
+                      <Ionicons
+                        name={contextResult.coherent ? 'checkmark-circle' : 'close-circle'}
+                        size={28}
+                        color={contextResult.coherent ? '#4AFF7A' : '#FF4A4A'}
+                      />
+                      <Text style={[s.contextVerdict, { color: contextResult.coherent ? '#4AFF7A' : '#FF4A4A' }]}>
+                        {contextResult.verdict}
+                      </Text>
+                    </View>
+                    {!!contextResult.explication && (
+                      <Text style={s.contextExplication}>{contextResult.explication}</Text>
+                    )}
+                    {!!contextResult.conseil && (
+                      <Text style={s.contextConseil}>{contextResult.conseil}</Text>
+                    )}
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Top OOTDs */}
             {topOotds.length > 0 && (
               <View style={s.topSection}>
@@ -1019,6 +1121,9 @@ export default function AccueilScreen({ navigation }) {
                   cachedPublicUrlRef.current = null;
                   setPublishedToFeed(false);
                   setSentFlammesToAll(false);
+                  setShowContextPanel(false);
+                  setContextText('');
+                  setContextResult(null);
                 }}
               >
                 <Text style={s.retryText}>Analyser une nouvelle tenue</Text>
@@ -1167,6 +1272,8 @@ export default function AccueilScreen({ navigation }) {
         posting={postingFeed}
         sendingFlammes={sendingFlammesAll}
         saving={savingForSelf}
+        showStyleHashtag={showStyleHashtag}
+        setShowStyleHashtag={setShowStyleHashtag}
       />
     </SafeAreaView>
   );
@@ -1437,6 +1544,19 @@ function createStyles(theme) {
 
   /* Post-analyse actions */
   postAnalysisActions: { gap: 10, marginTop: 20, marginBottom: 4 },
+
+  /* Conseil contextuel */
+  contextBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 16, backgroundColor: CARD_T, borderRadius: 12, borderWidth: 1, borderColor: BRD_T, marginTop: 12, marginBottom: 4, justifyContent: 'center' },
+  contextBtnText: { fontSize: 14, fontWeight: '700', color: ACC_T },
+  contextPanel: { backgroundColor: CARD_T, borderRadius: 18, padding: 16, marginTop: 4, marginBottom: 4, borderWidth: 1, borderColor: BRD_T },
+  contextLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, color: SUB_T, marginBottom: 8 },
+  contextInput: { borderRadius: 10, borderWidth: 1, borderColor: BRD_T, backgroundColor: BG_T, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: PRI_T, minHeight: 56, textAlignVertical: 'top' },
+  contextAnalyzeBtn: { borderRadius: 14, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
+  contextResultCard: { marginTop: 14, borderRadius: 14, borderWidth: 2, padding: 14 },
+  contextVerdictRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  contextVerdict: { fontSize: 26, fontWeight: '900' },
+  contextExplication: { fontSize: 13, color: PRI_T, lineHeight: 19, marginBottom: 6 },
+  contextConseil: { fontSize: 12, color: SUB_T, lineHeight: 17, fontStyle: 'italic' },
 
   /* Section Stories */
   storiesSection:    { marginTop: 28, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: BRD_T },

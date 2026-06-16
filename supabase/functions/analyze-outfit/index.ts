@@ -31,13 +31,18 @@ CRITÈRE 3 — STYLE & FINITIONS (départ 0/10)
 • +3 pts : chaussures cohérentes avec le style global
 • −2 pts : vêtement visible froissé ou taché
 
+CRITÈRE STYLES (obligatoire) :
+Choisis exactement 1 ou 2 styles parmi cette liste — ne jamais inventer d'autres valeurs :
+#StreetwearOversize #Athleisure #CasualChic #Gorpcore #Y2K #IndieSleaze #Blokecore #EclectiqueGrandpa #CleanLook #OfficeSiren #QuietLuxury #MinimalismeScandinave #AcubiStyle #SubversiveBasics #Techwear #DarkMode #Cottagecore #FairyGrunge #BohemeChic #Coquette
+
 Réponds EXCLUSIVEMENT en JSON valide sans markdown ni balises :
-{"couleurs_note":0,"couleurs_analyse":"...","coupe_note":0,"coupe_analyse":"...","style_note":0,"style_analyse":"...","points_forts":["...","..."],"axes_amelioration":["...","..."]}
+{"couleurs_note":0,"couleurs_analyse":"...","coupe_note":0,"coupe_analyse":"...","style_note":0,"style_analyse":"...","points_forts":["...","..."],"axes_amelioration":["...","..."],"styles":["#CasualChic"]}
 
 Règles de contenu :
 - couleurs_analyse / coupe_analyse / style_analyse : 1 phrase concise (10–15 mots max).
 - points_forts : 2 à 3 éléments positifs notables (5–8 mots max chacun).
-- axes_amelioration : 2 à 3 pistes d'amélioration concrètes (5–8 mots max chacun).`;
+- axes_amelioration : 2 à 3 pistes d'amélioration concrètes (5–8 mots max chacun).
+- styles : tableau de 1 ou 2 hashtags exacts issus de la liste ci-dessus, jamais 0, jamais plus de 2.`;
 
 function json(body: unknown, status: number) {
   return new Response(JSON.stringify(body), {
@@ -197,6 +202,16 @@ serve(async (req: Request) => {
       ? raw.axes_amelioration.slice(0, 4)
       : ['Travailler les proportions et volumes', 'Soigner les accessoires et finitions'];
 
+    const VALID_STYLES = new Set([
+      '#StreetwearOversize', '#Athleisure', '#CasualChic', '#Gorpcore', '#Y2K',
+      '#IndieSleaze', '#Blokecore', '#EclectiqueGrandpa', '#CleanLook', '#OfficeSiren',
+      '#QuietLuxury', '#MinimalismeScandinave', '#AcubiStyle', '#SubversiveBasics',
+      '#Techwear', '#DarkMode', '#Cottagecore', '#FairyGrunge', '#BohemeChic', '#Coquette',
+    ]);
+    const styles: string[] = Array.isArray(raw.styles)
+      ? raw.styles.filter((s: unknown) => typeof s === 'string' && VALID_STYLES.has(s as string)).slice(0, 2)
+      : [];
+
     // conseil stocké en JSON pour un affichage structuré côté client (rétrocompat : ancien = texte brut)
     const conseil = JSON.stringify({ points_forts: pts, axes_amelioration: axes });
 
@@ -211,6 +226,7 @@ serve(async (req: Request) => {
         detail: raw.style_analyse.trim(),
       },
       conseil,
+      styles,
       // Structure brute stricte également exposée (couleurs_note/analyse, etc.)
       ...raw,
       provider,

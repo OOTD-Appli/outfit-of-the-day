@@ -1,6 +1,6 @@
 import {
   View, Text, StyleSheet, Modal, ScrollView, TextInput, Image,
-  TouchableOpacity, ActivityIndicator, FlatList, KeyboardAvoidingView, Platform,
+  TouchableOpacity, ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +16,7 @@ export default function CustomizationScreen({
   musicPicker, setMusicPicker, searchMusic, selectTrack,
   onPublish, onFlammes, onSaveForSelf,
   posting, sendingFlammes, saving,
+  showStyleHashtag, setShowStyleHashtag,
 }) {
   if (!score) return null;
   const busy = posting || sendingFlammes || saving;
@@ -122,6 +123,24 @@ export default function CustomizationScreen({
               </View>
             )}
 
+            {/* Style hashtag toggle */}
+            {(score?.styles?.length > 0) && (
+              <View style={[styles.styleToggleRow, { borderColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.label, { color: theme.textSub }]}>Hashtag de style</Text>
+                  <Text style={{ fontSize: 12, color: theme.accent, marginTop: 2 }}>
+                    {(score.styles || []).join('  ')}
+                  </Text>
+                </View>
+                <Switch
+                  value={showStyleHashtag}
+                  onValueChange={setShowStyleHashtag}
+                  trackColor={{ false: '#555', true: theme.accent + '88' }}
+                  thumbColor={showStyleHashtag ? theme.accent : '#888'}
+                />
+              </View>
+            )}
+
             <View style={{ height: 12 }} />
           </ScrollView>
 
@@ -170,6 +189,7 @@ const styles = StyleSheet.create({
   resultCover: { width: 46, height: 46, borderRadius: 8 },
   badge30: { fontSize: 11, fontWeight: '700', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   noResults: { textAlign: 'center', marginVertical: 14, fontSize: 13 },
+  styleToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 14, gap: 12 },
   actions: { padding: 16, gap: 10, borderTopWidth: StyleSheet.hairlineWidth },
   btnPrimary: { borderRadius: 14, paddingVertical: 15, alignItems: 'center' },
   btnPrimaryText: { color: '#fff', fontWeight: '800', fontSize: 15 },
