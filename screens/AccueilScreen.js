@@ -924,7 +924,7 @@ export default function AccueilScreen({ navigation }) {
 
             {/* Conseil contextuel — saisi avant l'analyse */}
             {image && (
-              <View style={{ marginBottom: 15 }}>
+              <View style={{ marginBottom: 20 }}>
                 <TouchableOpacity
                   style={s.contextBtn}
                   onPress={() => { setShowContextPanel(p => !p); setContextResult(null); }}
@@ -1009,7 +1009,7 @@ export default function AccueilScreen({ navigation }) {
               <View style={s.tipTexts}>
                 <View style={s.tipTitleRow}>
                   <Text style={s.tipTitle}>Conseil</Text>
-                  <Ionicons name="heart-outline" size={13} color={ACC_T} accessibilityElementsHidden />
+                  <Ionicons name="heart-outline" size={13} color={ACCENT} accessibilityElementsHidden />
                 </View>
                 <Text style={s.tipBody}>
                   Une bonne lumière et une photo complète de ta tenue aident à l'analyser au mieux !
@@ -1079,7 +1079,7 @@ export default function AccueilScreen({ navigation }) {
               <View style={s.globalLeft}>
                 <View style={s.tipTitleRow}>
                   <Text style={s.globalCardTitle}>Note globale</Text>
-                  <Ionicons name="heart-outline" size={13} color={ACC_T} accessibilityElementsHidden />
+                  <Ionicons name="heart-outline" size={13} color={ACCENT} accessibilityElementsHidden />
                 </View>
                 <View style={s.globalScoreRow}>
                   <Text style={s.globalScore}>{fr(score.global)}</Text>
@@ -1584,12 +1584,12 @@ function createStyles(theme) {
   postAnalysisActions: { gap: 10, marginTop: 20, marginBottom: 4 },
 
   /* Conseil contextuel */
-  contextBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 16, backgroundColor: ACC_T, borderRadius: 16, marginTop: 12, marginBottom: 4, justifyContent: 'center', shadowColor: ACC_T, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
+  contextBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 16, backgroundColor: ACC_T, borderRadius: 16, marginBottom: 0, justifyContent: 'center', shadowColor: ACC_T, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   contextBtnText: { fontSize: 16, fontWeight: '700', color: '#1a0a10' },
-  contextPanel: { backgroundColor: CARD_T, borderRadius: 18, padding: 16, marginTop: 4, marginBottom: 4, borderWidth: 1, borderColor: BRD_T },
+  contextPanel: { backgroundColor: CARD_T, borderRadius: 18, padding: 16, marginTop: 10, marginBottom: 4, borderWidth: 1, borderColor: BRD_T },
   contextLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, color: SUB_T, marginBottom: 8 },
   contextInput: { borderRadius: 10, borderWidth: 1, borderColor: BRD_T, backgroundColor: BG_T, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: PRI_T, minHeight: 56, textAlignVertical: 'top' },
-  contextAnalyzeBtn: { borderRadius: 14, paddingVertical: 12, alignItems: 'center', marginTop: 10, backgroundColor: ACC_T },
+  contextAnalyzeBtn: { borderRadius: 16, padding: 16, alignItems: 'center', marginTop: 12, backgroundColor: ACC_T, shadowColor: ACC_T, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   contextResultCard: { marginTop: 14, borderRadius: 14, borderWidth: 1.5, padding: 14 },
   contextBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, alignSelf: 'flex-start', marginBottom: 10 },
   contextBadgeText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.2 },
