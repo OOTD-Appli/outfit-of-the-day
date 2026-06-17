@@ -207,7 +207,14 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
         </TouchableOpacity>
 
         {/* Like */}
-        <TouchableOpacity onPress={handleLike} activeOpacity={0.82}>
+        <TouchableOpacity
+          onPress={handleLike}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel={isLiked ? 'Retirer le like' : 'Liker'}
+          accessibilityState={{ selected: isLiked }}
+          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+        >
           <Animated.View style={[styles.sideAction, { transform: [{ scale: heartScale }] }]}>
             <Feather name="heart" size={30} color={isLiked ? '#FF4567' : '#fff'} />
             <Text style={styles.sideCount}>{formatCount(likesCount)}</Text>
@@ -215,19 +222,36 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
         </TouchableOpacity>
 
         {/* Commentaires */}
-        <Bouncy style={styles.sideAction} onPress={() => onOpenComments(item.id)}>
+        <Bouncy
+          style={styles.sideAction}
+          onPress={() => onOpenComments(item.id)}
+          accessibilityRole="button"
+          accessibilityLabel="Voir les commentaires"
+          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+        >
           <Feather name="message-circle" size={30} color="#fff" />
           <Text style={styles.sideCount}>{formatCount(commentsCount)}</Text>
         </Bouncy>
 
         {/* Partager */}
-        <Bouncy style={styles.sideAction} onPress={() => onOpenShare(item)}>
+        <Bouncy
+          style={styles.sideAction}
+          onPress={() => onOpenShare(item)}
+          accessibilityRole="button"
+          accessibilityLabel="Partager"
+          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+        >
           <Feather name="send" size={28} color="#fff" />
           <Text style={styles.sideCount}> </Text>
         </Bouncy>
 
         {/* Plus */}
-        <Bouncy style={styles.sideAction}>
+        <Bouncy
+          style={styles.sideAction}
+          accessibilityRole="button"
+          accessibilityLabel="Plus d'options"
+          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+        >
           <Feather name="more-horizontal" size={26} color="#fff" />
         </Bouncy>
       </View>
@@ -815,7 +839,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#0a0a0a',
   },
-  sideAction: { alignItems: 'center', gap: 4 },
+  sideAction: { alignItems: 'center', gap: 4, minWidth: 44, minHeight: 44, justifyContent: 'center' },
   sideCount: {
     color: '#fff',
     fontSize: 12,

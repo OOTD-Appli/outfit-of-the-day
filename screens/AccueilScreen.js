@@ -121,7 +121,7 @@ function ConseilBlock({ conseil, s }) {
                 <Text style={s.conseilSectionTitle}>Points forts</Text>
                 {structured.points_forts.map((pt, i) => (
                   <View key={i} style={s.conseilBullet}>
-                    <Text style={s.conseilBulletDot}>✦</Text>
+                    <View style={s.conseilBulletDot} accessibilityElementsHidden />
                     <Text style={s.conseilBulletText}>{pt}</Text>
                   </View>
                 ))}
@@ -132,7 +132,7 @@ function ConseilBlock({ conseil, s }) {
                 <Text style={s.conseilSectionTitle}>À améliorer</Text>
                 {structured.axes_amelioration.map((ax, i) => (
                   <View key={i} style={s.conseilBullet}>
-                    <Text style={s.conseilBulletDot}>→</Text>
+                    <View style={[s.conseilBulletDot, s.conseilBulletArrow]} accessibilityElementsHidden />
                     <Text style={s.conseilBulletText}>{ax}</Text>
                   </View>
                 ))}
@@ -844,7 +844,7 @@ export default function AccueilScreen({ navigation }) {
                 </TouchableOpacity>
               ) : (
                 <>
-                  <TouchableOpacity style={s.uploadOption} onPress={takePicture} activeOpacity={0.8}>
+                  <TouchableOpacity style={s.uploadOption} onPress={takePicture} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Prendre une photo">
                     <LinearGradient
                       colors={['#F7A8C4', '#ED7AA6']}
                       start={{ x: 0, y: 0 }}
@@ -863,7 +863,7 @@ export default function AccueilScreen({ navigation }) {
                     <View style={s.dividerLine} />
                   </View>
 
-                  <TouchableOpacity style={s.uploadOption} onPress={pickImageFromLibrary} activeOpacity={0.8}>
+                  <TouchableOpacity style={s.uploadOption} onPress={pickImageFromLibrary} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Choisir dans la galerie">
                     <View style={s.galleryCircle}>
                       <Ionicons name="image-outline" size={26} color="#B7A9A2" />
                     </View>
@@ -907,6 +907,9 @@ export default function AccueilScreen({ navigation }) {
                 style={[s.analyzeBtn, (loading || credits === null) && s.analyzeBtnDisabled]}
                 onPress={analyzeOutfit}
                 disabled={loading || credits === null}
+                accessibilityRole="button"
+                accessibilityLabel={loading ? 'Analyse en cours' : 'Analyser ma tenue'}
+                accessibilityState={{ disabled: !!(loading || credits === null) }}
               >
                 {loading ? (
                   <View style={s.analyzeBtnInner}>
@@ -948,6 +951,9 @@ export default function AccueilScreen({ navigation }) {
                       style={[s.contextAnalyzeBtn, (loadingContext || !contextText.trim()) && s.analyzeBtnDisabled]}
                       onPress={analyzeContext}
                       disabled={loadingContext || !contextText.trim()}
+                      accessibilityRole="button"
+                      accessibilityLabel={loadingContext ? 'Analyse en cours' : 'Analyser le contexte'}
+                      accessibilityState={{ disabled: !!(loadingContext || !contextText.trim()) }}
                     >
                       {loadingContext ? (
                         <View style={s.analyzeBtnInner}>
@@ -1001,7 +1007,10 @@ export default function AccueilScreen({ navigation }) {
                 <Ionicons name="bulb-outline" size={20} color={theme.accent} />
               </View>
               <View style={s.tipTexts}>
-                <Text style={s.tipTitle}>Conseil <Text style={s.tipHeart}>🤍</Text></Text>
+                <View style={s.tipTitleRow}>
+                  <Text style={s.tipTitle}>Conseil</Text>
+                  <Ionicons name="heart-outline" size={13} color={ACC_T} accessibilityElementsHidden />
+                </View>
                 <Text style={s.tipBody}>
                   Une bonne lumière et une photo complète de ta tenue aident à l'analyser au mieux !
                 </Text>
@@ -1068,7 +1077,10 @@ export default function AccueilScreen({ navigation }) {
             {/* Note globale */}
             <View style={s.globalCard}>
               <View style={s.globalLeft}>
-                <Text style={s.globalCardTitle}>Note globale <Text style={s.tipHeart}>🤍</Text></Text>
+                <View style={s.tipTitleRow}>
+                  <Text style={s.globalCardTitle}>Note globale</Text>
+                  <Ionicons name="heart-outline" size={13} color={ACC_T} accessibilityElementsHidden />
+                </View>
                 <View style={s.globalScoreRow}>
                   <Text style={s.globalScore}>{fr(score.global)}</Text>
                   <Text style={s.globalSub}> /10</Text>
@@ -1389,7 +1401,7 @@ function createStyles(theme) {
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
-  analyzeBtnDisabled: { opacity: 0.75 },
+  analyzeBtnDisabled: { opacity: 0.42 },
   analyzeBtnInner:    { flexDirection: 'row', alignItems: 'center' },
   analyzeBtnText:     { color: "#1a0a10", fontWeight: '700', fontSize: 16 },
 
@@ -1406,7 +1418,8 @@ function createStyles(theme) {
     alignItems: 'center', justifyContent: 'center',
   },
   tipTexts: { flex: 1 },
-  tipTitle: { fontWeight: '800', fontSize: 14, color: ACC_T, marginBottom: 3 },
+  tipTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 },
+  tipTitle: { fontWeight: '800', fontSize: 14, color: ACC_T },
   tipHeart: { fontSize: 12 },
   tipBody:  { fontSize: 12.5, lineHeight: 17, color: SUB_T },
 
@@ -1482,7 +1495,8 @@ function createStyles(theme) {
   conseilBody:         { fontSize: 12.5, lineHeight: 18, color: SUB_T },
   conseilSectionTitle: { fontSize: 11.5, fontWeight: '800', color: PRI_T, marginTop: 4, marginBottom: 5, letterSpacing: 0.3 },
   conseilBullet:       { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 4, gap: 7 },
-  conseilBulletDot:    { fontSize: 11, lineHeight: 18, color: ACC_T, width: 12 },
+  conseilBulletDot:    { width: 5, height: 5, borderRadius: 2.5, backgroundColor: ACC_T, marginTop: 6.5 },
+  conseilBulletArrow:  { width: 8, height: 2, borderRadius: 1, marginTop: 8 },
   conseilBulletText:   { fontSize: 12.5, lineHeight: 18, color: SUB_T, flex: 1 },
 
   // Top OOTDs
@@ -1520,7 +1534,7 @@ function createStyles(theme) {
     backgroundColor: CARD_T,
   },
   actionSecondaryText: { color: ACC_T, fontWeight: '700', fontSize: 14 },
-  actionDisabled: { opacity: 0.55 },
+  actionDisabled: { opacity: 0.42 },
   retryBtn:  { alignItems: 'center', paddingVertical: 10 },
   retryText: { fontSize: 13, fontWeight: '600', color: SUB_T },
 

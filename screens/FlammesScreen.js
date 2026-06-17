@@ -1313,7 +1313,12 @@ export default function FlammesScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={[]}>
         {/* Header chat */}
         <View style={[styles.chatHeader, { borderBottomColor: theme.border }]}>
-          <TouchableOpacity onPress={leaveChat} style={styles.backBtn}>
+          <TouchableOpacity
+            onPress={leaveChat}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Retour"
+          >
             <Feather name="chevron-left" size={26} color={theme.textPri} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.chatHeaderInfo} onPress={() => openUserProfile(selectedFriend.id)} activeOpacity={0.8}>
@@ -1350,7 +1355,14 @@ export default function FlammesScreen() {
               )}
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.photoMsgBtn} onPress={sendPhotoMessage} disabled={sendingMessage}>
+          <TouchableOpacity
+            style={styles.photoMsgBtn}
+            onPress={sendPhotoMessage}
+            disabled={sendingMessage}
+            accessibilityRole="button"
+            accessibilityLabel="Envoyer une photo"
+            accessibilityState={{ disabled: sendingMessage }}
+          >
             <Feather name="camera" size={22} color={theme.textPri} />
           </TouchableOpacity>
         </View>
@@ -1512,6 +1524,9 @@ export default function FlammesScreen() {
                   style={[styles.micBtn, { backgroundColor: isRecording ? '#FF4A4A' : theme.card, borderColor: isRecording ? '#FF4A4A44' : theme.border }]}
                   onPress={isRecording ? stopAndSendRecording : startRecording}
                   disabled={sendingMessage && !isRecording}
+                  accessibilityRole="button"
+                  accessibilityLabel={isRecording ? "Arrêter l'enregistrement" : 'Enregistrer un message vocal'}
+                  accessibilityState={{ disabled: !!(sendingMessage && !isRecording) }}
                 >
                   {sendingMessage && isRecording
                     ? <ActivityIndicator color="#fff" size="small" />
@@ -1520,9 +1535,12 @@ export default function FlammesScreen() {
                 </TouchableOpacity>
               )}
               <Bouncy
-                style={[styles.sendBtn, { backgroundColor: theme.accent }, (!messageText.trim() || sendingMessage) && { opacity: 0.45 }]}
+                style={[styles.sendBtn, { backgroundColor: theme.accent }, (!messageText.trim() || sendingMessage) && { opacity: 0.42 }]}
                 onPress={sendTextMessage}
                 disabled={!messageText.trim() || sendingMessage}
+                accessibilityRole="button"
+                accessibilityLabel="Envoyer le message"
+                accessibilityState={{ disabled: !!((!messageText.trim()) || sendingMessage) }}
               >
                 {sendingMessage && !isRecording
                   ? <ActivityIndicator color="#fff" size="small" />
@@ -2002,12 +2020,12 @@ const styles = StyleSheet.create({
 
   /* Chat */
   chatHeader:      { flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: StyleSheet.hairlineWidth, gap: 10 },
-  backBtn:         { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  backBtn:         { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   chatHeaderInfo:  { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   chatUsername:    { fontWeight: '700', fontSize: 15 },
   chatStreak:      { fontSize: 11, fontWeight: '600', marginTop: 1 },
   typingRow:       { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  photoMsgBtn:     { padding: 8 },
+  photoMsgBtn:     { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   msgList:         { flex: 1 },
   msgListContent:  { padding: 16, gap: 8, paddingBottom: 24 },
   msgEmpty:        { alignItems: 'center', paddingTop: 48, gap: 10 },
@@ -2031,8 +2049,8 @@ const styles = StyleSheet.create({
   inputBar:        { flexDirection: 'column', borderTopWidth: StyleSheet.hairlineWidth },
   inputRow:        { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 8 },
   msgInput:        { flex: 1, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 100, borderWidth: 1 },
-  sendBtn:         { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  micBtn:          { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  sendBtn:         { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  micBtn:          { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   audioMsgRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 150, paddingVertical: 2 },
   audioPlayCircle: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   audioWaveform:   { flexDirection: 'row', alignItems: 'center', gap: 2, flex: 1 },
