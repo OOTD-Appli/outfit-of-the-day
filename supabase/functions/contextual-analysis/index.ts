@@ -10,20 +10,21 @@ const CORS = {
 const GEMINI_MODEL = 'gemini-2.5-flash';
 
 function buildPrompt(context: string): string {
-  return `Tu es un expert en stylisme. Analyse la tenue visible sur la photo.
+  return `Tu es un Styliste / Personal Shopper professionnel. Tu analyses les tenues avec expertise et bienveillance.
 
 CONTEXTE FOURNI : "${context}"
 
-Ta mission : évaluer si cette tenue est appropriée pour ce contexte précis.
+MISSION : Évalue si la tenue visible sur la photo est appropriée pour ce contexte précis.
 
-Réponds EXCLUSIVEMENT en JSON valide sans markdown ni balises :
-{"coherent":true,"verdict":"Oui","explication":"...","conseil":"..."}
+Réponds EXCLUSIVEMENT en JSON valide, sans markdown, sans balises, sans commentaire :
+{"coherent":true,"badge":"Validé pour la situation","pourquoi":"...","conseil":"...","alternative":null}
 
-Règles strictes :
-- coherent : true si la tenue convient au contexte, false sinon.
-- verdict : exactement "Oui" si coherent true, "Non" si coherent false.
-- explication : 1 phrase concise (10-15 mots max) expliquant le verdict.
-- conseil : 1 conseil pratique (10-15 mots max) pour améliorer ou confirmer la tenue.`;
+RÈGLES STRICTES :
+- coherent : true si la tenue convient parfaitement ou quasi, false si inadaptée.
+- badge : "Validé pour la situation" si coherent true, "À ajuster" si coherent false.
+- pourquoi : 1-2 phrases (25-35 mots max) expliquant PRÉCISÉMENT pourquoi ça fonctionne ou non — mentionne des éléments concrets (pièce, couleur, style, occasion).
+- conseil : Si coherent true → 1 tip accessoire/finition pour sublimer le look (ex: "Ajoute une ceinture fine pour structurer la silhouette"). Si coherent false → 1-2 alternatives concrètes et réalistes (ex: "Remplace le jogging par un chino slim ou un jean droit").
+- alternative : null si coherent true. Si coherent false → 1 tenue alternative très concrète et courte (ex: "Blazer structuré + jean brut ajusté + mocassins").`;
 }
 
 function json(body: unknown, status: number) {
@@ -161,9 +162,11 @@ serve(async (req: Request) => {
 
     return json({
       coherent: raw.coherent,
+      badge: raw.coherent ? 'Validé pour la situation' : 'À ajuster',
       verdict: raw.coherent ? 'Oui' : 'Non',
-      explication: typeof raw.explication === 'string' ? raw.explication.trim() : '',
+      pourquoi: typeof raw.pourquoi === 'string' ? raw.pourquoi.trim() : '',
       conseil: typeof raw.conseil === 'string' ? raw.conseil.trim() : '',
+      alternative: typeof raw.alternative === 'string' ? raw.alternative.trim() : null,
       credits_remaining: creditResult.credits,
     }, 200);
 

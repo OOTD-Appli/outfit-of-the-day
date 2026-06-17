@@ -24,9 +24,11 @@ import { dismissChatNotifications } from '../lib/webPush';
 import { triggerHaptic } from '../lib/haptics';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
+import InAppCamera from '../components/InAppCamera';
 
-function AudioMessage({ url, isPlaying, onPlay, theme }) {
+function AudioMessage({ url, isPlaying, onPlay, theme, duration }) {
   const bars = [3, 6, 10, 7, 12, 8, 4, 9, 5, 11, 7, 9];
+  const fmtDur = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
   return (
     <TouchableOpacity style={styles.audioMsgRow} onPress={onPlay} activeOpacity={0.75}>
       <View style={[styles.audioPlayCircle, { backgroundColor: theme.accent + '33' }]}>
@@ -34,10 +36,21 @@ function AudioMessage({ url, isPlaying, onPlay, theme }) {
       </View>
       <View style={styles.audioWaveform}>
         {bars.map((h, i) => (
-          <View key={i} style={[styles.audioBar, { height: h, backgroundColor: isPlaying ? theme.accent : (theme.textSub + '99') }]} />
+          <View
+            key={i}
+            style={[
+              styles.audioBar,
+              {
+                height: isPlaying ? h : Math.max(Math.round(h * 0.55), 2),
+                backgroundColor: isPlaying ? theme.accent : (theme.textSub + '66'),
+              },
+            ]}
+          />
         ))}
       </View>
-      <Text style={[styles.audioLabel, { color: theme.textSub }]}>🎤</Text>
+      <Text style={[styles.audioLabel, { color: theme.textSub }]}>
+        {duration != null ? fmtDur(duration) : '🎤'}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -234,12 +247,16 @@ export default function FlammesScreen() {
   const [showSearch, setShowSearch] = useState(false);
   const [localFilter, setLocalFilter] = useState('');
   const [shareProfilePicker, setShareProfilePicker] = useState({ visible: false, targetProfile: null });
+  const [showSnapCamera, setShowSnapCamera] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const recordingTimerRef = useRef(null);
   const [playingAudioId, setPlayingAudioId] = useState(null);
+  const [audioDurations, setAudioDurations] = useState({});
   const audioRecordingRef = useRef(null);
   const audioSoundRef = useRef(null);
   const [stories, setStories] = useState([]);
@@ -1041,6 +1058,8 @@ export default function FlammesScreen() {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       audioRecordingRef.current = recording;
+      setRecordingDuration(0);
+      recordingTimerRef.current = setInterval(() => setRecordingDuration(d => d + 1), 1000);
       setIsRecording(true);
     } catch (e) { showToast(e?.message || 'Erreur micro', { type: 'error' }); }
   };
@@ -1048,8 +1067,17 @@ export default function FlammesScreen() {
   const stopAndSendRecording = async () => {
     const recording = audioRecordingRef.current;
     if (!recording) return;
+    if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    const capturedDuration = recordingDuration;
     setIsRecording(false);
+    setRecordingDuration(0);
     audioRecordingRef.current = null;
+    // Vocal trop court (< 1 s) → annulation silencieuse
+    if (capturedDuration < 1) {
+      try { await recording.stopAndUnloadAsync(); } catch (_) {}
+      try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }); } catch (_) {}
+      return;
+    }
     setSendingMessage(true);
     try {
       await recording.stopAndUnloadAsync();
@@ -1125,6 +1153,9 @@ export default function FlammesScreen() {
       if (!status.isLoaded) {
         throw new Error(status.error ? `Codec non supporté : ${status.error}` : 'Fichier audio non chargé');
       }
+      if (status.durationMillis) {
+        setAudioDurations(prev => ({ ...prev, [msgId]: Math.round(status.durationMillis / 1000) }));
+      }
       audioSoundRef.current = sound;
       setPlayingAudioId(msgId);
     } catch (e) {
@@ -1133,23 +1164,12 @@ export default function FlammesScreen() {
     }
   };
 
-  const sendPhotoMessage = async () => {
+  const sendPhotoMessageFromUri = async (uri) => {
     if (!selectedFriend || sendingMessage) return;
-    // Tente la caméra en premier ; si refusé → repli galerie
-    const camPerm = await ImagePicker.requestCameraPermissionsAsync();
-    let result;
-    if (camPerm.granted) {
-      result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5, allowsEditing: true, aspect: [1, 1] });
-    } else {
-      const libPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!libPerm.granted) return;
-      result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5, allowsEditing: true, aspect: [1, 1] });
-    }
-    if (result.canceled) return;
     setSendingMessage(true);
     try {
       const fileName = `messages/${userId}/${Date.now()}.jpg`;
-      const fetchResponse = await fetch(result.assets[0].uri);
+      const fetchResponse = await fetch(uri);
       if (!fetchResponse.ok) throw new Error('Impossible de lire la photo');
       const blob = await fetchResponse.blob();
       await supabase.storage.from('ootds').upload(fileName, blob, { contentType: 'image/jpeg' });
@@ -1167,8 +1187,6 @@ export default function FlammesScreen() {
         const nowDay = now.toISOString().split('T')[0];
         const lastSnapDay = lastSnap.toISOString().split('T')[0];
         const daysDiff = Math.round((new Date(nowDay) - new Date(lastSnapDay)) / 86400000);
-        // Restauration d'une série éteinte = action manuelle via le Gel de Flamme
-        // (clic sur la flamme grisée dans le chat). Ici, simple progression / reset.
         const newStreak = daysDiff <= 1 ? flamme.streak + 1 : 1;
         await supabase.from('flammes').update({ streak: newStreak, last_snap_at: now.toISOString() }).eq('id', flamme.id);
       } else {
@@ -1177,6 +1195,21 @@ export default function FlammesScreen() {
       await fetchData({ silent: true });
     } catch (e) { showToast(e?.message || 'Erreur photo', { type: 'error' }); }
     setSendingMessage(false);
+  };
+
+  const sendPhotoMessage = async () => {
+    if (!selectedFriend || sendingMessage) return;
+    if (Platform.OS !== 'web') {
+      // Caméra in-app sur native
+      setShowSnapCamera(true);
+      return;
+    }
+    // Web : repli galerie
+    const libPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!libPerm.granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5, allowsEditing: true, aspect: [1, 1] });
+    if (result.canceled) return;
+    await sendPhotoMessageFromUri(result.assets[0].uri);
   };
 
   const postStory = async () => {
@@ -1411,6 +1444,7 @@ export default function FlammesScreen() {
                             isPlaying={playingAudioId === msg.id}
                             onPlay={() => playAudioMsg(msg.id, msg.audio_url)}
                             theme={theme}
+                            duration={audioDurations[msg.id]}
                           />
                         ) : (
                           <>
@@ -1463,7 +1497,9 @@ export default function FlammesScreen() {
             <View style={styles.inputRow}>
               <TextInput
                 style={[styles.msgInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textPri }]}
-                placeholder={isRecording ? '🎤 Enregistrement en cours...' : 'Écrire un message...'}
+                placeholder={isRecording
+                  ? `🎤  ${Math.floor(recordingDuration / 60).toString().padStart(2, '0')}:${(recordingDuration % 60).toString().padStart(2, '0')}`
+                  : 'Écrire un message...'}
                 placeholderTextColor={isRecording ? theme.accent : theme.textSub}
                 value={messageText}
                 onChangeText={onChangeMessageText}
@@ -1499,6 +1535,16 @@ export default function FlammesScreen() {
         {renderRestoreModal()}
         {renderProfileModal()}
         {renderShareProfilePicker()}
+        {/* Caméra in-app pour photo snap (native) */}
+        <InAppCamera
+          visible={showSnapCamera}
+          mode="photo"
+          onClose={() => setShowSnapCamera(false)}
+          onCapture={(asset) => {
+            setShowSnapCamera(false);
+            if (asset?.uri) sendPhotoMessageFromUri(asset.uri);
+          }}
+        />
       </SafeAreaView>
     );
   }

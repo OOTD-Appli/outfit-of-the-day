@@ -26,6 +26,7 @@ import Gauge from '../components/Gauge';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
 import CustomizationScreen from './CustomizationScreen';
+import InAppCamera from '../components/InAppCamera';
 
 const ACCENT      = '#ED93B1';
 const BG          = '#FAF4F1';
@@ -207,6 +208,8 @@ export default function AccueilScreen({ navigation }) {
   const [myStory, setMyStory] = useState(null);
   const [storyPreview, setStoryPreview] = useState({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', posting: false });
   const [storyViewer, setStoryViewer] = useState({ visible: false, story: null });
+  // Caméra in-app (native uniquement — web garde le fallback file-input)
+  const [inAppCamera, setInAppCamera] = useState({ visible: false, mode: 'photo' });
   const { showToast } = useToast();
   const cachedPublicUrlRef = useRef(null);
   const lastAnalyzedRef = useRef({ uri: null, ts: 0 });
@@ -266,11 +269,9 @@ export default function AccueilScreen({ navigation }) {
       return;
     }
     Alert.alert('Publier une story', 'Choisir le type de contenu', [
-      { text: 'Vidéo (caméra)', onPress: async () => {
-        const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (!perm.granted) { showToast('Permission caméra refusée', { type: 'warning' }); return; }
-        const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['videos'], videoMaxDuration: 30, allowsEditing: false });
-        if (!res.canceled) setStoryPreview({ visible: true, videoUri: res.assets[0].uri, imageUri: null, overlayText: '', caption: '', posting: false });
+      { text: 'Vidéo (caméra)', onPress: () => {
+        // Ouvre la caméra in-app en mode vidéo
+        setInAppCamera({ visible: true, mode: 'video' });
       }},
       { text: 'Photo / vidéo (galerie)', onPress: async () => {
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -500,23 +501,10 @@ export default function AccueilScreen({ navigation }) {
     }
   };
 
-  const takePicture = async () => {
+  const takePicture = () => {
     if (Platform.OS === 'web') { pickImageWeb(true); return; }
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      showToast('Permission refusée pour accéder à la caméra', { type: 'warning' });
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: 0.75,
-      allowsEditing: false,
-      base64: true,
-      cameraType: ImagePicker.CameraType.back,
-    });
-    if (!result.canceled) {
-      applyPickedImage(result.assets[0]);
-    }
+    // Ouvre la caméra in-app (modal plein écran, sans quitter l'app)
+    setInAppCamera({ visible: true, mode: 'photo' });
   };
 
   const openImageSourcePicker = () => {
@@ -971,22 +959,34 @@ export default function AccueilScreen({ navigation }) {
                       )}
                     </Bouncy>
                     {contextResult && (
-                      <View style={[s.contextResultCard, { borderColor: contextResult.coherent ? '#4AFF7A' : '#FF4A4A' }]}>
-                        <View style={s.contextVerdictRow}>
+                      <View style={[s.contextResultCard, { borderColor: contextResult.coherent ? '#4AFF7A44' : '#FF8C0044' }]}>
+                        {/* Badge verdict */}
+                        <View style={[s.contextBadge, { backgroundColor: contextResult.coherent ? '#4AFF7A18' : '#FF8C0018' }]}>
                           <Ionicons
-                            name={contextResult.coherent ? 'checkmark-circle' : 'close-circle'}
-                            size={28}
-                            color={contextResult.coherent ? '#4AFF7A' : '#FF4A4A'}
+                            name={contextResult.coherent ? 'checkmark-circle' : 'alert-circle'}
+                            size={15}
+                            color={contextResult.coherent ? '#4AFF7A' : '#FF8C00'}
                           />
-                          <Text style={[s.contextVerdict, { color: contextResult.coherent ? '#4AFF7A' : '#FF4A4A' }]}>
-                            {contextResult.verdict}
+                          <Text style={[s.contextBadgeText, { color: contextResult.coherent ? '#4AFF7A' : '#FF8C00' }]}>
+                            {contextResult.badge || (contextResult.coherent ? 'Validé pour la situation' : 'À ajuster')}
                           </Text>
                         </View>
-                        {!!contextResult.explication && (
-                          <Text style={s.contextExplication}>{contextResult.explication}</Text>
+                        {/* Pourquoi (nouveau champ) ou fallback explication */}
+                        {!!(contextResult.pourquoi || contextResult.explication) && (
+                          <Text style={s.contextExplication}>
+                            {contextResult.pourquoi || contextResult.explication}
+                          </Text>
                         )}
+                        {/* Conseil */}
                         {!!contextResult.conseil && (
                           <Text style={s.contextConseil}>{contextResult.conseil}</Text>
+                        )}
+                        {/* Alternative (si tenue inadaptée) */}
+                        {!!contextResult.alternative && (
+                          <View style={s.contextAltBlock}>
+                            <Text style={s.contextAltLabel}>Alternative :</Text>
+                            <Text style={s.contextAltText}>{contextResult.alternative}</Text>
+                          </View>
                         )}
                       </View>
                     )}
@@ -1256,6 +1256,24 @@ export default function AccueilScreen({ navigation }) {
         </Modal>
 
       </ScrollView>
+
+      {/* Caméra in-app (photo tenue / vidéo story) */}
+      <InAppCamera
+        visible={inAppCamera.visible}
+        mode={inAppCamera.mode}
+        onClose={() => setInAppCamera(prev => ({ ...prev, visible: false }))}
+        onCapture={(asset) => {
+          setInAppCamera(prev => ({ ...prev, visible: false }));
+          if (inAppCamera.mode === 'video') {
+            if (asset?.uri) {
+              setStoryPreview({ visible: true, videoUri: asset.uri, imageUri: null, overlayText: '', caption: '', posting: false });
+            }
+          } else {
+            // Photo tenue : l'IA attend image.base64 (JPEG brut)
+            applyPickedImage(asset);
+          }
+        }}
+      />
 
       {/* Écran de personnalisation (modal plein écran) */}
       <CustomizationScreen
@@ -1558,11 +1576,14 @@ function createStyles(theme) {
   contextLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, color: SUB_T, marginBottom: 8 },
   contextInput: { borderRadius: 10, borderWidth: 1, borderColor: BRD_T, backgroundColor: BG_T, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: PRI_T, minHeight: 56, textAlignVertical: 'top' },
   contextAnalyzeBtn: { borderRadius: 14, paddingVertical: 12, alignItems: 'center', marginTop: 10, backgroundColor: ACC_T },
-  contextResultCard: { marginTop: 14, borderRadius: 14, borderWidth: 2, padding: 14 },
-  contextVerdictRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
-  contextVerdict: { fontSize: 26, fontWeight: '900' },
+  contextResultCard: { marginTop: 14, borderRadius: 14, borderWidth: 1.5, padding: 14 },
+  contextBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, alignSelf: 'flex-start', marginBottom: 10 },
+  contextBadgeText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.2 },
   contextExplication: { fontSize: 13, color: PRI_T, lineHeight: 19, marginBottom: 6 },
-  contextConseil: { fontSize: 12, color: SUB_T, lineHeight: 17, fontStyle: 'italic' },
+  contextConseil: { fontSize: 12, color: SUB_T, lineHeight: 17, fontStyle: 'italic', marginBottom: 6 },
+  contextAltBlock: { marginTop: 4, borderRadius: 10, borderWidth: 1, borderColor: BRD_T, backgroundColor: BG_T, padding: 10 },
+  contextAltLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4, color: SUB_T, marginBottom: 3 },
+  contextAltText: { fontSize: 12, color: PRI_T, lineHeight: 17 },
 
   /* Section Stories */
   storiesSection:    { marginTop: 28, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: BRD_T },
