@@ -1,9 +1,11 @@
+import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, Modal, ScrollView, TextInput, Image,
   TouchableOpacity, ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
 import Bouncy from '../components/Bouncy';
 
 // Écran de personnalisation post-analyse (modal plein écran).
@@ -18,6 +20,57 @@ export default function CustomizationScreen({
   posting, sendingFlammes, saving,
   showStyleHashtag, setShowStyleHashtag,
 }) {
+  const [playingPreviewId, setPlayingPreviewId] = useState(null);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const previewSoundRef = useRef(null);
+
+  const stopPreview = async () => {
+    if (previewSoundRef.current) {
+      try { await previewSoundRef.current.unloadAsync(); } catch (_) {}
+      previewSoundRef.current = null;
+    }
+    setPlayingPreviewId(null);
+    setIsPreviewPlaying(false);
+  };
+
+  const loadAndPlayPreview = async (track) => {
+    if (!track.previewUrl) return;
+    await stopPreview();
+    try {
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false });
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: track.previewUrl },
+        { shouldPlay: true },
+        (status) => {
+          if (status.didJustFinish) setIsPreviewPlaying(false);
+          else if (status.isLoaded) setIsPreviewPlaying(status.isPlaying);
+        }
+      );
+      previewSoundRef.current = sound;
+      setPlayingPreviewId(String(track.id));
+      setIsPreviewPlaying(true);
+    } catch (_) {}
+  };
+
+  const togglePreviewPlayback = async () => {
+    if (!previewSoundRef.current) return;
+    try {
+      if (isPreviewPlaying) {
+        await previewSoundRef.current.pauseAsync();
+      } else {
+        await previewSoundRef.current.playAsync();
+      }
+    } catch (_) {}
+  };
+
+  // Arrêt quand la modale se ferme
+  useEffect(() => {
+    if (!visible) stopPreview();
+  }, [visible]);
+
+  // Cleanup sur démontage
+  useEffect(() => () => { stopPreview(); }, []);
+
   if (!score) return null;
   const busy = posting || sendingFlammes || saving;
   const chips = [
@@ -77,7 +130,18 @@ export default function CustomizationScreen({
                   <Text style={[styles.musicTitle, { color: theme.textPri }]} numberOfLines={1}>{selectedMusic.title}</Text>
                   <Text style={[styles.musicArtist, { color: theme.textSub }]} numberOfLines={1}>{selectedMusic.artist}</Text>
                 </View>
-                <TouchableOpacity onPress={() => setSelectedMusic(null)} hitSlop={8}>
+                {selectedMusic.previewUrl ? (
+                  <TouchableOpacity
+                    onPress={togglePreviewPlayback}
+                    hitSlop={8}
+                    style={styles.musicPlayBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={isPreviewPlaying ? 'Mettre en pause' : 'Écouter l\'extrait'}
+                  >
+                    <Ionicons name={isPreviewPlaying ? 'pause' : 'play'} size={16} color={theme.accent} />
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity onPress={() => { stopPreview(); setSelectedMusic(null); }} hitSlop={8}>
                   <Text style={[styles.musicRemove, { color: theme.textSub }]}>✕</Text>
                 </TouchableOpacity>
               </View>
@@ -105,18 +169,35 @@ export default function CustomizationScreen({
                   autoFocus
                 />
                 {musicPicker.searching && <ActivityIndicator color={theme.accent} style={{ marginVertical: 10 }} />}
-                {musicPicker.results.map(track => (
-                  <TouchableOpacity key={String(track.id)} style={[styles.resultRow, { borderBottomColor: theme.border }]} onPress={() => selectTrack(track)} activeOpacity={0.75}>
-                    {track.coverUrl
-                      ? <Image source={{ uri: track.coverUrl }} style={styles.resultCover} />
-                      : <View style={[styles.resultCover, { backgroundColor: theme.accent + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.musicTitle, { color: theme.textPri }]} numberOfLines={1}>{track.title}</Text>
-                      <Text style={[styles.musicArtist, { color: theme.textSub }]} numberOfLines={1}>{track.artist}</Text>
-                    </View>
-                    {track.previewUrl ? <Text style={[styles.badge30, { color: theme.accent, backgroundColor: theme.accent + '22' }]}>30s</Text> : null}
-                  </TouchableOpacity>
-                ))}
+                {musicPicker.results.map(track => {
+                  const isThisPlaying = playingPreviewId === String(track.id);
+                  return (
+                    <TouchableOpacity
+                      key={String(track.id)}
+                      style={[styles.resultRow, { borderBottomColor: theme.border }]}
+                      onPress={async () => { await loadAndPlayPreview(track); selectTrack(track); }}
+                      activeOpacity={0.75}
+                    >
+                      {track.coverUrl
+                        ? <Image source={{ uri: track.coverUrl }} style={styles.resultCover} />
+                        : <View style={[styles.resultCover, { backgroundColor: theme.accent + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.musicTitle, { color: isThisPlaying ? theme.accent : theme.textPri }]} numberOfLines={1}>{track.title}</Text>
+                        <Text style={[styles.musicArtist, { color: theme.textSub }]} numberOfLines={1}>{track.artist}</Text>
+                      </View>
+                      {track.previewUrl ? (
+                        <View style={[styles.badge30Wrap, { backgroundColor: isThisPlaying ? theme.accent + '22' : theme.accent + '22' }]}>
+                          <Ionicons
+                            name={isThisPlaying && isPreviewPlaying ? 'pause' : 'play'}
+                            size={11}
+                            color={theme.accent}
+                          />
+                          {!isThisPlaying && <Text style={[styles.badge30Text, { color: theme.accent }]}>30s</Text>}
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
                 {!musicPicker.searching && musicPicker.query.length >= 2 && musicPicker.results.length === 0 && (
                   <Text style={[styles.noResults, { color: theme.textSub }]}>Aucun résultat</Text>
                 )}
@@ -146,13 +227,13 @@ export default function CustomizationScreen({
 
           {/* Barre d'actions fixe */}
           <View style={[styles.actions, { backgroundColor: theme.bg, borderTopColor: theme.border }]}>
-            <Bouncy style={[styles.btnPrimary, { backgroundColor: theme.accent }, busy && styles.disabled]} onPress={onPublish} disabled={busy}>
+            <Bouncy style={[styles.btnPrimary, { backgroundColor: theme.accent }, busy && styles.disabled]} onPress={() => { stopPreview(); onPublish(); }} disabled={busy}>
               {posting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.btnPrimaryText}>🚀 Publier dans le feed</Text>}
             </Bouncy>
-            <Bouncy style={[styles.btnSecondary, { borderColor: theme.accent, backgroundColor: theme.card }, busy && styles.disabled]} onPress={onFlammes} disabled={busy}>
+            <Bouncy style={[styles.btnSecondary, { borderColor: theme.accent, backgroundColor: theme.card }, busy && styles.disabled]} onPress={() => { stopPreview(); onFlammes(); }} disabled={busy}>
               {sendingFlammes ? <ActivityIndicator color={theme.accent} size="small" /> : <Text style={[styles.btnSecondaryText, { color: theme.accent }]}>🔥 Envoyer à mes flammes</Text>}
             </Bouncy>
-            <Bouncy style={[styles.btnGhost, busy && styles.disabled]} onPress={onSaveForSelf} disabled={busy}>
+            <Bouncy style={[styles.btnGhost, busy && styles.disabled]} onPress={() => { stopPreview(); onSaveForSelf(); }} disabled={busy}>
               {saving ? <ActivityIndicator color={theme.textSub} size="small" /> : <Text style={[styles.btnGhostText, { color: theme.textSub }]}>💾 Enregistrer pour soi</Text>}
             </Bouncy>
           </View>
@@ -184,10 +265,12 @@ const styles = StyleSheet.create({
   musicTitle: { fontWeight: '700', fontSize: 13 },
   musicArtist: { fontSize: 12, marginTop: 2 },
   musicRemove: { fontSize: 16, paddingHorizontal: 4 },
+  musicPlayBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   searchWrap: { marginTop: 10 },
   resultRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   resultCover: { width: 46, height: 46, borderRadius: 8 },
-  badge30: { fontSize: 11, fontWeight: '700', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  badge30Wrap: { flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3 },
+  badge30Text: { fontSize: 11, fontWeight: '700' },
   noResults: { textAlign: 'center', marginVertical: 14, fontSize: 13 },
   styleToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 14, gap: 12 },
   actions: { padding: 16, gap: 10, borderTopWidth: StyleSheet.hairlineWidth },
