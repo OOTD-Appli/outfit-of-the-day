@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo, memo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View, Text, StyleSheet, Animated, Easing,
@@ -25,6 +25,18 @@ import { triggerHaptic } from '../lib/haptics';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
 import InAppCamera from '../components/InAppCamera';
+
+// DB : score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
+const SNAP_NOTES = [
+  { key: 'score_coupe',    label: 'Fit' },
+  { key: 'score_couleurs', label: 'Harmonie' },
+  { key: 'score_tendance', label: 'Détails' },
+];
+
+function fmtSnapNote(value) {
+  if (typeof value !== 'number') return '–';
+  return Number.isInteger(value) ? `${value}` : value.toFixed(1).replace('.', ',');
+}
 
 function AudioMessage({ url, isPlaying, onPlay, theme, duration }) {
   const bars = [3, 6, 10, 7, 12, 8, 4, 9, 5, 11, 7, 9];
@@ -234,6 +246,170 @@ function GradientAvatar({ uri, initial, size = 52, colors, theme, hasStory, show
   );
 }
 
+// Mémoïsé : évite de re-rendre chaque ligne de la liste d'amis quand un state
+// sans rapport change ailleurs dans l'écran (saisie chat, typing, replyingTo...).
+// Mémoïsé : évite de re-rendre chaque bulle (PanResponder, Animated.Value,
+// waveform audio...) quand un state sans rapport change (saisie, typing...).
+// Le fil de discussion n'est donc plus 100% remonté en permanence côté FlatList.
+const MessageBubble = memo(function MessageBubble({
+  msg, mine, parentMsg, selectedFriendUsername, userId, theme, msgImgSize, showSnapNotes,
+  playingAudioId, audioDuration, onReply, onBubbleTap, onBubbleLongPress, onPlayAudio, onOpenUserProfile,
+}) {
+  return (
+    <AnimatedMsgRow mine={mine} style={[styles.msgRow, mine ? styles.msgRowRight : styles.msgRowLeft]}>
+      <SwipeableMessageBubble
+        msg={msg}
+        mine={mine}
+        onReply={onReply}
+        style={[styles.swipeableBubbleWrap, mine ? styles.msgRowRight : styles.msgRowLeft]}
+      >
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => onBubbleTap(msg)}
+          onLongPress={() => onBubbleLongPress(msg)}
+          delayLongPress={350}
+          style={[
+            styles.bubble,
+            mine
+              ? [styles.bubbleSent, { backgroundColor: theme.accent + '22', borderColor: theme.accent + '44', borderWidth: 1 }]
+              : [styles.bubbleRecv, { backgroundColor: theme.card }],
+          ]}
+        >
+          {/* Citation du message parent */}
+          {parentMsg && !msg.is_deleted && (
+            <View style={[styles.replyQuote, { borderLeftColor: mine ? theme.accent : theme.accent + '88', backgroundColor: mine ? theme.accent + '11' : theme.border + '55' }]}>
+              <Text style={[styles.replyQuoteSender, { color: mine ? theme.accent : theme.textSub }]}>
+                {parentMsg.sender_id === userId ? 'Toi' : selectedFriendUsername}
+              </Text>
+              <Text style={[styles.replyQuoteText, { color: theme.textSub }]} numberOfLines={1}>
+                {parentMsg.is_deleted ? 'Message supprimé' : (parentMsg.content || (parentMsg.image_url ? '📸 Photo' : (parentMsg.audio_url ? '🎤 Audio' : '')))}
+              </Text>
+            </View>
+          )}
+          {msg.is_deleted ? (
+            <Text style={[styles.bubbleDeleted, { color: theme.textSub }]}>Ce message a été supprimé</Text>
+          ) : (() => {
+            // Carte de profil partagé
+            let profileCard = null;
+            if (msg.content?.startsWith('{"_type":"profile"')) {
+              try { profileCard = JSON.parse(msg.content); } catch (_) {}
+            }
+            if (profileCard) {
+              return (
+                <TouchableOpacity style={[styles.profileCardMsg, { borderColor: theme.border }]} onPress={() => onOpenUserProfile(profileCard.id)} activeOpacity={0.8}>
+                  <GradientAvatar uri={profileCard.avatar_url} initial={profileCard.username?.[0]?.toUpperCase()} size={38} colors={['#ED93B1', '#FF4567']} theme={theme} hasStory={false} showOnlineDot={false} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.profileCardName, { color: theme.textPri }]}>@{profileCard.username}</Text>
+                    <Text style={[styles.profileCardSub, { color: theme.accent }]}>Voir le profil →</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            }
+            return (
+              <>
+                {msg.audio_url ? (
+                  <AudioMessage
+                    url={msg.audio_url}
+                    isPlaying={playingAudioId === msg.id}
+                    onPlay={() => onPlayAudio(msg.id, msg.audio_url)}
+                    theme={theme}
+                    duration={audioDuration}
+                  />
+                ) : (
+                  <>
+                    {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
+                    {msg.image_url ? (
+                      <>
+                        <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
+                        {showSnapNotes && typeof msg.score_global === 'number' && (
+                          <View style={[styles.snapNotesRow, { width: msgImgSize }]}>
+                            <View style={[styles.snapNoteGlobal, { backgroundColor: theme.accent }]}>
+                              <Feather name="star" size={10} color="#fff" />
+                              <Text style={styles.snapNoteGlobalText}>{fmtSnapNote(msg.score_global)}</Text>
+                            </View>
+                            {SNAP_NOTES.map(n => (
+                              <View key={n.key} style={[styles.snapNoteChip, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+                                <Text style={[styles.snapNoteLabel, { color: theme.textSub }]}>{n.label}</Text>
+                                <Text style={[styles.snapNoteScore, { color: theme.accent }]}>{fmtSnapNote(msg[n.key])}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        )}
+                      </>
+                    ) : null}
+                  </>
+                )}
+              </>
+            );
+          })()}
+          <View style={styles.msgMetaRow}>
+            <Text style={[styles.msgTime, { color: theme.textSub }]}>
+              {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+            {mine && !msg.is_deleted && (
+              <ReadStatus msg={msg} accentColor={theme.accent} subColor={theme.textSub} />
+            )}
+          </View>
+          {msg.is_liked && !msg.is_deleted && (
+            <LikeBadge
+              style={[styles.likeBadge, mine ? styles.likeBadgeLeft : styles.likeBadgeRight]}
+              bg={theme.bg}
+              textStyle={styles.likeBadgeText}
+            />
+          )}
+        </TouchableOpacity>
+      </SwipeableMessageBubble>
+    </AnimatedMsgRow>
+  );
+});
+
+const ConversationRow = memo(function ConversationRow({
+  item, index, fi, lc, hasStory, lastMsgPreview, msgTime, unreadCount, onOpenChat, onOpenRestore, theme,
+}) {
+  return (
+    <AnimatedEntrance delay={Math.min(index, 8) * 45} distance={14}>
+      <TouchableOpacity style={[styles.convRow, { borderBottomColor: theme.border }]} onPress={() => onOpenChat(item)} activeOpacity={0.75}>
+        <GradientAvatar
+          uri={item.avatar_url}
+          initial={item.username?.[0]?.toUpperCase()}
+          size={54}
+          colors={lc.frameBorderColor ? [lc.frameBorderColor, lc.frameBorderColor] : ['#ED93B1', '#FF4567']}
+          theme={theme}
+          hasStory={hasStory}
+          badgeEmoji={lc.badge}
+        />
+        <View style={styles.convInfo}>
+          <View style={styles.convNameRow}>
+            <Text style={[styles.convName, { color: theme.textPri }]}>{item.username}</Text>
+            {lc.badge ? <Text style={styles.convNameBadge}>{lc.badge}</Text> : null}
+          </View>
+          <Text style={[styles.convSub, { color: theme.textSub }]} numberOfLines={1}>{lastMsgPreview}</Text>
+        </View>
+        <View style={styles.convRight}>
+          {msgTime ? <Text style={[styles.convTime, { color: theme.textSub }]}>{msgTime}</Text> : null}
+          {unreadCount > 0 && (
+            <View style={[styles.unreadBadge, { backgroundColor: theme.accent }]}>
+              <Text style={styles.unreadBadgeText}>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Text>
+            </View>
+          )}
+          {fi.state === 'active' && fi.streak > 0 && (
+            <View style={styles.streakRow}>
+              <Text style={[styles.streakText, { color: theme.accent }]}>🔥 {fi.streak}</Text>
+            </View>
+          )}
+          {fi.state === 'expired' && (
+            <TouchableOpacity style={styles.streakRow} onPress={() => onOpenRestore(item)}>
+              <Text style={[styles.streakText, styles.flammeDim, { color: theme.textSub }]}>🔥 {fi.streak}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
+    </AnimatedEntrance>
+  );
+});
+
 export default function FlammesScreen() {
   const { width: ww } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -250,6 +426,7 @@ export default function FlammesScreen() {
   const [showSnapCamera, setShowSnapCamera] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [showSnapNotes, setShowSnapNotes] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -259,6 +436,21 @@ export default function FlammesScreen() {
   const [audioDurations, setAudioDurations] = useState({});
   const audioRecordingRef = useRef(null);
   const audioSoundRef = useRef(null);
+
+  // Nettoyage au démontage de l'écran : un enregistrement/lecture audio en
+  // cours ne doit pas continuer (setState sur composant démonté, son jamais libéré).
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      if (audioRecordingRef.current) {
+        audioRecordingRef.current.stopAndUnloadAsync().catch(() => {});
+      }
+      if (audioSoundRef.current) {
+        audioSoundRef.current.unloadAsync().catch(() => {});
+      }
+    };
+  }, []);
+
   const [stories, setStories] = useState([]);
   const [myStory, setMyStory] = useState(null);
   const [flammes, setFlammes] = useState([]);
@@ -307,20 +499,38 @@ export default function FlammesScreen() {
     ]);
     const friendIds = [...new Set([...(fd1 || []).map(r => r.friend_id), ...(fd2 || []).map(r => r.user_id)])];
 
-    let profileById = {};
-    let merged = [];
-    {
-      const { data: plist } = await supabase.from('profiles').select('id, username, avatar_url, active_logo, flame_freezes').in('id', [user.id, ...friendIds]);
-      profileById = Object.fromEntries((plist || []).map(p => [p.id, p]));
-      merged = friendIds.map(id => ({ id, ...profileById[id] })).filter(r => r.username != null);
-    }
+    const allIds = [user.id, ...friendIds];
+    const nowIso = new Date().toISOString();
+
+    // Aucune de ces requêtes ne dépend du résultat d'une autre (toutes filtrées
+    // sur user.id/friendIds/allIds déjà connus) → lancées en parallèle plutôt
+    // qu'en cascade (gain net sur le fetch le plus lourd de l'écran Chat).
+    const [
+      { data: plist },
+      { data: incRows },
+      { data: out },
+      { data: flammesData },
+      { data: storiesData },
+      msgsResult,
+    ] = await Promise.all([
+      supabase.from('profiles').select('id, username, avatar_url, active_logo, flame_freezes').in('id', allIds),
+      supabase.from('friendships').select('user_id, created_at').eq('friend_id', user.id).eq('status', 'pending'),
+      supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'pending'),
+      supabase.from('flammes').select('id, user1_id, user2_id, streak, last_snap_at').or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`),
+      supabase.from('stories').select('id, user_id, image_url, video_url, overlay_text, caption, expires_at').in('user_id', allIds).gt('expires_at', nowIso).order('created_at', { ascending: false }),
+      friendIds.length
+        ? supabase.from('messages').select('sender_id, receiver_id, content, image_url, is_deleted, created_at').or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(60)
+        : Promise.resolve(null),
+    ]);
+
+    const profileById = Object.fromEntries((plist || []).map(p => [p.id, p]));
+    const merged = friendIds.map(id => ({ id, ...profileById[id] })).filter(r => r.username != null);
     setFriends(merged);
     setMyProfile(profileById[user.id] || null);
     // Pré-charge en arrière-plan les avatars des contacts (cache expo-image)
     const avatarUrls = merged.map(f => f.avatar_url).filter(Boolean);
     if (avatarUrls.length) ExpoImage.prefetch(avatarUrls).catch(() => {});
 
-    const { data: incRows } = await supabase.from('friendships').select('user_id, created_at').eq('friend_id', user.id).eq('status', 'pending');
     const requesterIds = [...new Set((incRows || []).map(r => r.user_id))];
     let incomingWithProfiles = [];
     if (requesterIds.length) {
@@ -334,46 +544,24 @@ export default function FlammesScreen() {
     }
     setIncomingRequests(incomingWithProfiles);
 
-    const { data: out } = await supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'pending');
     setOutgoingPendingIds((out || []).map(r => r.friend_id));
 
-    const { data: flammesData } = await supabase.from('flammes').select('id, user1_id, user2_id, streak, last_snap_at').or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`);
     setFlammes(flammesData || []);
 
-    const allIds = [user.id, ...friendIds];
-    if (allIds.length) {
-      const now = new Date().toISOString();
-      const { data: storiesData } = await supabase
-        .from('stories')
-        .select('id, user_id, image_url, video_url, overlay_text, caption, expires_at')
-        .in('user_id', allIds)
-        .gt('expires_at', now)
-        .order('created_at', { ascending: false });
-      const activeStories = (storiesData || []).map(s => ({
-        ...s,
-        profiles: profileById[s.user_id]
-          ? { username: profileById[s.user_id].username, avatar_url: profileById[s.user_id].avatar_url }
-          : null,
-      }));
-      setStories(activeStories);
-      setMyStory(activeStories.find(s => s.user_id === user.id) || null);
-    } else {
-      setStories([]);
-      setMyStory(null);
-    }
+    const activeStories = (storiesData || []).map(s => ({
+      ...s,
+      profiles: profileById[s.user_id]
+        ? { username: profileById[s.user_id].username, avatar_url: profileById[s.user_id].avatar_url }
+        : null,
+    }));
+    setStories(activeStories);
+    setMyStory(activeStories.find(s => s.user_id === user.id) || null);
 
     // Dernier message par ami (pour preview dans la liste)
-    if (friendIds.length) {
-      const { data: msgsData } = await supabase
-        .from('messages')
-        .select('sender_id, receiver_id, content, image_url, is_deleted, created_at')
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-        .gt('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: false })
-        .limit(60);
+    if (friendIds.length && msgsResult) {
       const byFriend = {};
       const counts = {};
-      for (const msg of (msgsData || [])) {
+      for (const msg of (msgsResult.data || [])) {
         const fid = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
         if (!byFriend[fid]) byFriend[fid] = msg;
         if (msg.receiver_id === user.id) {
@@ -562,19 +750,30 @@ export default function FlammesScreen() {
   const FLAME_EXPIRE_MS  = 24 * 3600 * 1000;
   const FLAME_RESTORE_MS = 72 * 3600 * 1000;
 
-  const getFlamme = (friendId) => flammes.find(f =>
-    (f.user1_id === userId && f.user2_id === friendId) ||
-    (f.user1_id === friendId && f.user2_id === userId),
-  );
+  // Index O(1) par ami plutôt qu'un .find() linéaire répété à chaque ligne de la liste.
+  const flammeByFriendId = useMemo(() => {
+    const map = new Map();
+    for (const f of flammes) {
+      const other = f.user1_id === userId ? f.user2_id : f.user1_id;
+      map.set(other, f);
+    }
+    return map;
+  }, [flammes, userId]);
 
-  const getFlammeInfo = (friendId) => {
-    const flamme = getFlamme(friendId);
-    if (!flamme || !flamme.streak) return { flamme: flamme || null, streak: 0, state: 'none' };
+  const storiesByUserId = useMemo(() => {
+    const map = new Map();
+    for (const s of stories) if (!map.has(s.user_id)) map.set(s.user_id, s);
+    return map;
+  }, [stories]);
+
+  const getFlammeInfo = useCallback((friendId) => {
+    const flamme = flammeByFriendId.get(friendId) || null;
+    if (!flamme || !flamme.streak) return { flamme, streak: 0, state: 'none' };
     const age = Date.now() - (flamme.last_snap_at ? new Date(flamme.last_snap_at).getTime() : 0);
     if (age <= FLAME_EXPIRE_MS)  return { flamme, streak: flamme.streak, state: 'active' };
     if (age <= FLAME_RESTORE_MS) return { flamme, streak: flamme.streak, state: 'expired' };
     return { flamme, streak: 0, state: 'dead' };
-  };
+  }, [flammeByFriendId]);
 
   // ── Restauration manuelle d'une flamme éteinte via un Gel de Flamme ────────
   const openRestore = (friend) => setRestoreModal({ visible: true, friend });
@@ -789,7 +988,7 @@ export default function FlammesScreen() {
     const now = new Date().toISOString();
     const { data } = await supabase
       .from('messages')
-      .select('id, sender_id, receiver_id, content, image_url, audio_url, is_liked, is_deleted, read_at, reply_to_id, created_at, expires_at')
+      .select('id, sender_id, receiver_id, content, image_url, audio_url, is_liked, is_deleted, read_at, reply_to_id, score_global, score_couleurs, score_coupe, score_tendance, created_at, expires_at')
       .or(`and(sender_id.eq.${userId},receiver_id.eq.${friend.id}),and(sender_id.eq.${friend.id},receiver_id.eq.${userId})`)
       .gt('expires_at', now)
       .order('created_at', { ascending: true })
@@ -811,6 +1010,46 @@ export default function FlammesScreen() {
     await loadMessages(friend);
     supabase.rpc('mark_messages_read', { p_friend_id: friend.id }).catch(() => {});
   };
+
+  // Wrappers à identité stable (toujours la dernière version via ref) pour que
+  // renderConversationItem/ConversationRow ci-dessous restent mémoïsables.
+  const openChatRef = useRef(openChat);
+  openChatRef.current = openChat;
+  const stableOpenChat = useCallback((friend) => openChatRef.current(friend), []);
+
+  const openRestoreRef = useRef(openRestore);
+  openRestoreRef.current = openRestore;
+  const stableOpenRestore = useCallback((friend) => openRestoreRef.current(friend), []);
+
+  const renderConversationItem = useCallback(({ item, index }) => {
+    const fi = getFlammeInfo(item.id);
+    const lc = getLogoConfig(item.active_logo);
+    const lastMsg = lastMessages[item.id];
+    const hasStory = storiesByUserId.has(item.id);
+    const lastMsgPreview = lastMsg?.is_deleted
+      ? '🗑 Message supprimé'
+      : lastMsg?.image_url
+        ? '📸 Photo'
+        : lastMsg?.content?.startsWith('{"_type":"profile"')
+          ? '👤 Profil partagé'
+          : lastMsg?.content || 'Nouveau contact';
+    const msgTime = lastMsg ? lastMsgTime(lastMsg.created_at) : '';
+    return (
+      <ConversationRow
+        item={item}
+        index={index}
+        fi={fi}
+        lc={lc}
+        hasStory={hasStory}
+        lastMsgPreview={lastMsgPreview}
+        msgTime={msgTime}
+        unreadCount={unreadCounts[item.id] || 0}
+        onOpenChat={stableOpenChat}
+        onOpenRestore={stableOpenRestore}
+        theme={theme}
+      />
+    );
+  }, [getFlammeInfo, lastMessages, storiesByUserId, unreadCounts, stableOpenChat, stableOpenRestore, theme]);
 
   const leaveChat = () => {
     setActiveChat(null);
@@ -1164,6 +1403,70 @@ export default function FlammesScreen() {
     }
   };
 
+  // Wrappers à identité stable (toujours la dernière version via ref) pour que
+  // renderMessageItem/MessageBubble restent mémoïsables malgré les fermetures
+  // internes changeantes de ces handlers.
+  const handleBubbleTapRef = useRef(handleBubbleTap);
+  handleBubbleTapRef.current = handleBubbleTap;
+  const stableBubbleTap = useCallback((msg) => handleBubbleTapRef.current(msg), []);
+
+  const handleBubbleLongPressRef = useRef(handleBubbleLongPress);
+  handleBubbleLongPressRef.current = handleBubbleLongPress;
+  const stableBubbleLongPress = useCallback((msg) => handleBubbleLongPressRef.current(msg), []);
+
+  const playAudioMsgRef = useRef(playAudioMsg);
+  playAudioMsgRef.current = playAudioMsg;
+  const stablePlayAudio = useCallback((msgId, url) => playAudioMsgRef.current(msgId, url), []);
+
+  const openUserProfileRef = useRef(openUserProfile);
+  openUserProfileRef.current = openUserProfile;
+  const stableOpenUserProfile = useCallback((id) => openUserProfileRef.current(id), []);
+
+  const handleReply = useCallback((m) => {
+    const isFromMe = m.sender_id === userId;
+    setReplyingTo({
+      id: m.id,
+      content: m.is_deleted ? 'Message supprimé' : (m.content || (m.image_url ? '📸 Photo' : (m.audio_url ? '🎤 Audio' : ''))),
+      senderName: isFromMe ? 'Toi' : selectedFriend?.username,
+      imageUrl: m.image_url,
+    });
+  }, [userId, selectedFriend]);
+
+  // Index O(1) du message parent (swipe-to-reply) plutôt qu'un .find() par bulle.
+  const messagesById = useMemo(() => {
+    const map = new Map();
+    for (const m of messages) map.set(m.id, m);
+    return map;
+  }, [messages]);
+
+  const renderMessageItem = useCallback(({ item: msg }) => {
+    const mine = msg.sender_id === userId;
+    const parentMsg = msg.reply_to_id ? messagesById.get(msg.reply_to_id) : null;
+    return (
+      <MessageBubble
+        msg={msg}
+        mine={mine}
+        parentMsg={parentMsg}
+        selectedFriendUsername={selectedFriend?.username}
+        userId={userId}
+        theme={theme}
+        msgImgSize={msgImgSize}
+        showSnapNotes={showSnapNotes}
+        playingAudioId={playingAudioId}
+        audioDuration={audioDurations[msg.id]}
+        onReply={handleReply}
+        onBubbleTap={stableBubbleTap}
+        onBubbleLongPress={stableBubbleLongPress}
+        onPlayAudio={stablePlayAudio}
+        onOpenUserProfile={stableOpenUserProfile}
+      />
+    );
+  }, [
+    userId, messagesById, selectedFriend, theme, msgImgSize, showSnapNotes,
+    playingAudioId, audioDurations, handleReply, stableBubbleTap, stableBubbleLongPress,
+    stablePlayAudio, stableOpenUserProfile,
+  ]);
+
   const sendPhotoMessageFromUri = async (uri) => {
     if (!selectedFriend || sendingMessage) return;
     setSendingMessage(true);
@@ -1328,7 +1631,7 @@ export default function FlammesScreen() {
               size={40}
               colors={chatLogoConfig.frameBorderColor ? [chatLogoConfig.frameBorderColor, chatLogoConfig.frameBorderColor] : ['#ED93B1', '#FF4567']}
               theme={theme}
-              hasStory={stories.some(s => s.user_id === selectedFriend.id)}
+              hasStory={storiesByUserId.has(selectedFriend.id)}
               badgeEmoji={chatLogoConfig.badge}
             />
             <View>
@@ -1357,6 +1660,15 @@ export default function FlammesScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.photoMsgBtn}
+            onPress={() => setShowSnapNotes(p => !p)}
+            accessibilityRole="button"
+            accessibilityLabel={showSnapNotes ? 'Masquer les notes' : 'Afficher les notes'}
+            accessibilityState={{ selected: showSnapNotes }}
+          >
+            <Feather name={showSnapNotes ? 'eye' : 'eye-off'} size={22} color={showSnapNotes ? theme.accent : theme.textPri} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.photoMsgBtn}
             onPress={sendPhotoMessage}
             disabled={sendingMessage}
             accessibilityRole="button"
@@ -1368,128 +1680,29 @@ export default function FlammesScreen() {
         </View>
 
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}>
-          <ScrollView
+          <FlatList
             ref={msgListRef}
+            data={messages}
+            keyExtractor={(m) => String(m.id)}
             style={[styles.msgList, { backgroundColor: theme.bg }]}
             contentContainerStyle={styles.msgListContent}
             keyboardShouldPersistTaps="handled"
+            initialNumToRender={20}
+            maxToRenderPerBatch={10}
+            windowSize={10}
             onContentSizeChange={() => {
               msgListRef.current?.scrollToEnd({ animated: didInitialScroll.current });
               didInitialScroll.current = true;
             }}
-          >
-            {messages.length === 0 ? (
+            ListEmptyComponent={
               <View style={styles.msgEmpty}>
                 <Feather name="message-circle" size={40} color={theme.border} />
                 <Text style={[styles.msgEmptyText, { color: theme.textPri }]}>Début de la conversation</Text>
                 <Text style={[styles.msgEmptySub, { color: theme.textSub }]}>Les messages disparaissent après 24h</Text>
               </View>
-            ) : messages.map(msg => {
-              const mine = msg.sender_id === userId;
-              // Message cité (reply preview) : on cherche le message parent dans la liste
-              const parentMsg = msg.reply_to_id
-                ? messages.find(m => m.id === msg.reply_to_id)
-                : null;
-              return (
-              <AnimatedMsgRow key={msg.id} mine={mine} style={[styles.msgRow, mine ? styles.msgRowRight : styles.msgRowLeft]}>
-                <SwipeableMessageBubble
-                  msg={msg}
-                  mine={mine}
-                  onReply={(m) => {
-                    const isFromMe = m.sender_id === userId;
-                    setReplyingTo({
-                      id: m.id,
-                      content: m.is_deleted ? 'Message supprimé' : (m.content || (m.image_url ? '📸 Photo' : (m.audio_url ? '🎤 Audio' : ''))),
-                      senderName: isFromMe ? 'Toi' : selectedFriend.username,
-                      imageUrl: m.image_url,
-                    });
-                  }}
-                  style={[styles.swipeableBubbleWrap, mine ? styles.msgRowRight : styles.msgRowLeft]}
-                >
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  onPress={() => handleBubbleTap(msg)}
-                  onLongPress={() => handleBubbleLongPress(msg)}
-                  delayLongPress={350}
-                  style={[
-                    styles.bubble,
-                    mine
-                      ? [styles.bubbleSent, { backgroundColor: theme.accent + '22', borderColor: theme.accent + '44', borderWidth: 1 }]
-                      : [styles.bubbleRecv, { backgroundColor: theme.card }],
-                  ]}
-                >
-                  {/* Citation du message parent */}
-                  {parentMsg && !msg.is_deleted && (
-                    <View style={[styles.replyQuote, { borderLeftColor: mine ? theme.accent : theme.accent + '88', backgroundColor: mine ? theme.accent + '11' : theme.border + '55' }]}>
-                      <Text style={[styles.replyQuoteSender, { color: mine ? theme.accent : theme.textSub }]}>
-                        {parentMsg.sender_id === userId ? 'Toi' : selectedFriend.username}
-                      </Text>
-                      <Text style={[styles.replyQuoteText, { color: theme.textSub }]} numberOfLines={1}>
-                        {parentMsg.is_deleted ? 'Message supprimé' : (parentMsg.content || (parentMsg.image_url ? '📸 Photo' : (parentMsg.audio_url ? '🎤 Audio' : '')))}
-                      </Text>
-                    </View>
-                  )}
-                  {msg.is_deleted ? (
-                    <Text style={[styles.bubbleDeleted, { color: theme.textSub }]}>Ce message a été supprimé</Text>
-                  ) : (() => {
-                    // Carte de profil partagé
-                    let profileCard = null;
-                    if (msg.content?.startsWith('{"_type":"profile"')) {
-                      try { profileCard = JSON.parse(msg.content); } catch (_) {}
-                    }
-                    if (profileCard) {
-                      return (
-                        <TouchableOpacity style={[styles.profileCardMsg, { borderColor: theme.border }]} onPress={() => openUserProfile(profileCard.id)} activeOpacity={0.8}>
-                          <GradientAvatar uri={profileCard.avatar_url} initial={profileCard.username?.[0]?.toUpperCase()} size={38} colors={['#ED93B1', '#FF4567']} theme={theme} hasStory={false} showOnlineDot={false} />
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.profileCardName, { color: theme.textPri }]}>@{profileCard.username}</Text>
-                            <Text style={[styles.profileCardSub, { color: theme.accent }]}>Voir le profil →</Text>
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    }
-                    return (
-                      <>
-                        {msg.audio_url ? (
-                          <AudioMessage
-                            url={msg.audio_url}
-                            isPlaying={playingAudioId === msg.id}
-                            onPlay={() => playAudioMsg(msg.id, msg.audio_url)}
-                            theme={theme}
-                            duration={audioDurations[msg.id]}
-                          />
-                        ) : (
-                          <>
-                            {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
-                            {msg.image_url ? (
-                              <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
-                            ) : null}
-                          </>
-                        )}
-                      </>
-                    );
-                  })()}
-                  <View style={styles.msgMetaRow}>
-                    <Text style={[styles.msgTime, { color: theme.textSub }]}>
-                      {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                    {mine && !msg.is_deleted && (
-                      <ReadStatus msg={msg} accentColor={theme.accent} subColor={theme.textSub} />
-                    )}
-                  </View>
-                  {msg.is_liked && !msg.is_deleted && (
-                    <LikeBadge
-                      style={[styles.likeBadge, mine ? styles.likeBadgeLeft : styles.likeBadgeRight]}
-                      bg={theme.bg}
-                      textStyle={styles.likeBadgeText}
-                    />
-                  )}
-                </TouchableOpacity>
-                </SwipeableMessageBubble>
-              </AnimatedMsgRow>
-              );
-            })}
-          </ScrollView>
+            }
+            renderItem={renderMessageItem}
+          />
 
           <View style={[styles.inputBar, { backgroundColor: theme.bg, borderTopColor: theme.border }]}>
             {/* Barre de réponse */}
@@ -1779,7 +1992,7 @@ export default function FlammesScreen() {
 
                     {/* Stories amis */}
                     {friends.map(friend => {
-                      const friendStory = stories.find(s => s.user_id === friend.id);
+                      const friendStory = storiesByUserId.get(friend.id);
                       const friendLc = getLogoConfig(friend.active_logo);
                       return (
                         <TouchableOpacity key={friend.id} style={styles.storyItem} onPress={() => friendStory && setStoryViewer({ visible: true, story: friendStory })}>
@@ -1800,62 +2013,7 @@ export default function FlammesScreen() {
                 </View>
               </>
             }
-            renderItem={({ item, index }) => {
-              const fi = getFlammeInfo(item.id);
-              const lc = getLogoConfig(item.active_logo);
-              const lastMsg = lastMessages[item.id];
-              const hasStory = stories.some(s => s.user_id === item.id);
-              const lastMsgPreview = lastMsg?.is_deleted
-                ? '🗑 Message supprimé'
-                : lastMsg?.image_url
-                  ? '📸 Photo'
-                  : lastMsg?.content?.startsWith('{"_type":"profile"')
-                    ? '👤 Profil partagé'
-                    : lastMsg?.content || 'Nouveau contact';
-              const msgTime = lastMsg ? lastMsgTime(lastMsg.created_at) : '';
-              return (
-                <AnimatedEntrance delay={Math.min(index, 8) * 45} distance={14}>
-                <TouchableOpacity style={[styles.convRow, { borderBottomColor: theme.border }]} onPress={() => openChat(item)} activeOpacity={0.75}>
-                  <GradientAvatar
-                    uri={item.avatar_url}
-                    initial={item.username?.[0]?.toUpperCase()}
-                    size={54}
-                    colors={lc.frameBorderColor ? [lc.frameBorderColor, lc.frameBorderColor] : ['#ED93B1', '#FF4567']}
-                    theme={theme}
-                    hasStory={hasStory}
-                    badgeEmoji={lc.badge}
-                  />
-                  <View style={styles.convInfo}>
-                    <View style={styles.convNameRow}>
-                      <Text style={[styles.convName, { color: theme.textPri }]}>{item.username}</Text>
-                      {lc.badge ? <Text style={styles.convNameBadge}>{lc.badge}</Text> : null}
-                    </View>
-                    <Text style={[styles.convSub, { color: theme.textSub }]} numberOfLines={1}>{lastMsgPreview}</Text>
-                  </View>
-                  <View style={styles.convRight}>
-                    {msgTime ? <Text style={[styles.convTime, { color: theme.textSub }]}>{msgTime}</Text> : null}
-                    {unreadCounts[item.id] > 0 && (
-                      <View style={[styles.unreadBadge, { backgroundColor: theme.accent }]}>
-                        <Text style={styles.unreadBadgeText}>
-                          {unreadCounts[item.id] > 99 ? '99+' : unreadCounts[item.id]}
-                        </Text>
-                      </View>
-                    )}
-                    {fi.state === 'active' && fi.streak > 0 && (
-                      <View style={styles.streakRow}>
-                        <Text style={[styles.streakText, { color: theme.accent }]}>🔥 {fi.streak}</Text>
-                      </View>
-                    )}
-                    {fi.state === 'expired' && (
-                      <TouchableOpacity style={styles.streakRow} onPress={() => openRestore(item)}>
-                        <Text style={[styles.streakText, styles.flammeDim, { color: theme.textSub }]}>🔥 {fi.streak}</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </TouchableOpacity>
-                </AnimatedEntrance>
-              );
-            }}
+            renderItem={renderConversationItem}
             ListEmptyComponent={
               <View style={styles.empty}>
                 <Feather name="users" size={44} color={theme.border} />
@@ -2040,6 +2198,12 @@ const styles = StyleSheet.create({
   bubbleText:      { fontSize: 14, lineHeight: 20 },
   bubbleDeleted:   { fontSize: 13, fontStyle: 'italic' },
   msgImage:        { borderRadius: 12, marginBottom: 4 },
+  snapNotesRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginBottom: 4 },
+  snapNoteGlobal:  { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
+  snapNoteGlobalText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  snapNoteChip:    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth },
+  snapNoteLabel:   { fontSize: 10.5, fontWeight: '600' },
+  snapNoteScore:   { fontSize: 12, fontWeight: '800' },
   msgTime:         { fontSize: 10 },
   msgMetaRow:      { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
   likeBadge:       { position: 'absolute', bottom: -9, borderRadius: 11, paddingHorizontal: 3, paddingVertical: 1 },

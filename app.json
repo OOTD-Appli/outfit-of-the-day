@@ -57,6 +57,13 @@
           "defaultChannel": "default"
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "OOTD a besoin d'enregistrer tes tenues dans ta galerie photo.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
     ]
   }
 }

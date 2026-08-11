@@ -47,8 +47,20 @@ function formatCount(n) {
   return String(n);
 }
 
+// DB : score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
+const FEED_NOTES = [
+  { key: 'score_coupe',    label: 'Fit' },
+  { key: 'score_couleurs', label: 'Harmonie' },
+  { key: 'score_tendance', label: 'Détails' },
+];
+
+function fmtFeedNote(value) {
+  if (typeof value !== 'number') return '–';
+  return Number.isInteger(value) ? `${value}` : value.toFixed(1).replace('.', ',');
+}
+
 /* ── FeedPost — memo évite le re-render quand les autres posts changent ── */
-const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpenComments, onOpenShare, onAddFriend, isCurrentlyPlaying, isMuted }) {
+const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme, onToggleLike, onOpenComments, onOpenShare, onAddFriend, isCurrentlyPlaying, isMuted, showNotes }) {
   const likeObj = item.likes?.find(l => l.user_id === userId);
   const isLiked = !!likeObj;
   const likesCount = item.likes?.length || 0;
@@ -174,6 +186,33 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
         </View>
       ) : null}
 
+      {/* Notes de la tenue — baked-in (choisies par l'auteur) + révélées par le
+          toggle œil du lecteur, qui affiche alors toutes les notes. */}
+      {(() => {
+        if (typeof item.score_global !== 'number') return null;
+        const baked = Array.isArray(item.visible_scores) ? item.visible_scores : [];
+        const showGlobal = showNotes || baked.includes('score_global');
+        const items = FEED_NOTES.filter(n => showNotes || baked.includes(n.key));
+        if (!showGlobal && items.length === 0) return null;
+        return (
+          <View style={[styles.notesCard, { top: Math.max(insets.top + 62, 80) }]} pointerEvents="none">
+            {showGlobal && (
+              <View style={[styles.notesGlobalRow, items.length === 0 && styles.notesGlobalRowSolo]}>
+                <Feather name="star" size={13} color={theme.accent} />
+                <Text style={styles.notesGlobalScore}>{fmtFeedNote(item.score_global)}</Text>
+                <Text style={styles.notesGlobalMax}>/10</Text>
+              </View>
+            )}
+            {items.map(n => (
+              <View key={n.key} style={styles.notesItem}>
+                <Text style={styles.notesItemLabel}>{n.label}</Text>
+                <Text style={[styles.notesItemScore, { color: theme.accent }]}>{fmtFeedNote(item[n.key])}</Text>
+              </View>
+            ))}
+          </View>
+        );
+      })()}
+
       {/* Actions latérales droite */}
       <View style={[styles.sideCol, { bottom: actionsBottom }]}>
         {/* Avatar auteur + bouton + */}
@@ -285,6 +324,7 @@ export default function FeedScreen() {
   const [isMuted, setIsMuted] = useState(false);
   const [currentlyPlayingId, setCurrentlyPlayingId] = useState(null);
   const [showSearch, setShowSearch] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [specializedFeed, setSpecializedFeed] = useState(false);
   const [userTopStyles, setUserTopStyles] = useState([]);
@@ -409,7 +449,7 @@ export default function FeedScreen() {
 
     const { data, error } = await supabase
       .from('ootds')
-      .select(`id, user_id, image_url, caption, styles, show_style_hashtag, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
+      .select(`id, user_id, image_url, caption, styles, show_style_hashtag, score_global, score_couleurs, score_coupe, score_tendance, visible_scores, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
       .eq('is_public', true)
       .order('created_at', { ascending: false })
       .range(0, PAGE_SIZE - 1);
@@ -436,7 +476,7 @@ export default function FeedScreen() {
     const end = start + PAGE_SIZE - 1;
     const { data, error } = await supabase
       .from('ootds')
-      .select(`id, user_id, image_url, caption, styles, show_style_hashtag, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
+      .select(`id, user_id, image_url, caption, styles, show_style_hashtag, score_global, score_couleurs, score_coupe, score_tendance, visible_scores, audio_title, audio_artist, audio_preview_url, audio_cover_url, created_at, profiles(username, avatar_url, active_logo, is_private), likes(id, user_id), comments(count)`)
       .eq('is_public', true)
       .order('created_at', { ascending: false })
       .range(start, end);
@@ -573,8 +613,9 @@ export default function FeedScreen() {
       onAddFriend={addFriend}
       isCurrentlyPlaying={item.id === currentlyPlayingId}
       isMuted={isMuted}
+      showNotes={showNotes}
     />
-  ), [userId, pageH, ww, insets, theme, toggleLike, openShareModal, addFriend, currentlyPlayingId, isMuted]);
+  ), [userId, pageH, ww, insets, theme, toggleLike, openShareModal, addFriend, currentlyPlayingId, isMuted, showNotes]);
 
   const tabTop = Math.max(insets.top, 44);
 
@@ -648,6 +689,15 @@ export default function FeedScreen() {
             <TouchableOpacity onPress={() => setFeedTab('pourtoi')} style={styles.tabBtn}>
               <Text style={[styles.tabText, feedTab === 'pourtoi' && styles.tabTextActive, feedTab === 'pourtoi' && { color: theme.accent }]}>POUR TOI</Text>
               {feedTab === 'pourtoi' && <View style={[styles.tabUnderline, { backgroundColor: theme.accent }]} />}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.notesBtn}
+              onPress={() => setShowNotes(p => !p)}
+              accessibilityRole="button"
+              accessibilityLabel={showNotes ? 'Masquer les notes' : 'Afficher les notes'}
+              accessibilityState={{ selected: showNotes }}
+            >
+              <Feather name={showNotes ? 'eye' : 'eye-off'} size={20} color={showNotes ? theme.accent : 'rgba(255,255,255,0.85)'} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.searchBtn} onPress={() => { setShowSearch(p => !p); setSearchQuery(''); }}>
               <Feather name={showSearch ? 'x' : 'search'} size={20} color="rgba(255,255,255,0.85)" />
@@ -805,6 +855,26 @@ const styles = StyleSheet.create({
   musicCoverThumb:  { width: 20, height: 20, borderRadius: 4 },
   muteBtn:          { position: 'absolute', left: 16, bottom: 12 },
 
+  /* Carte notes (toggle œil) */
+  notesCard: {
+    position: 'absolute',
+    left: 12,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minWidth: 116,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  notesGlobalRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.18)' },
+  notesGlobalRowSolo: { marginBottom: 0, paddingBottom: 0, borderBottomWidth: 0 },
+  notesGlobalScore: { color: '#fff', fontWeight: '800', fontSize: 18 },
+  notesGlobalMax: { color: 'rgba(255,255,255,0.65)', fontSize: 11, fontWeight: '700' },
+  notesItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 2.5 },
+  notesItemLabel: { color: 'rgba(255,255,255,0.82)', fontSize: 12.5, fontWeight: '600' },
+  notesItemScore: { fontSize: 13.5, fontWeight: '800', marginLeft: 14 },
+
   postLogoBadge: {
     position: 'absolute',
     right: 72,
@@ -864,6 +934,7 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#fff', fontWeight: '800' },
   tabUnderline: { height: 2.5, width: '100%', borderRadius: 2, marginTop: 4 },
   searchBtn: { position: 'absolute', right: 16, bottom: 12 },
+  notesBtn: { position: 'absolute', right: 52, bottom: 12 },
   searchBar: { position: 'absolute', left: 12, right: 12, zIndex: 15 },
   searchInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10 },
   searchInput: { flex: 1, color: '#fff', fontSize: 14, paddingVertical: 2 },

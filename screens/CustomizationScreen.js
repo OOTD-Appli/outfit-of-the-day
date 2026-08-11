@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, Modal, ScrollView, TextInput, Image,
+  View, Text, StyleSheet, Modal, ScrollView, TextInput,
   TouchableOpacity, ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
@@ -19,6 +20,7 @@ export default function CustomizationScreen({
   onPublish, onFlammes, onSaveForSelf,
   posting, sendingFlammes, saving,
   showStyleHashtag, setShowStyleHashtag,
+  visibleScores = [], onToggleScore,
 }) {
   const [playingPreviewId, setPlayingPreviewId] = useState(null);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
@@ -73,11 +75,12 @@ export default function CustomizationScreen({
 
   if (!score) return null;
   const busy = posting || sendingFlammes || saving;
+  // DB : score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
   const chips = [
-    { k: 'Global', v: score.global, c: theme.accent },
-    { k: 'Fit', v: score.fit, c: '#ED93B1' },
-    { k: 'Harmonie', v: score.harmonie, c: '#B0809A' },
-    { k: 'Détails', v: score.detail, c: '#C9A47A' },
+    { k: 'Global', v: score.global, c: theme.accent, dbKey: 'score_global' },
+    { k: 'Fit', v: score.fit, c: '#ED93B1', dbKey: 'score_coupe' },
+    { k: 'Harmonie', v: score.harmonie, c: '#B0809A', dbKey: 'score_couleurs' },
+    { k: 'Détails', v: score.detail, c: '#C9A47A', dbKey: 'score_tendance' },
   ];
 
   return (
@@ -95,16 +98,38 @@ export default function CustomizationScreen({
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             {/* Aperçu image */}
-            {imageUri ? <Image source={{ uri: imageUri }} style={styles.preview} /> : null}
+            {imageUri ? <ExpoImage source={{ uri: imageUri }} style={styles.preview} contentFit="cover" /> : null}
 
-            {/* Résumé des notes */}
+            {/* Notes — sélectionnables pour affichage sur le post */}
+            <Text style={[styles.label, { color: theme.textSub, marginTop: 0 }]}>Notes affichées sur le post</Text>
+            <Text style={[styles.notesHint, { color: theme.textSub }]}>Touche une note pour l'afficher sur ta publication.</Text>
             <View style={styles.chipsRow}>
-              {chips.map(ch => (
-                <View key={ch.k} style={[styles.chip, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                  <Text style={[styles.chipVal, { color: ch.c }]}>{ch.v}<Text style={styles.chipMax}>/10</Text></Text>
-                  <Text style={[styles.chipKey, { color: theme.textSub }]}>{ch.k}</Text>
-                </View>
-              ))}
+              {chips.map(ch => {
+                const selected = visibleScores.includes(ch.dbKey);
+                return (
+                  <TouchableOpacity
+                    key={ch.k}
+                    activeOpacity={0.8}
+                    onPress={() => onToggleScore?.(ch.dbKey)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Note ${ch.k} ${ch.v} sur 10`}
+                    accessibilityState={{ selected }}
+                    style={[
+                      styles.chip,
+                      { backgroundColor: theme.card, borderColor: theme.border },
+                      selected && styles.chipSelected,
+                    ]}
+                  >
+                    {selected && (
+                      <View style={styles.chipCheck}>
+                        <Ionicons name="checkmark" size={11} color="#fff" />
+                      </View>
+                    )}
+                    <Text style={[styles.chipVal, { color: ch.c }]}>{ch.v}<Text style={styles.chipMax}>/10</Text></Text>
+                    <Text style={[styles.chipKey, { color: theme.textSub }]}>{ch.k}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             {/* Description */}
@@ -124,7 +149,7 @@ export default function CustomizationScreen({
             {selectedMusic ? (
               <View style={[styles.musicChip, { backgroundColor: theme.accent + '18' }]}>
                 {selectedMusic.coverUrl
-                  ? <Image source={{ uri: selectedMusic.coverUrl }} style={styles.musicCover} />
+                  ? <ExpoImage source={{ uri: selectedMusic.coverUrl }} style={styles.musicCover} contentFit="cover" />
                   : <Text style={styles.musicNote}>♪</Text>}
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.musicTitle, { color: theme.textPri }]} numberOfLines={1}>{selectedMusic.title}</Text>
@@ -179,7 +204,7 @@ export default function CustomizationScreen({
                       activeOpacity={0.75}
                     >
                       {track.coverUrl
-                        ? <Image source={{ uri: track.coverUrl }} style={styles.resultCover} />
+                        ? <ExpoImage source={{ uri: track.coverUrl }} style={styles.resultCover} contentFit="cover" recyclingKey={track.id} />
                         : <View style={[styles.resultCover, { backgroundColor: theme.accent + '44', alignItems: 'center', justifyContent: 'center' }]}><Text>♪</Text></View>}
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.musicTitle, { color: isThisPlaying ? theme.accent : theme.textPri }]} numberOfLines={1}>{track.title}</Text>
@@ -249,8 +274,11 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 16, fontWeight: '800' },
   scroll: { padding: 18, paddingBottom: 8 },
   preview: { width: '100%', height: 280, borderRadius: 18, marginBottom: 14 },
+  notesHint: { fontSize: 11.5, marginBottom: 10, marginTop: -2 },
   chipsRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
   chip:    { flex: 1, borderRadius: 14, borderWidth: 1, paddingVertical: 10, alignItems: 'center' },
+  chipSelected: { borderColor: '#3B82F6', borderWidth: 2, backgroundColor: '#3B82F614' },
+  chipCheck: { position: 'absolute', top: 5, right: 5, width: 16, height: 16, borderRadius: 8, backgroundColor: '#3B82F6', alignItems: 'center', justifyContent: 'center' },
   chipVal: { fontSize: 18, fontWeight: '900' },
   chipMax: { fontSize: 10, fontWeight: '700' },
   chipKey: { fontSize: 10, fontWeight: '600', marginTop: 2 },

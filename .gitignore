@@ -39,6 +39,13 @@ yarn-error.*
 !.env.example
 .env*.local
 
+# Outillage agent IA local (peut contenir des identifiants dans settings.local.json)
+.claude/
+.agents/
+.mcp.json
+skills-lock.json
+supabase/.temp/
+
 # typescript
 *.tsbuildinfo
 

@@ -1,6 +1,73 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-06-12 — Dark/Light mode toggle : palette duale (sombre/clair) pour les 5 thèmes, toggle animé iOS dans Paramètres, init système, persistence AsyncStorage + user_metadata Supabase.
+> Dernière mise à jour : 2026-08-11 — Passe d'optimisation perf globale (listes, images, mémoire, build) — voir section ci-dessous.
+
+---
+
+## Passe d'optimisation performance / stabilité — 2026-08-11
+
+> Objectif : app plus rapide et plus stable, **zéro fonctionnalité retirée**. Audit préalable (lecture seule) sur les FlatList, images, animations, fuites mémoire, fetch réseau et config build, puis correctifs appliqués et vérifiés (`npm test` + `npx expo export --platform web` en boucle après chaque lot).
+
+### Chat (`FlammesScreen.js`) — le point le plus impactant
+- [x] **Liste de messages : `ScrollView` → `FlatList`** (non inversée, ordre et scroll identiques à l'existant — `onContentSizeChange` + `scrollToEnd` conservés à l'identique). Avant : les ~60 messages max de la conversation étaient TOUS montés en permanence (animations, `PanResponder` de swipe-to-reply, waveform audio) même hors écran. Après : virtualisation réelle (`windowSize`, `initialNumToRender`, `maxToRenderPerBatch`) — seuls les messages visibles + une marge sont montés.
+  - *Choix technique* : une variante `inverted` (plus proche du pattern « chat » habituel) a été envisagée mais écartée pour cette passe — elle exige un contre-transform visuel par item (`scaleY:-1`) que je ne peux pas vérifier visuellement dans cet environnement sans simulateur/device. La version non-inversée obtient l'essentiel du gain (virtualisation) sans ce risque visuel. **À évaluer plus tard avec test manuel sur device si on veut aller plus loin.**
+- [x] **`MessageBubble` extrait en composant mémoïsé** (`React.memo`) : chaque bulle (swipe, waveform audio, badges like/lu) ne se re-rend plus quand un state sans rapport change ailleurs dans l'écran (saisie du champ texte, indicateur "en train d'écrire", ouverture d'une modale...).
+- [x] **Lookup du message parent (reply-quote)** : `messages.find()` par bulle (O(n) × n bulles = O(n²)) remplacé par une `Map` indexée une fois par changement de `messages` (O(1) par bulle).
+- [x] **Liste des conversations (amis)** : `renderItem` extrait en composant `ConversationRow` mémoïsé + stabilisé (`useCallback`).
+- [x] **Lookups flamme/story par ami** (`flammes.find()`, `stories.some()`/`.find()`) : remplacés par des `Map`/`Set` indexés une fois (`flammeByFriendId`, `storiesByUserId`) au lieu d'un parcours linéaire répété à chaque ligne de la liste.
+- [x] **`fetchData` (chargement de l'écran Chat)** : 6 requêtes Supabase indépendantes qui s'enchaînaient en cascade (profils amis, demandes entrantes/sortantes, flammes, stories, derniers messages) sont désormais lancées en parallèle (`Promise.all`) — c'était le fetch le plus lourd de l'app.
+- [x] **Fuite mémoire** : enregistrement vocal en cours (timer `setInterval`) et son en lecture (`expo-av`) non nettoyés si l'utilisateur quitte l'écran pendant un enregistrement/une lecture — cleanup ajouté au démontage.
+
+### Profil (`ProfilScreen.js`)
+- [x] `fetchProfil` : 3 requêtes indépendantes (profil, tenues, abonnement) passées en `Promise.all` au lieu de s'enchaîner.
+- [x] Galerie 3 colonnes : `renderItem` extrait en composant `GridItem` mémoïsé + `getItemLayout` ajouté (cellules carrées, hauteur déductible de la largeur d'écran) → scroll plus fluide, moins de recalculs de layout.
+- [x] Lightbox plein écran : fenêtrage (`windowSize`/`maxToRenderPerBatch`) ajouté — plus de risque de monter toute la galerie en mémoire d'un coup à l'ouverture.
+- [x] Images (avatar, grille, lightbox) migrées de `Image` (react-native) vers `expo-image` (cache disque, decode hors thread JS).
+
+### Analyse (`AccueilScreen.js`)
+- [x] Fuite mémoire : debounce de recherche musique Deezer (`setTimeout`) non annulé si l'utilisateur quitte l'écran pendant les 420ms de debounce — cleanup ajouté.
+- [x] **Code mort supprimé** : une animation (`barsProgress`, `Animated.timing` à chaque affichage de résultat) était calculée et jouée mais n'était plus consommée par aucun style/composant — travail CPU inutile à chaque analyse, retiré.
+- [x] Images (aperçu photo, résultat, miniatures "top OOTD") migrées vers `expo-image`.
+
+### Personnalisation (`CustomizationScreen.js`) & `components/Avatar.js`
+- [x] Images (aperçu, pochettes musique Deezer, avatar) migrées vers `expo-image`.
+
+### Build / bundle
+- [x] **`babel-plugin-transform-remove-console`** ajouté (uniquement en production, `console.error`/`console.warn` conservés pour le diagnostic) — retire le bruit `console.log` du bundle release (dont un log qui affichait un email en clair lors de la réinitialisation de mot de passe).
+- [x] **`metro.config.js`** : `inlineRequires` activé — les modules ne sont chargés qu'à leur premier usage réel plutôt que tous au démarrage (démarrage JS plus rapide, surtout sur mobile).
+- [x] **Filet de sécurité** : `__tests__/screens.smoke.test.js` ajouté — vérifie que les 8 écrans se chargent sans erreur de syntaxe/import (détecte une régression avant un build EAS).
+- [ ] `expo-system-ui` semble être une dépendance déclarée mais non importée nulle part dans le code — **non retirée par prudence** (dépendance native, impact build iOS/Android non vérifiable sans device). À confirmer puis retirer dans une session avec accès à un simulateur.
+- [x] Logos statiques (`AuthScreen`, `ResetPasswordScreen`, `AppHeader`, `ShopScreen`) : migrés vers `expo-image` par cohérence (assets locaux `require(...)`, gain marginal mais aucun risque).
+
+### Vérifications effectuées
+- `npm test` (64/64) après chaque lot de changements.
+- `npx expo export --platform web` (build de production complet, 928 modules) exécuté avec succès après les changements les plus structurels (confirme que Babel/Metro compilent tout sans erreur avec la nouvelle config `transform-remove-console`/`inlineRequires`).
+- **Non vérifié visuellement** (pas de simulateur/device dans cet environnement) : rendu réel du chat après migration `FlatList`, comportement du scroll/clavier. À valider manuellement (`npm run ios`/`npm run android`/`npm start`) avant prochain build EAS — recommandé de tester en priorité : ouverture d'une conversation, envoi de message texte/photo/vocal, swipe-to-reply, scroll dans un historique de 20+ messages.
+
+---
+
+## Galerie détaillée, téléchargement & affichage des notes — 2026-06-24
+
+### Persistance & galerie profil détaillée — `screens/ProfilScreen.js`
+- [x] **Réutilisation des colonnes existantes** plutôt que d'ajouter `ratings`/`description`/`ai_advice` : les 4 notes sont déjà stockées dans `ootds` (`score_global`, `score_couleurs`=harmonie, `score_coupe`=fit, `score_tendance`=détails), avec `conseil` et `caption`. Aucune migration de données nécessaire.
+- [x] Les requêtes de la galerie (`fetchProfil` + `loadMoreOotds`) chargent désormais toutes les métadonnées.
+- [x] **Lightbox enrichie** : badge note globale + date, 3 badges colorés (Fit / Harmonie / Détails), chips de style, section Description (`caption`), section Conseils IA (rendu structuré points forts / à améliorer, ou texte brut). Helpers `NOTE_BADGES`, `fmtNote`, `parseConseil`.
+
+### Téléchargement des photos sur l'appareil
+- [x] Nouveau helper `lib/downloadImage.js` : natif via `expo-media-library` + `expo-file-system/legacy` (permission → `downloadAsync` → `saveToLibraryAsync` → nettoyage temp), **fallback web** (lien `<a download>`).
+- [x] Bouton de téléchargement (avec spinner) dans la barre de la lightbox `ProfilScreen`.
+- [x] Dépendances installées (`expo-media-library` ~18.2.1, `expo-file-system` ~19.0.23) + plugin `expo-media-library` et message de permission dans `app.json`.
+- [ ] **Rebuild EAS requis** pour activer le téléchargement sur l'app native (`npm run eas:build:preview`). Fonctionne déjà côté web sans rebuild.
+
+### Switch œil d'affichage des 4 notes (toggle local par écran)
+- [x] **Feed** (`screens/FeedScreen.js`) : scores ajoutés aux `select` (fetch + loadMore), bouton 👁 (`eye`/`eye-off`) dans la barre du haut, carte de notes en overlay sur la photo (`FEED_NOTES`, `fmtFeedNote`). État local non persisté.
+- [x] **Flammes** (`screens/FlammesScreen.js`) : bouton 👁 dans l'en-tête du chat, badges des 4 notes sous les messages image porteurs de scores (`SNAP_NOTES`, `fmtSnapNote`).
+- [x] **Propagation des scores à l'envoi** (`AccueilScreen.sendOutfitToSelectedFlammes`) : `scoreFields` injecté dans les inserts `snaps` ET `messages`. `loadMessages` charge les colonnes scores ; les nouveaux messages Realtime les portent via `payload.new`.
+- [x] **Migration** `20260621120000_snaps_messages_scores.sql` : colonnes `score_global/couleurs/coupe/tendance` + `conseil` (nullables) sur `snaps` et `messages`. **✅ Appliquée dans le SQL Editor + vérifiée** (REST 200 sur les nouvelles colonnes).
+
+### Vérifications
+- [x] Compilation Babel OK sur les 5 fichiers modifiés.
+- [x] Suite de tests verte (56/56, 2 suites).
 
 ---
 

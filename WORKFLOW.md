@@ -1,6 +1,6 @@
 # WORKFLOW.md — Développement et déploiement OOTD
 
-> Dernière mise à jour : 2026-06-12
+> Dernière mise à jour : 2026-08-09
 
 ## Prérequis
 
@@ -86,9 +86,16 @@ Les fichiers SQL sont dans `supabase/migrations/`. Appliquer **dans l'ordre** su
 | 27 | `20260611150000_image_url_constraints.sql` | CHECK NOT VALID sur `ootds.image_url` + `messages.image_url` |
 | 28 | `20260611160000_analyze_rate_limit.sql` | Table `analyze_rate_limit` + RPC `check_analyze_rate_limit` |
 | 29 | `20260612100000_messages_reply_to.sql` | Colonne `reply_to_id` sur `messages` (swipe-to-reply) + index |
+| 30 | `20260614120000_new_logo_variants.sql` | `buy_cosmetic`/`equip_cosmetic` v3 : whitelist étendue avec 5 logos-image (`bleu_neon`, `sunset`, `vert_neon`, `rose_flashy`, `rose_pastel`) |
+| 31 | `20260616120000_style_analytics.sql` | Colonnes `ootds.styles`, `ootds.show_style_hashtag`, `profiles.style_stats` (jsonb) + RPC `increment_style_stats(p_styles)` |
+| 32 | `20260617120000_voice_feed_prefs.sql` | Colonne `messages.audio_url` (messages vocaux) + `profiles.specialized_feed` (toggle flux personnalisé) |
+| 33 | `20260617140000_messages_audio_constraint.sql` | Recrée `messages_has_content` pour accepter `audio_url IS NOT NULL` (message 100% vocal) |
+| 34 | `20260617150000_bucket_audio_mime.sql` | Ajoute les MIME audio (`audio/mp4`, `audio/webm`, `audio/ogg`, `audio/mpeg`, `audio/x-m4a`) au bucket Storage `ootds` |
+| 35 | `20260621120000_snaps_messages_scores.sql` | Colonnes `score_global/couleurs/coupe/tendance` + `conseil` (nullable) sur `snaps` et `messages` |
+| 36 | `20260624120000_ootds_visible_scores.sql` | Colonne `ootds.visible_scores` (text[]) — notes choisies par l'auteur pour affichage public |
 
-**Sur un projet vide** : exécuter `initial_schema.sql` puis les migrations 3 à 28 dans l'ordre.  
-**Sur un projet existant** : utiliser `existing_project_align.sql` (IF NOT EXISTS) puis les migrations 3 à 28.  
+**Sur un projet vide** : exécuter `initial_schema.sql` puis les migrations 3 à 36 dans l'ordre.  
+**Sur un projet existant** : utiliser `existing_project_align.sql` (IF NOT EXISTS) puis les migrations 3 à 36.  
 **Ne jamais re-exécuter** `initial_schema.sql` si les tables existent déjà.
 
 ```bash
@@ -138,6 +145,9 @@ supabase secrets set `
 # Fonction principale (IA + rate-limit)
 supabase functions deploy analyze-outfit
 
+# Analyse contextuelle (cohérence tenue/situation — partage rate-limit + crédit avec analyze-outfit)
+supabase functions deploy contextual-analysis
+
 # Proxy Deezer (pas de JWT requis)
 supabase functions deploy deezer-search --no-verify-jwt
 
@@ -184,10 +194,11 @@ Le build est défini par `"vercel-build": "expo export --platform web && node sc
 ```
 EXPO_PUBLIC_SUPABASE_URL
 EXPO_PUBLIC_SUPABASE_ANON_KEY
-EXPO_PUBLIC_GROQ_API_KEY   # optionnel, uniquement si analyse côté client sur web
+EXPO_PUBLIC_GROQ_API_KEY        # optionnel, uniquement si analyse côté client sur web
+EXPO_PUBLIC_VAPID_PUBLIC_KEY    # requis pour Web Push (lib/webPush.web.js) — clé publique uniquement
 ```
 
-> La clé Gemini/Groq pour les Edge Functions est dans les secrets Supabase, **pas dans Vercel**.
+> La clé Gemini/Groq pour les Edge Functions et `VAPID_PRIVATE_KEY` sont dans les secrets Supabase, **pas dans Vercel**.
 
 ---
 
@@ -247,6 +258,9 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY
 - [ ] Snap quotidien : `hasSnapUsedTodayForPair()` vérifié avant insert dans `snaps`
 - [ ] Streak flammes : jours calendaires ISO (pas fenêtre 24h glissante)
 - [ ] Upload fichier : `fetch(uri).blob()` — compatible Android, iOS et web
+- [ ] Messages vocaux : bucket `ootds/audio/<uid>/…`, MIME whitelisté (webm/m4a/mp4/ogg/mpeg) — voir migration `20260617150000`
+- [ ] Tags de style IA : toujours filtrés contre la whitelist serveur (20 styles) avant stockage dans `ootds.styles`
+- [ ] Préférence dark/light : lire/écrire via `useTheme().colorMode`/`setColorMode()` — jamais une colonne `profiles` (c'est `user_metadata.dark_mode`)
 
 **Sécurité**
 - [ ] Jamais de clé API dans le code client ou `.env` versionné
@@ -257,6 +271,8 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY
 - [ ] `savePushToken` → `profiles_private`, jamais `profiles`
 - [ ] Ne jamais supprimer les stories côté client (pg_cron gère la purge + trigger Storage)
 - [ ] Toute mutation économique (points, passes, crédits, gels, cosmétiques) → RPC, jamais UPDATE direct
+- [ ] `check_analyze_rate_limit` puis `consume_daily_credit` dans cet ordre, dans **`analyze-outfit` ET `contextual-analysis`** (quota partagé)
+- [ ] Nouvel usage caméra/micro natif → vérifier que `app.json` déclare les messages de permission FR (actuellement absent pour `expo-camera`, voir ARCHITECTURE.md § Points d'attention)
 
 **UI**
 - [ ] Textes UI en français
@@ -270,23 +286,27 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY
 
 ```
 profiles          — 1 ligne par user. Contient points, niveau, crédits, passes, cosmétiques,
-                   flame_freezes, is_private, bio.
+                   flame_freezes, is_private, bio, style_stats (jsonb), specialized_feed.
+                   user_metadata.dark_mode (Supabase Auth, hors table) = préférence dark/light.
                    ⚠️ Ne jamais UPDATE les colonnes sensibles directement → RPCs.
 profiles_private  — push_token uniquement. RLS owner-only + service_role.
-ootds             — Posts (tenues). image_url, scores IA, caption, audio, is_public.
+ootds             — Posts (tenues). image_url, scores IA, caption, audio, is_public,
+                   styles (text[]), show_style_hashtag, visible_scores.
 likes             — UNIQUE(user_id, ootd_id). Append-only.
 comments          — body 1–1000 chars. user_id → profiles.id.
 friendships       — PK(user_id, friend_id). Direction : user_id=demandeur. Agrégé bidir côté app.
 flammes           — user1_id < user2_id (invariant). Streak par jours calendaires.
-messages          — Éphémères 24h. is_liked, is_deleted (soft), read_at. image_url CHECK NOT VALID.
-snaps             — Legacy (envoi tenue à amis). 1/jour/paire.
+messages          — Éphémères 24h. is_liked, is_deleted (soft), read_at, reply_to_id.
+                   image_url CHECK NOT VALID. audio_url (message vocal) + scores/conseil optionnels.
+snaps             — Legacy (envoi tenue à amis). 1/jour/paire. Porte aussi scores/conseil optionnels.
 stories           — Éphémères 24h. video_url ou image_url. overlay_text + caption.
 subscriptions     — Stripe (Plus/Elite). RLS read-only. Mutations via service_role uniquement.
 web_push_subscriptions — endpoint/p256dh/auth Web Push. RLS owner-only.
-analyze_rate_limit — rate-limit 5 req/min par user. Sans RLS (SECURITY DEFINER uniquement).
+analyze_rate_limit — rate-limit 5 req/min par user, partagé analyze-outfit + contextual-analysis.
+                   Sans RLS (SECURITY DEFINER uniquement).
 ```
 
-**Storage** : `avatars` (`<uid>/avatar.jpg`), `ootds` (`<uid>/outfit_<ts>.{jpg,webp}` + `messages/<uid>/<ts>.jpg`), `stories` (`<uid>/<ts>.mp4`).
+**Storage** : `avatars` (`<uid>/avatar.jpg`), `ootds` (`<uid>/outfit_<ts>.{jpg,webp}` + `messages/<uid>/<ts>.jpg` + `audio/<uid>/<ts>.{webm,m4a}`), `stories` (`<uid>/<ts>.mp4`).
 
 ---
 
@@ -306,20 +326,25 @@ Chaque agent qui prend un ticket doit :
 10. **Mutations économiques** : RPCs SECURITY DEFINER uniquement
 11. **Push token** : `savePushToken()` → `profiles_private`, jamais `profiles`
 12. **CORS** : toute nouvelle Edge Function doit utiliser `Deno.env.get('APP_ORIGIN') ?? '*'`
-13. **Rate-limit** : le check `check_analyze_rate_limit` doit rester **avant** `consume_daily_credit` dans `analyze-outfit`
+13. **Rate-limit** : le check `check_analyze_rate_limit` doit rester **avant** `consume_daily_credit`, dans `analyze-outfit` **et** `contextual-analysis`
+14. **Dark/light** : ne jamais stocker la préférence dans `profiles` — c'est `user_metadata.dark_mode` via `supabase.auth.updateUser()`, lu/écrit uniquement via `useTheme()`
+15. **Composants transverses** (`Bouncy`, `HeartOverlay`) ont une paire native (`.js`, Reanimated) / web (`.web.js`, `Animated` classique) — toujours ajouter les deux si on étend leur API
 
 ### Répartition logique des domaines (pour parallélisation)
 
 | Domaine | Fichiers concernés |
 |---------|-------------------|
-| Auth & profil | `AuthScreen.js`, `ResetPasswordScreen.js`, `ProfilScreen.js`, `lib/ensureProfile.js`, `lib/notifications.js`, `lib/pwa.js` |
-| Feed & social | `FeedScreen.js`, `components/FeedCommentsModal.js` |
-| Analyse IA | `AccueilScreen.js` (bloc analyse), `CustomizationScreen.js`, `supabase/functions/analyze-outfit/`, `supabase/functions/deezer-search/` |
-| Flammes & messages | `FlammesScreen.js`, `AccueilScreen.js` (bloc sendOutfitToAllFlammes), `lib/flammesUtils.js`, `lib/activeChat.js` |
+| Auth & profil | `AuthScreen.js`, `ResetPasswordScreen.js`, `ProfilScreen.js`, `lib/ensureProfile.js`, `lib/notifications.js`, `lib/pwa.js`/`lib/pwa.web.js`, `lib/downloadImage.js` |
+| Feed & social | `FeedScreen.js`, `components/FeedCommentsModal.js`, `components/HeartOverlay.js`/`.web.js`, `components/Skeleton.js` |
+| Analyse IA | `AccueilScreen.js` (bloc analyse + conseil contextuel), `CustomizationScreen.js`, `supabase/functions/analyze-outfit/`, `supabase/functions/contextual-analysis/`, `supabase/functions/deezer-search/` |
+| Style analytics | `AccueilScreen.js` (`increment_style_stats`), `FeedScreen.js` (flux spécialisé, hashtags), `ProfilScreen.js` (top styles), `CustomizationScreen.js` (toggle hashtag/visible_scores) |
+| Flammes & messages | `FlammesScreen.js` (dont messages vocaux, swipe-to-reply, partage profil), `AccueilScreen.js` (bloc sendOutfitToSelectedFlammes), `lib/flammesUtils.js`, `lib/activeChat.js` |
+| Caméra in-app | `components/InAppCamera.js` (consommé par `AccueilScreen.js` et `FlammesScreen.js`) |
 | Shop & cosmétiques | `ShopScreen.js`, `lib/themeContext.js`, `lib/logoConfig.js`, `supabase/functions/create-*`, `supabase/functions/stripe-webhook/` |
-| Notifications | `lib/notifications.js`, `lib/pwa.js`, `lib/webPush.js`, `supabase/functions/send-web-push/` |
-| Utilitaires partagés | `lib/utils.js`, `lib/toastContext.js`, `lib/haptics.js` |
+| Thème dark/light | `lib/themeContext.js`, `ProfilScreen.js` (toggle), `components/AppHeader.js` |
+| Notifications | `lib/notifications.js`, `lib/pwa.js`/`lib/pwa.web.js`, `lib/webPush.js`/`lib/webPush.web.js`, `components/InAppBanner.js`, `supabase/functions/send-web-push/` |
+| Utilitaires partagés | `lib/utils.js`, `lib/toastContext.js`, `lib/haptics.js`, `components/Bouncy.js`/`.web.js` |
 | Infrastructure | `App.js`, `lib/supabase.js`, `lib/env.js`, `supabase/migrations/` |
-| Composants UI | `components/Button.js`, `components/Avatar.js`, `components/FeedCommentsModal.js` |
+| Composants UI | `components/Button.js`, `components/Avatar.js`, `components/FeedCommentsModal.js`, `components/AppHeader.js` |
 
-> Les domaines "Feed" et "Flammes" partagent `lib/supabase.js` et `lib/toastContext.js` — ne pas les modifier en parallèle sans coordination.
+> Les domaines "Feed" et "Flammes" partagent `lib/supabase.js` et `lib/toastContext.js` — ne pas les modifier en parallèle sans coordination. Les domaines "Analyse IA" et "Style analytics" partagent `AccueilScreen.js` — coordonner si modification simultanée.

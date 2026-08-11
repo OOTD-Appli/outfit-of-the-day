@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, Image, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 
 const Avatar = ({
   uri,
@@ -24,10 +25,10 @@ const Avatar = ({
       {loading ? (
         <ActivityIndicator color="#3a0d1e" size="small" style={{ alignSelf: 'center' }} />
       ) : uri && !hasError ? (
-        <Image
+        <ExpoImage
           source={{ uri }}
           style={styles.image}
-          resizeMode="cover"
+          contentFit="cover"
           onError={() => setHasError(true)}
         />
       ) : (

@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Image, Platform,
+  View, Text, StyleSheet, ScrollView, Platform,
   TouchableOpacity, ActivityIndicator, Linking, Alert,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';

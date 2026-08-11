@@ -9,7 +9,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { decode } from 'base64-arraybuffer';
 import {
   View, Text, StyleSheet, ScrollView, Animated, Easing,
-  Alert, TouchableOpacity, ActivityIndicator, Image, TextInput,
+  Alert, TouchableOpacity, ActivityIndicator, TextInput,
   FlatList, Modal, useWindowDimensions, Platform, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -192,12 +192,16 @@ export default function AccueilScreen({ navigation }) {
   const [showCustomization, setShowCustomization] = useState(false);
   const [savingForSelf, setSavingForSelf] = useState(false);
   const [showStyleHashtag, setShowStyleHashtag] = useState(true);
+  const [visibleScores, setVisibleScores] = useState([]); // clés de notes affichées sur le post
   const [showContextPanel, setShowContextPanel] = useState(false);
   const [contextText, setContextText] = useState('');
   const [contextResult, setContextResult] = useState(null);
   const [loadingContext, setLoadingContext] = useState(false);
   const [musicPicker, setMusicPicker] = useState({ visible: false, query: '', results: [], searching: false });
   const musicSearchTimeout = useRef(null);
+  useEffect(() => () => {
+    if (musicSearchTimeout.current) clearTimeout(musicSearchTimeout.current);
+  }, []);
   const [caption, setCaption] = useState('');
   const [credits, setCredits] = useState(null);
   const [maxCredits, setMaxCredits] = useState(2);
@@ -215,13 +219,11 @@ export default function AccueilScreen({ navigation }) {
   const lastAnalyzedRef = useRef({ uri: null, ts: 0 });
   const resultFade = useRef(new Animated.Value(0)).current;
   const resultRise = useRef(new Animated.Value(14)).current;
-  const barsProgress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!score) {
       resultFade.setValue(0);
       resultRise.setValue(14);
-      barsProgress.setValue(0);
       return;
     }
     Animated.parallel([
@@ -231,11 +233,8 @@ export default function AccueilScreen({ navigation }) {
       Animated.timing(resultRise, {
         toValue: 0, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true,
       }),
-      Animated.timing(barsProgress, {
-        toValue: 1, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: false,
-      }),
     ]).start();
-  }, [score, barsProgress, resultFade, resultRise]);
+  }, [score, resultFade, resultRise]);
 
   const fetchMyStory = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -434,7 +433,14 @@ export default function AccueilScreen({ navigation }) {
     setShowContextPanel(false);
     setContextText('');
     setContextResult(null);
+    setVisibleScores([]);
     setImage(asset);
+  };
+
+  const toggleScoreVisibility = (dbKey) => {
+    setVisibleScores(prev =>
+      prev.includes(dbKey) ? prev.filter(k => k !== dbKey) : [...prev, dbKey],
+    );
   };
 
   // Web : capture via <input type=file>. `capture="environment"` ouvre l'appareil
@@ -648,6 +654,7 @@ export default function AccueilScreen({ navigation }) {
         is_public: true,
         styles: score.styles || [],
         show_style_hashtag: showStyleHashtag,
+        visible_scores: visibleScores,
         audio_title: selectedMusic?.title || null,
         audio_artist: selectedMusic?.artist || null,
         audio_preview_url: selectedMusic?.previewUrl || null,
@@ -664,6 +671,7 @@ export default function AccueilScreen({ navigation }) {
       setPublishedToFeed(true);
       setCaption('');
       setSelectedMusic(null);
+      setVisibleScores([]);
       showToast(`Ta tenue est dans le feed. +${pointsGagnes} points.`, { type: 'success' });
       // Ferme la personnalisation et redirige vers le feed
       setShowCustomization(false);
@@ -759,6 +767,14 @@ export default function AccueilScreen({ navigation }) {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Session expirée. Reconnecte-toi.');
       const publicUrl = await uploadAnalyzedImageIfNeeded();
+      // Notes de la tenue, portées par le snap + le message pour affichage dans le chat
+      const scoreFields = {
+        score_global: score.global,
+        score_couleurs: score.harmonie,
+        score_coupe: score.fit,
+        score_tendance: score.detail,
+        conseil: score.conseil || null,
+      };
       const { data: myFlammes } = await supabase
         .from('flammes')
         .select('*')
@@ -769,9 +785,9 @@ export default function AccueilScreen({ navigation }) {
       for (const friendId of selectedIds) {
         try {
           if (await hasSnapUsedTodayForPair(supabase, user.id, friendId)) { skipped += 1; continue; }
-          const { error: snapErr } = await supabase.from('snaps').insert({ sender_id: user.id, receiver_id: friendId, image_url: publicUrl });
+          const { error: snapErr } = await supabase.from('snaps').insert({ sender_id: user.id, receiver_id: friendId, image_url: publicUrl, ...scoreFields });
           if (snapErr) { console.error('snap insert failed:', snapErr); continue; }
-          await supabase.from('messages').insert({ sender_id: user.id, receiver_id: friendId, image_url: publicUrl });
+          await supabase.from('messages').insert({ sender_id: user.id, receiver_id: friendId, image_url: publicUrl, ...scoreFields });
           sent += 1;
           const flamme = flammesLocal.find(f =>
             (f.user1_id === user.id && f.user2_id === friendId) ||
@@ -837,7 +853,7 @@ export default function AccueilScreen({ navigation }) {
             <View style={s.uploadCard}>
               {image ? (
                 <TouchableOpacity onPress={openImageSourcePicker} activeOpacity={0.88}>
-                  <Image source={{ uri: image.uri }} style={s.previewImg} />
+                  <ExpoImage source={{ uri: image.uri }} style={s.previewImg} contentFit="cover" />
                   <View style={s.changeOverlay}>
                     <Text style={s.changeOverlayText}>Changer la photo</Text>
                   </View>
@@ -1054,7 +1070,7 @@ export default function AccueilScreen({ navigation }) {
 
             {/* Photo analysée — reste visible avec les résultats */}
             {image?.uri && (
-              <Image source={{ uri: image.uri }} style={s.resultPhoto} />
+              <ExpoImage source={{ uri: image.uri }} style={s.resultPhoto} contentFit="cover" />
             )}
 
             {/* 3 cartes critères */}
@@ -1111,7 +1127,7 @@ export default function AccueilScreen({ navigation }) {
                     const hearts = Array.isArray(ootd.likes) ? (ootd.likes[0]?.count || 0) : 0;
                     return (
                       <View key={ootd.id} style={s.topItem}>
-                        <Image source={{ uri: ootd.image_url }} style={s.topImg} />
+                        <ExpoImage source={{ uri: ootd.image_url }} style={s.topImg} contentFit="cover" recyclingKey={ootd.id} />
                         <View style={s.topHeartChip}>
                           <Ionicons name="heart" size={10} color={theme.accent} />
                           <Text style={s.topHeartText}>{formatHearts(hearts)}</Text>
@@ -1310,6 +1326,8 @@ export default function AccueilScreen({ navigation }) {
         saving={savingForSelf}
         showStyleHashtag={showStyleHashtag}
         setShowStyleHashtag={setShowStyleHashtag}
+        visibleScores={visibleScores}
+        onToggleScore={toggleScoreVisibility}
       />
     </SafeAreaView>
   );

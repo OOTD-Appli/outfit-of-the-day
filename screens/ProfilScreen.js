@@ -1,10 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { computeLevelInfo } from '../lib/utils';
 import {
   View, Text, StyleSheet, TouchableOpacity, Switch, Animated,
-  FlatList, Image, ActivityIndicator, TextInput, ScrollView,
+  FlatList, ActivityIndicator, TextInput, ScrollView,
   useWindowDimensions, Modal, Alert, Platform,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -17,6 +18,29 @@ import AnimatedEntrance from '../components/AnimatedEntrance';
 import Bouncy from '../components/Bouncy';
 import { getLogoConfig } from '../lib/logoConfig';
 import { isPwaStandalone, promptInstall } from '../lib/pwa';
+import { downloadImageToDevice } from '../lib/downloadImage';
+
+// Mapping notes : la DB stocke score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
+const NOTE_BADGES = [
+  { key: 'score_coupe',    label: 'Fit',      icon: 'shirt-outline',         color: '#ED93B1' },
+  { key: 'score_couleurs', label: 'Harmonie', icon: 'color-palette-outline', color: '#B0809A' },
+  { key: 'score_tendance', label: 'Détails',  icon: 'sparkles-outline',      color: '#C9A47A' },
+];
+
+function fmtNote(value) {
+  if (typeof value !== 'number') return '–';
+  return Number.isInteger(value) ? `${value}` : value.toFixed(1).replace('.', ',');
+}
+
+// Le conseil peut être du JSON structuré { points_forts, axes_amelioration } ou du texte brut.
+function parseConseil(conseil) {
+  if (!conseil) return null;
+  try {
+    const p = JSON.parse(conseil);
+    if (Array.isArray(p?.points_forts) && Array.isArray(p?.axes_amelioration)) return p;
+  } catch (_) {}
+  return null;
+}
 
 function DarkLightToggle({ isDark, onToggle, accent }) {
   const anim = useRef(new Animated.Value(isDark ? 1 : 0)).current;
@@ -64,6 +88,26 @@ function DarkLightToggle({ isDark, onToggle, accent }) {
   );
 }
 
+// Mémoïsé : évite de re-rendre toute la grille (photos + animations d'entrée)
+// quand un state sans rapport change ailleurs dans l'écran (settings, avatar upload...).
+const LightboxPage = memo(function LightboxPage({ item, ww, wh }) {
+  return (
+    <View style={[styles.lbPage, { width: ww, height: wh }]}>
+      <ExpoImage source={{ uri: item.image_url }} style={{ width: ww, height: wh }} contentFit="contain" />
+    </View>
+  );
+});
+
+const GridItem = memo(function GridItem({ item, index, onPress }) {
+  return (
+    <AnimatedEntrance style={styles.gridCell} delay={Math.min(index, 12) * 30} distance={10} scaleFrom={0.92}>
+      <TouchableOpacity style={{ width: '100%', height: '100%' }} activeOpacity={0.85} onPress={() => onPress(index)}>
+        <ExpoImage source={{ uri: item.image_url }} style={styles.gridPhoto} contentFit="cover" recyclingKey={item.id} />
+      </TouchableOpacity>
+    </AnimatedEntrance>
+  );
+});
+
 export default function ProfilScreen() {
   const [profile, setProfile] = useState(null);
   const [subscription, setSubscription] = useState(null);
@@ -71,11 +115,18 @@ export default function ProfilScreen() {
   const [loading, setLoading] = useState(true);
   const { width: ww, height: wh } = useWindowDimensions();
   const avatarSize = Math.min(Math.round(ww * 0.22), 90);
+  // Cellules carrées (aspectRatio:1, largeur 33.33%) → hauteur de ligne déductible de ww.
+  const gridRowH = ww / 3;
+  const getGridItemLayout = useCallback((_, index) => {
+    const row = Math.floor(index / 3);
+    return { length: gridRowH, offset: row * gridRowH, index };
+  }, [gridRowH]);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarLoadError, setAvatarLoadError] = useState(false);
   const { showToast } = useToast();
   const { theme, colorMode, setColorMode } = useTheme();
   const [lightbox, setLightbox] = useState({ visible: false, index: 0 });
+  const [downloading, setDownloading] = useState(false);
   const [loadingMoreOotds, setLoadingMoreOotds] = useState(false);
   const ootdsPageRef = useRef(0);
   const ootdsHasMoreRef = useRef(true);
@@ -115,26 +166,27 @@ export default function ProfilScreen() {
         return;
       }
 
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats, specialized_feed')
-        .eq('id', user.id)
-        .single();
-
       ootdsPageRef.current = 0;
       ootdsHasMoreRef.current = true;
-      const { data: ootdsData } = await supabase
-        .from('ootds')
-        .select('id, image_url, score_global, created_at')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .range(0, OOTDS_PAGE - 1);
-
-      const { data: subData } = await supabase
-        .from('subscriptions')
-        .select('status, plan_type')
-        .eq('user_id', user.id)
-        .maybeSingle();
+      // 3 requêtes indépendantes (toutes filtrées sur user.id) → lancées en parallèle.
+      const [{ data: profileData }, { data: ootdsData }, { data: subData }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats, specialized_feed')
+          .eq('id', user.id)
+          .single(),
+        supabase
+          .from('ootds')
+          .select('id, image_url, score_global, score_couleurs, score_coupe, score_tendance, conseil, caption, styles, created_at')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .range(0, OOTDS_PAGE - 1),
+        supabase
+          .from('subscriptions')
+          .select('status, plan_type')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ]);
 
       setProfile(profileData);
       setOotds(ootdsData || []);
@@ -155,7 +207,7 @@ export default function ProfilScreen() {
     const start = ootdsPageRef.current * OOTDS_PAGE;
     const { data } = await supabase
       .from('ootds')
-      .select('id, image_url, score_global, created_at')
+      .select('id, image_url, score_global, score_couleurs, score_coupe, score_tendance, conseil, caption, styles, created_at')
       .eq('user_id', profile.id)
       .order('created_at', { ascending: false })
       .range(start, start + OOTDS_PAGE - 1);
@@ -232,8 +284,28 @@ export default function ProfilScreen() {
     }
   };
 
-  const openLightbox = (index) => setLightbox({ visible: true, index });
+  const openLightbox = useCallback((index) => setLightbox({ visible: true, index }), []);
   const closeLightbox = () => setLightbox({ visible: false, index: 0 });
+  const renderGridItem = useCallback(({ item, index }) => (
+    <GridItem item={item} index={index} onPress={openLightbox} />
+  ), [openLightbox]);
+  const renderLightboxItem = useCallback(({ item }) => (
+    <LightboxPage item={item} ww={ww} wh={wh} />
+  ), [ww, wh]);
+
+  const handleDownload = async (item) => {
+    if (!item?.image_url || downloading) return;
+    setDownloading(true);
+    const res = await downloadImageToDevice(item.image_url, `ootd_${item.id}`);
+    setDownloading(false);
+    if (res.ok) {
+      showToast(Platform.OS === 'web' ? 'Téléchargement lancé' : 'Photo enregistrée dans ta galerie 📸', { type: 'success' });
+    } else if (res.reason === 'permission') {
+      showToast('Autorise l\'accès aux photos pour enregistrer', { type: 'warning' });
+    } else {
+      showToast('Téléchargement impossible', { type: 'error' });
+    }
+  };
 
   // Suppression effective : ligne `ootds` (→ disparaît du feed et du profil) + fichier Storage
   const doDeleteOotd = async (item) => {
@@ -371,6 +443,7 @@ export default function ProfilScreen() {
         windowSize={5}
         onEndReached={loadMoreOotds}
         onEndReachedThreshold={0.3}
+        getItemLayout={getGridItemLayout}
         ListFooterComponent={loadingMoreOotds
           ? <ActivityIndicator color={theme.accent} style={{ padding: 16 }} />
           : null}
@@ -417,9 +490,10 @@ export default function ProfilScreen() {
                     <ActivityIndicator color="#3a0d1e" />
                   </View>
                 ) : profile?.avatar_url && !avatarLoadError ? (
-                  <Image
+                  <ExpoImage
                     source={{ uri: profile.avatar_url + '?t=' + new Date().getTime() }}
                     style={[styles.avatarImg, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2, backgroundColor: theme.accent, borderWidth: logoConfig.frameBorderColor ? 3 : 0, borderColor: logoConfig.frameBorderColor || 'transparent' }]}
+                    contentFit="cover"
                     onError={() => setAvatarLoadError(true)}
                   />
                 ) : (
@@ -488,13 +562,7 @@ export default function ProfilScreen() {
             <Text style={[styles.galerieTitle, { color: theme.textPri }]}>Mes tenues</Text>
           </View>
         }
-        renderItem={({ item, index }) => (
-          <AnimatedEntrance style={styles.gridCell} delay={Math.min(index, 12) * 30} distance={10} scaleFrom={0.92}>
-            <TouchableOpacity style={{ width: '100%', height: '100%' }} activeOpacity={0.85} onPress={() => openLightbox(index)}>
-              <Image source={{ uri: item.image_url }} style={styles.gridPhoto} />
-            </TouchableOpacity>
-          </AnimatedEntrance>
-        )}
+        renderItem={renderGridItem}
         ListEmptyComponent={
           <View style={styles.emptyGalerie}>
             <Text style={[styles.emptyText, { color: theme.textPri }]}>Aucune tenue pour l'instant</Text>
@@ -519,7 +587,7 @@ export default function ProfilScreen() {
                 activeOpacity={0.8}
               >
                 {profile?.avatar_url ? (
-                  <Image source={{ uri: profile.avatar_url }} style={styles.settingsAvatarThumb} />
+                  <ExpoImage source={{ uri: profile.avatar_url }} style={styles.settingsAvatarThumb} contentFit="cover" />
                 ) : (
                   <View style={[styles.settingsAvatarFallback, { backgroundColor: theme.accent }]}>
                     <Text style={{ color: '#fff', fontWeight: '700' }}>{profile?.username?.[0]?.toUpperCase()}</Text>
@@ -638,6 +706,8 @@ export default function ProfilScreen() {
             data={ootds}
             horizontal
             pagingEnabled
+            windowSize={3}
+            maxToRenderPerBatch={2}
             showsHorizontalScrollIndicator={false}
             keyExtractor={(item) => item.id}
             initialScrollIndex={lightbox.index}
@@ -645,24 +715,115 @@ export default function ProfilScreen() {
             onMomentumScrollEnd={(e) =>
               setLightbox((prev) => ({ ...prev, index: Math.round(e.nativeEvent.contentOffset.x / ww) }))
             }
-            renderItem={({ item }) => (
-              <View style={[styles.lbPage, { width: ww, height: wh }]}>
-                <Image source={{ uri: item.image_url }} style={{ width: ww, height: wh }} resizeMode="contain" />
-              </View>
-            )}
+            renderItem={renderLightboxItem}
           />
           <SafeAreaView style={styles.lbBar} edges={['top']} pointerEvents="box-none">
             <TouchableOpacity style={styles.lbBtn} onPress={closeLightbox} activeOpacity={0.8}>
               <Ionicons name="close" size={28} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.lbBtn}
-              onPress={() => ootds[lightbox.index] && deleteOotd(ootds[lightbox.index])}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="trash-outline" size={24} color="#fff" />
-            </TouchableOpacity>
+            <View style={styles.lbBarRight}>
+              <TouchableOpacity
+                style={styles.lbBtn}
+                onPress={() => ootds[lightbox.index] && handleDownload(ootds[lightbox.index])}
+                activeOpacity={0.8}
+                disabled={downloading}
+              >
+                {downloading
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Ionicons name="download-outline" size={24} color="#fff" />}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.lbBtn}
+                onPress={() => ootds[lightbox.index] && deleteOotd(ootds[lightbox.index])}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="trash-outline" size={24} color="#fff" />
+              </TouchableOpacity>
+            </View>
           </SafeAreaView>
+
+          {/* Panneau métadonnées de l'outfit courant : notes, description, conseils IA */}
+          {(() => {
+            const cur = ootds[lightbox.index];
+            if (!cur) return null;
+            const conseilStruct = parseConseil(cur.conseil);
+            const hasConseil = conseilStruct || (cur.conseil && cur.conseil.trim());
+            return (
+              <View style={styles.lbInfoWrap} pointerEvents="box-none">
+                <ScrollView
+                  contentContainerStyle={styles.lbInfoContent}
+                  showsVerticalScrollIndicator={false}
+                  pointerEvents="auto"
+                >
+                  <View style={styles.lbGlobalRow}>
+                    <View style={[styles.lbGlobalBadge, { backgroundColor: theme.accent }]}>
+                      <Ionicons name="star" size={15} color="#fff" />
+                      <Text style={styles.lbGlobalScore}>{fmtNote(cur.score_global)}</Text>
+                      <Text style={styles.lbGlobalMax}>/10</Text>
+                    </View>
+                    <Text style={styles.lbDate}>
+                      {new Date(cur.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                    </Text>
+                  </View>
+
+                  <View style={styles.lbBadgesRow}>
+                    {NOTE_BADGES.map(b => (
+                      <View key={b.key} style={styles.lbBadge}>
+                        <Ionicons name={b.icon} size={15} color={b.color} />
+                        <Text style={styles.lbBadgeLabel}>{b.label}</Text>
+                        <Text style={[styles.lbBadgeScore, { color: b.color }]}>{fmtNote(cur[b.key])}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {Array.isArray(cur.styles) && cur.styles.length > 0 && (
+                    <View style={styles.lbStylesRow}>
+                      {cur.styles.map(st => (
+                        <View key={st} style={[styles.lbStyleChip, { borderColor: theme.accent + '88' }]}>
+                          <Text style={[styles.lbStyleChipText, { color: theme.accent }]}>{st}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {cur.caption ? (
+                    <View style={styles.lbSection}>
+                      <Text style={styles.lbSectionTitle}>Description</Text>
+                      <Text style={styles.lbSectionBody}>{cur.caption}</Text>
+                    </View>
+                  ) : null}
+
+                  {hasConseil ? (
+                    <View style={styles.lbSection}>
+                      <Text style={styles.lbSectionTitle}>Conseils IA</Text>
+                      {conseilStruct ? (
+                        <>
+                          {conseilStruct.points_forts.length > 0 && (
+                            <>
+                              <Text style={[styles.lbConseilSub, { color: theme.accent }]}>Points forts</Text>
+                              {conseilStruct.points_forts.map((pt, i) => (
+                                <Text key={`pf${i}`} style={styles.lbConseilItem}>• {pt}</Text>
+                              ))}
+                            </>
+                          )}
+                          {conseilStruct.axes_amelioration.length > 0 && (
+                            <>
+                              <Text style={[styles.lbConseilSub, { color: theme.accent, marginTop: 8 }]}>À améliorer</Text>
+                              {conseilStruct.axes_amelioration.map((ax, i) => (
+                                <Text key={`ax${i}`} style={styles.lbConseilItem}>→ {ax}</Text>
+                              ))}
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <Text style={styles.lbSectionBody}>{cur.conseil}</Text>
+                      )}
+                    </View>
+                  ) : null}
+                </ScrollView>
+              </View>
+            );
+          })()}
         </View>
       </Modal>
     </SafeAreaView>
@@ -686,7 +847,29 @@ const styles = StyleSheet.create({
   lbContainer:    { backgroundColor: '#000' },
   lbPage:         { alignItems: 'center', justifyContent: 'center' },
   lbBar:          { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 6 },
+  lbBarRight:     { flexDirection: 'row', gap: 8 },
   lbBtn:          { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+
+  /* Panneau métadonnées lightbox */
+  lbInfoWrap:     { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '52%', backgroundColor: 'rgba(10,10,10,0.86)', borderTopLeftRadius: 22, borderTopRightRadius: 22 },
+  lbInfoContent:  { padding: 18, paddingBottom: 36 },
+  lbGlobalRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  lbGlobalBadge:  { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  lbGlobalScore:  { color: '#fff', fontWeight: '800', fontSize: 19 },
+  lbGlobalMax:    { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '700' },
+  lbDate:         { color: 'rgba(255,255,255,0.6)', fontSize: 12 },
+  lbBadgesRow:    { flexDirection: 'row', gap: 8 },
+  lbBadge:        { flex: 1, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 14, paddingVertical: 10, gap: 2 },
+  lbBadgeLabel:   { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '600' },
+  lbBadgeScore:   { fontSize: 18, fontWeight: '800' },
+  lbStylesRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
+  lbStyleChip:    { borderWidth: 1, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
+  lbStyleChipText:{ fontSize: 12, fontWeight: '700' },
+  lbSection:      { marginTop: 16 },
+  lbSectionTitle: { color: '#fff', fontWeight: '800', fontSize: 14, marginBottom: 6 },
+  lbSectionBody:  { color: 'rgba(255,255,255,0.82)', fontSize: 13.5, lineHeight: 20 },
+  lbConseilSub:   { fontWeight: '700', fontSize: 12.5, marginBottom: 4 },
+  lbConseilItem:  { color: 'rgba(255,255,255,0.82)', fontSize: 13, lineHeight: 19, marginBottom: 3 },
 
   profileCard:    { alignItems: 'center', padding: 20 },
   avatarContainer:{ position: 'relative', marginBottom: 12 },
