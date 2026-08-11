@@ -148,9 +148,11 @@ function ConseilBlock({ conseil, s }) {
 }
 
 function globalMessage(value) {
-  if (value >= 8) return 'Tu as du style !';
-  if (value >= 6) return 'Très bon look !';
-  return 'Tu peux faire mieux !';
+  if (value >= 9) return 'Tu as un style de fou !';
+  if (value >= 7) return 'Très bon look !';
+  if (value >= 5) return 'Pas mal, il y a moyen de peaufiner !';
+  if (value >= 3) return 'Quelques efforts à faire sur cette tenue.';
+  return 'On retente une tenue différente ?';
 }
 
 function fr(value) {
@@ -206,6 +208,7 @@ export default function AccueilScreen({ navigation }) {
   const [credits, setCredits] = useState(null);
   const [maxCredits, setMaxCredits] = useState(2);
   const [unlimited, setUnlimited] = useState(false);
+  const [analysisPersonality, setAnalysisPersonality] = useState('fashion_week');
   const [topOotds, setTopOotds] = useState([]);
   // Stories
   const [userId, setUserId] = useState(null);
@@ -349,7 +352,7 @@ export default function AccueilScreen({ navigation }) {
     const [{ data }, { data: sub }] = await Promise.all([
       supabase
         .from('profiles')
-        .select('daily_credits, credits_reset_date, has_analysis_pass, has_ootd_plus_pass')
+        .select('daily_credits, credits_reset_date, has_analysis_pass, has_ootd_plus_pass, analysis_personality')
         .eq('id', user.id)
         .single(),
       supabase
@@ -359,6 +362,7 @@ export default function AccueilScreen({ navigation }) {
         .maybeSingle(),
     ]);
     if (!data) return;
+    setAnalysisPersonality(data.analysis_personality || 'fashion_week');
 
     // Tier : Elite (abonnement) = illimité · Plus (abonnement) ou pass legacy = 20 · sinon 2
     const subActive = sub && ['active', 'trialing'].includes(sub.status);
@@ -544,7 +548,7 @@ export default function AccueilScreen({ navigation }) {
       // L'analyse reçoit toujours du JPEG (format le plus compatible avec l'IA).
       const base64Image = `data:image/jpeg;base64,${image.base64}`;
       const { data: parsed, error: fnError } = await withTimeout(
-        supabase.functions.invoke("analyze-outfit", { body: { base64Image } }),
+        supabase.functions.invoke("analyze-outfit", { body: { base64Image, personality: analysisPersonality } }),
         REQUEST_TIMEOUT_MS,
         "L'analyse est trop longue. Verifie ta connexion et reessaie.",
       );

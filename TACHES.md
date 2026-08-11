@@ -1,6 +1,21 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-08-11 — Passe d'optimisation perf globale (listes, images, mémoire, build) — voir section ci-dessous.
+> Dernière mise à jour : 2026-08-11 — Nouveau prompt d'analyse IA + personnalité du critique choisie par l'utilisateur.
+
+---
+
+## Nouveau prompt d'analyse IA + personnalités du critique — 2026-08-11
+
+- [x] **Nouveau prompt `analyze-outfit`** (fourni par l'utilisateur) : ajoute un garde-fou anti-hallucination de marques, une règle de gestion du cadrage/visibilité (pas de malus si un élément est hors champ), une règle de spécificité obligatoire (chaque analyse doit citer un détail visible précis), et des barèmes de notation en fourchettes (ex. `-1 à -3 pts`) plutôt qu'en valeurs fixes pour un jugement plus nuancé. Schéma JSON de sortie et les 20 hashtags de style **inchangés** — aucun impact sur le parsing existant.
+- [x] **Correction apportée au prompt fourni** : la phrase d'intro couplait "attitude" ET "niveau d'exigence" à la personnalité choisie. Reformulée pour que la personnalité influence **uniquement le ton** des textes générés — le barème de notation reste strictement identique quelle que soit la personnalité, afin que les notes et les points gagnés (`award_points_for_ootd`) restent comparables entre utilisateurs (sinon un utilisateur pourrait choisir la personnalité la plus indulgente pour gonfler ses points).
+- [x] **5 personnalités** (clés fermées, texte de ton vivant uniquement côté serveur — jamais de texte libre envoyé par le client) : `fashion_week` (Critique fashion week, exigeante — défaut), `bienveillant` (Styliste bienveillant), `pote_hype` (Meilleure pote hype), `coach` (Coach mode motivant), `streetwear` (Icône streetwear).
+- [x] **Migration** `20260811120000_analysis_personality.sql` : colonne `profiles.analysis_personality` (text, défaut `'fashion_week'`) + CHECK sur les 5 clés. **⚠️ À exécuter dans le SQL Editor Supabase.**
+- [x] **`supabase/functions/analyze-outfit/index.ts`** : accepte `personality` (clé fermée) dans le body, valide contre la liste serveur, fallback `fashion_week` si absent/invalide, injecte le texte de ton dans le prompt via `buildPrompt()`.
+- [x] **`AccueilScreen.js`** : lit `profiles.analysis_personality` (déjà chargé dans `fetchCredits`) et l'envoie à chaque appel `analyze-outfit`.
+- [x] **`ProfilScreen.js`** : nouvelle section "Personnalité du critique IA" dans Paramètres (5 lignes sélectionnables, emoji + nom + description courte, check visuel sur l'option active). Update direct (`supabase.from('profiles').update(...)`), même pattern que `specialized_feed`/`is_private`.
+- [x] Vérifications : `npm test` (64/64) + `npx expo export --platform web` (build complet sans erreur) après implémentation.
+- [x] **Migration appliquée en prod** (`supabase db push`) et **Edge Function redéployée** (`supabase functions deploy analyze-outfit`) — la fonctionnalité est live côté backend.
+- [ ] **Reste à faire** : committer/pousser ces changements de code (GitHub) et redéployer le build web (Vercel) pour que la PWA reflète le nouveau sélecteur de personnalité — pas fait automatiquement, à confirmer avec l'utilisateur.
 
 ---
 

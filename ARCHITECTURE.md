@@ -133,8 +133,9 @@ Reçoit `{ navigation }` de React Navigation (navigue vers Shop).
 - **Le crédit quotidien est partagé** entre l'analyse principale et l'analyse contextuelle (même RPC `consume_daily_credit`)
 
 **Phase 3 — Analyse IA principale**
-- `supabase.functions.invoke("analyze-outfit", { body: { base64Image } })`
+- `supabase.functions.invoke("analyze-outfit", { body: { base64Image, personality } })`
 - `base64Image` = `data:image/{jpeg|png|webp};base64,{raw}` (préfixe MIME obligatoire)
+- `personality` = clé fermée lue depuis `profiles.analysis_personality` (voir « Personnalité du critique IA » ci-dessous), fallback `'fashion_week'`
 - Rate-limit : 5 requêtes/minute (`check_analyze_rate_limit` RPC, avant consommation crédit)
 - Timeout : 25 secondes via `withTimeout()`
 - Résultats : 3 jauges arc (Fit, Harmonie, Détails) via `components/Gauge.js` (react-native-svg), 1-2 hashtags de style
@@ -238,7 +239,7 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 - Galerie 3 colonnes avec pagination (21/page), lightbox horizontal swipe enrichie : badge note globale + date, 3 badges colorés (Fit/Harmonie/Détails), chips de style, section Description (`caption`), section Conseils IA structurée (points forts / à améliorer)
 - **Téléchargement d'image** : bouton (avec spinner) dans la lightbox → `lib/downloadImage.downloadImageToDevice()`
 - **Suppression de tenue** : `doDeleteOotd()`/`deleteOotd()` — nettoyage Storage inclus
-- Modal paramètres : username, bio (160 chars), is_private toggle, **toggle "contenu spécialisé"** (`profiles.specialized_feed`), **toggle apparence dark/light** (`colorMode`), email (RO), déconnexion
+- Modal paramètres : username, bio (160 chars), is_private toggle, **toggle "contenu spécialisé"** (`profiles.specialized_feed`), **toggle apparence dark/light** (`colorMode`), **sélecteur "Personnalité du critique IA"** (5 options, `profiles.analysis_personality`, constante client `PERSONALITIES` — labels/emoji uniquement, le texte de ton réel reste côté serveur), email (RO), déconnexion
 - **PWA** : bouton "Télécharger l'app" si `!isPwaStandalone()` et web (`lib/pwa.web.js`)
 
 ### ShopScreen (`screens/ShopScreen.js`)
@@ -398,14 +399,16 @@ La logique PWA réelle vit désormais dans `pwa.web.js` (le fichier `pwa.js` imp
 | Méthode | POST |
 | Auth | JWT obligatoire |
 | Rate-limit | 5 req/min (`check_analyze_rate_limit` RPC avant consommation crédit) |
-| Entrée | `{ base64Image: "data:image/jpeg;base64,..." }` (max ~7,5 Mo, JPEG/PNG/WebP) |
+| Entrée | `{ base64Image: "data:image/jpeg;base64,...", personality?: "fashion_week"\|"bienveillant"\|"pote_hype"\|"coach"\|"streetwear" }` (image max ~7,5 Mo, JPEG/PNG/WebP) |
 | Sortie | `{ global, fit, harmonie, detail, explications: {fit, harmonie, detail}, conseil, styles: string[] (1-2 tags, whitelist fermée de 20), credits_remaining, max_credits, provider }` |
 
 **Providers** (avec fallback automatique) :
-1. Google Gemini 2.5-flash (THINKING_BUDGET=0, max 1024 tokens, `responseMimeType: 'application/json'`)
+1. Google Gemini 2.5-flash (THINKING_BUDGET=0, max 1500 tokens, `responseMimeType: 'application/json'`)
 2. Groq Llama 4 Scout 17B vision (fallback si Gemini KO)
 
 Note globale calculée côté serveur (moyenne clampée 0–10), pas par l'IA. `styles` filtré contre une whitelist fixe côté serveur avant retour/stockage.
+
+**Personnalité du critique IA** (`personality`) : clé fermée uniquement — le client n'envoie jamais de texte libre, seulement une des 5 clés ci-dessus (mappées à un texte de ton côté serveur dans `PERSONALITIES`, non exposé au client). Clé invalide/absente → fallback `fashion_week`. **N'affecte que le ton** des textes générés (`*_analyse`, `points_forts`, `axes_amelioration`) — le barème de notation (Critères 1-3) est appliqué à l'identique quelle que soit la personnalité, pour que les notes/points restent comparables entre utilisateurs. Choisie par l'utilisateur dans `ProfilScreen` → Paramètres → « Personnalité du critique IA », persistée dans `profiles.analysis_personality` (migration `20260811120000`).
 
 **Secrets** : `GEMINI_API_KEY`, `GROQ_API_KEY`, `APP_ORIGIN`
 
@@ -568,6 +571,7 @@ Met à jour la table `subscriptions`. Seul le webhook Stripe peut appeler cette 
 | bio | text | max 160 chars |
 | style_stats | jsonb DEFAULT '{}' | Compteur par style, via RPC `increment_style_stats` |
 | specialized_feed | boolean DEFAULT false | Toggle flux "Pour toi" personnalisé par style |
+| analysis_personality | text DEFAULT 'fashion_week' | Ton du critique IA (`analyze-outfit`) — CHECK sur 5 clés fermées |
 | created_at | timestamptz | |
 
 > `user_metadata.dark_mode` (Supabase Auth, hors table `profiles`) stocke la préférence dark/light cross-device — voir `lib/themeContext.js`.

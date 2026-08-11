@@ -10,39 +10,66 @@ const CORS = {
 // Modèle Gemini. 2.5-flash dispose du quota sur la clé fournie (2.0-flash = 0).
 const GEMINI_MODEL = 'gemini-2.5-flash';
 
-const PROMPT = `Tu es un critique de mode haute couture — analytique, impartial, sans complaisance. Évalue uniquement ce qui est VISIBLE sur la photo. Utilise toute l'échelle 0–10 (outfit basique/négligé = 2–4 ; correct sans recherche = 5).
+// Personnalités du critique IA — choisies par l'utilisateur dans Profil > Paramètres
+// (colonne profiles.analysis_personality, migration 20260811120000). Le texte de
+// chaque personnalité ne vit QUE côté serveur : le client envoie une clé fermée,
+// jamais du texte libre (pas de prompt injection possible via ce champ).
+// Volontairement : la personnalité influence uniquement le TON des textes générés,
+// jamais le barème de notation — les notes/points doivent rester comparables entre
+// utilisateurs quelle que soit la personnalité choisie.
+const PERSONALITIES: Record<string, string> = {
+  fashion_week: "Une critique de mode haute couture, analytique et exigeante, directe et sans complaisance dans le ton.",
+  bienveillant: "Un styliste bienveillant et encourageant, qui valorise toujours ce qui fonctionne avant de suggérer une amélioration, avec douceur.",
+  pote_hype: "Ta meilleure pote hyper complice et enthousiaste, avec un ton fun, spontané et un vocabulaire jeune et chaleureux.",
+  coach: "Un coach mode motivant et constructif, qui formule chaque remarque comme un prochain palier à atteindre plutôt qu'un jugement.",
+  streetwear: "Une icône du streetwear, pointue sur la culture urbaine et les tendances actuelles, qui valorise l'audace et l'originalité.",
+};
+const DEFAULT_PERSONALITY = 'fashion_week';
+
+function buildPrompt(personaText: string): string {
+  return `Tu es un expert en style et mode. Ton attitude pour cette analyse est définie ainsi : ${personaText} Ce ton doit transparaître dans la façon dont tu formules tes analyses, points forts et axes d'amélioration — mais applique dans tous les cas les barèmes de notation ci-dessous à l'identique, pour que les notes restent comparables entre utilisateurs quelle que soit la personnalité. Évalue uniquement ce qui est VISIBLE sur la photo. Utilise toute l'échelle 0–10 (outfit basique/négligé = 2–4 ; correct sans recherche = 5).
+
+CALIBRAGE : base ton jugement sur ta connaissance générale des tenues largement reconnues comme réussies (mode de rue, éditos, tendances) — pas sur une simple checklist mécanique. Ne cite JAMAIS de marque, d'article ou de source précise inventée.
+
+GESTION DU CADRAGE ET DE LA VISIBILITÉ : Si un élément n'est pas visible à cause du cadrage ou de la lumière (ex: chaussures hors champ, veste coupée), n'applique aucun malus ni bonus sur cet élément et concentre-toi uniquement sur ce qui est clairement identifiable. Ne pénalise pas la qualité de la photo.
+
+RÈGLE DE SPÉCIFICITÉ (obligatoire) : Chaque analyse, point fort ou axe d'amélioration DOIT citer un élément concret et visible sur LA PHOTO (une couleur précise, un vêtement précis comme "ce jean baggy", un accessoire). Interdiction des formules génériques. Si tu ne peux pas être spécifique sur un point, ne le mentionne pas.
 
 CRITÈRE 1 — HARMONIE COULEURS & MATIÈRES (départ 10/10)
-• −3 pts : plus de 3 couleurs non neutres (hors noir/blanc/gris/beige)
-• −2 pts : couleurs saturées incompatibles (conflit chaud/froid brutal)
-• −2 pts : monochrome plat sans variation de texture ou de volume
-• −2 pts : matières incompatibles (ex : lin d'été + grosse laine, satin + polaire)
+Retire des points selon la gravité (guide de calibrage) :
+• Trop de couleurs non neutres qui se dispersent : -1 à -3 pts
+• Couleurs qui se heurtent : -1 à -3 pts
+• Monochrome plat sans variation de texture : -1 à -2 pts
+• Matières qui ne vont pas ensemble : -1 à -2 pts
 Score minimum : 0.
 
 CRITÈRE 2 — COUPE & SILHOUETTE (départ 0/10)
-• +4 pts : volumes équilibrés haut/bas (ample+ajusté ou inverse)
-• +2 pts : ligne de taille marquée (French tuck, vêtement rentré, ceinture, crop top)
-• +2 pts : tombé et longueurs impeccables (ni trop long ni trop court)
-• +2 pts : type de coupe maîtrisé (oversized assumé, slim net, regular propre)
+Ajoute des points selon la réussite (guide de calibrage) :
+• Volumes équilibrés haut/bas : +1 à +4 pts
+• Ligne de taille marquée : +1 à +2 pts
+• Tombé et longueurs impeccables : +1 à +2 pts
+• Type de coupe maîtrisé : +1 à +2 pts
 
 CRITÈRE 3 — STYLE & FINITIONS (départ 0/10)
-• +3 pts : layering cohérent (superposition de couches)
-• +1 pt chacun : accessoire présent et pertinent (bijoux, sac, couvre-chef/lunettes, ceinture) — max 4 pts
-• +3 pts : chaussures cohérentes avec le style global
-• −2 pts : vêtement visible froissé ou taché
+Ajoute ou retire des points (guide de calibrage) :
+• Layering cohérent : +1 à +3 pts
+• Accessoire présent et pertinent : +1 pt par accessoire, max +4 pts
+• Chaussures cohérentes : +1 à +3 pts
+• Vêtement visible froissé ou taché : -1 à -2 pts
 
 CRITÈRE STYLES (obligatoire) :
-Choisis exactement 1 ou 2 styles parmi cette liste — ne jamais inventer d'autres valeurs :
+Choisis exactement 1 ou 2 styles parmi cette liste (jamais d'autres) :
 #StreetwearOversize #Athleisure #CasualChic #Gorpcore #Y2K #IndieSleaze #Blokecore #EclectiqueGrandpa #CleanLook #OfficeSiren #QuietLuxury #MinimalismeScandinave #AcubiStyle #SubversiveBasics #Techwear #DarkMode #Cottagecore #FairyGrunge #BohemeChic #Coquette
 
-Réponds EXCLUSIVEMENT en JSON valide sans markdown ni balises :
+Réponds EXCLUSIVEMENT en JSON valide sans markdown ni balises de code :
 {"couleurs_note":0,"couleurs_analyse":"...","coupe_note":0,"coupe_analyse":"...","style_note":0,"style_analyse":"...","points_forts":["...","..."],"axes_amelioration":["...","..."],"styles":["#CasualChic"]}
 
 Règles de contenu :
-- couleurs_analyse / coupe_analyse / style_analyse : 1 phrase concise (10–15 mots max).
-- points_forts : 2 à 3 éléments positifs notables (5–8 mots max chacun).
-- axes_amelioration : 2 à 3 pistes d'amélioration concrètes (5–8 mots max chacun).
+- couleurs_analyse / coupe_analyse / style_analyse : 1 phrase concise (12–20 mots max), qui cite au moins un élément visuel précis.
+- points_forts : 2 à 3 éléments positifs notables (5–8 mots max chacun), ancrés dans un détail visible.
+- axes_amelioration : 2 à 3 pistes d'amélioration concrètes (5–8 mots max chacun), ancrées dans un détail visible.
 - styles : tableau de 1 ou 2 hashtags exacts issus de la liste ci-dessus, jamais 0, jamais plus de 2.`;
+}
 
 function json(body: unknown, status: number) {
   return new Response(JSON.stringify(body), {
@@ -52,7 +79,7 @@ function json(body: unknown, status: number) {
 }
 
 // ── Analyse via Google Gemini (préféré) ──────────────────────────────────────
-async function analyzeWithGemini(base64Image: string): Promise<string> {
+async function analyzeWithGemini(base64Image: string, prompt: string): Promise<string> {
   const key = Deno.env.get('GEMINI_API_KEY');
   if (!key) throw new Error('GEMINI_API_KEY absente');
 
@@ -69,7 +96,7 @@ async function analyzeWithGemini(base64Image: string): Promise<string> {
         contents: [{
           parts: [
             { inline_data: { mime_type: mimeType, data: base64Data } },
-            { text: PROMPT },
+            { text: prompt },
           ],
         }],
         // thinkingBudget:0 désactive le raisonnement (2.5 = modèle "thinking") →
@@ -91,7 +118,7 @@ async function analyzeWithGemini(base64Image: string): Promise<string> {
 }
 
 // ── Repli : Groq Llama 4 Scout vision ────────────────────────────────────────
-async function analyzeWithGroq(base64Image: string): Promise<string> {
+async function analyzeWithGroq(base64Image: string, prompt: string): Promise<string> {
   const key = Deno.env.get('GROQ_API_KEY');
   if (!key) throw new Error('GROQ_API_KEY absente');
 
@@ -106,7 +133,7 @@ async function analyzeWithGroq(base64Image: string): Promise<string> {
         role: 'user',
         content: [
           { type: 'image_url', image_url: { url: base64Image } },
-          { type: 'text', text: PROMPT },
+          { type: 'text', text: prompt },
         ],
       }],
     }),
@@ -126,7 +153,7 @@ serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => null);
-    const { base64Image } = body ?? {};
+    const { base64Image, personality } = body ?? {};
     if (!base64Image || typeof base64Image !== 'string') {
       return json({ error: 'base64Image manquant ou invalide' }, 400);
     }
@@ -137,6 +164,11 @@ serve(async (req: Request) => {
     if (!VALID_PREFIXES.some(p => base64Image.startsWith(p))) {
       return json({ error: 'Format image invalide (jpeg/png/webp requis)' }, 400);
     }
+    // Clé fermée uniquement (jamais de texte libre client) — voir PERSONALITIES ci-dessus.
+    const personaKey = (typeof personality === 'string' && PERSONALITIES[personality])
+      ? personality
+      : DEFAULT_PERSONALITY;
+    const prompt = buildPrompt(PERSONALITIES[personaKey]);
 
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -171,11 +203,11 @@ serve(async (req: Request) => {
     let text: string;
     let provider = 'gemini';
     try {
-      text = await analyzeWithGemini(base64Image);
+      text = await analyzeWithGemini(base64Image, prompt);
     } catch (gemErr) {
       console.warn('[analyze-outfit] Gemini KO, repli Groq:', gemErr instanceof Error ? gemErr.message : gemErr);
       provider = 'groq';
-      text = await analyzeWithGroq(base64Image);
+      text = await analyzeWithGroq(base64Image, prompt);
     }
 
     const clean = text.replace(/```json|```/g, '').trim();

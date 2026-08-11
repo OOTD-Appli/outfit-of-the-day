@@ -93,9 +93,10 @@ Les fichiers SQL sont dans `supabase/migrations/`. Appliquer **dans l'ordre** su
 | 34 | `20260617150000_bucket_audio_mime.sql` | Ajoute les MIME audio (`audio/mp4`, `audio/webm`, `audio/ogg`, `audio/mpeg`, `audio/x-m4a`) au bucket Storage `ootds` |
 | 35 | `20260621120000_snaps_messages_scores.sql` | Colonnes `score_global/couleurs/coupe/tendance` + `conseil` (nullable) sur `snaps` et `messages` |
 | 36 | `20260624120000_ootds_visible_scores.sql` | Colonne `ootds.visible_scores` (text[]) — notes choisies par l'auteur pour affichage public |
+| 37 | `20260811120000_analysis_personality.sql` | Colonne `profiles.analysis_personality` (text, DEFAULT `'fashion_week'`) + CHECK 5 clés fermées |
 
-**Sur un projet vide** : exécuter `initial_schema.sql` puis les migrations 3 à 36 dans l'ordre.  
-**Sur un projet existant** : utiliser `existing_project_align.sql` (IF NOT EXISTS) puis les migrations 3 à 36.  
+**Sur un projet vide** : exécuter `initial_schema.sql` puis les migrations 3 à 37 dans l'ordre.  
+**Sur un projet existant** : utiliser `existing_project_align.sql` (IF NOT EXISTS) puis les migrations 3 à 37.  
 **Ne jamais re-exécuter** `initial_schema.sql` si les tables existent déjà.
 
 ```bash

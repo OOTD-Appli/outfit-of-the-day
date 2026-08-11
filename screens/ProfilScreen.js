@@ -27,6 +27,16 @@ const NOTE_BADGES = [
   { key: 'score_tendance', label: 'Détails',  icon: 'sparkles-outline',      color: '#C9A47A' },
 ];
 
+// Clés strictement synchronisées avec supabase/functions/analyze-outfit (PERSONALITIES)
+// et la contrainte CHECK profiles_analysis_personality_valid.
+const PERSONALITIES = [
+  { key: 'fashion_week', emoji: '🔥', label: 'Critique fashion week', desc: 'Exigeante, sans complaisance' },
+  { key: 'bienveillant', emoji: '🌸', label: 'Styliste bienveillant', desc: 'Douce, encourageante, positive' },
+  { key: 'pote_hype',    emoji: '💅', label: 'Meilleure pote hype',   desc: 'Fun, complice, énergique' },
+  { key: 'coach',        emoji: '🎯', label: 'Coach mode motivant',  desc: 'Constructif, orienté progression' },
+  { key: 'streetwear',   emoji: '🖤', label: 'Icône streetwear',     desc: 'Culture urbaine, audace, tendances' },
+];
+
 function fmtNote(value) {
   if (typeof value !== 'number') return '–';
   return Number.isInteger(value) ? `${value}` : value.toFixed(1).replace('.', ',');
@@ -172,7 +182,7 @@ export default function ProfilScreen() {
       const [{ data: profileData }, { data: ootdsData }, { data: subData }] = await Promise.all([
         supabase
           .from('profiles')
-          .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats, specialized_feed')
+          .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats, specialized_feed, analysis_personality')
           .eq('id', user.id)
           .single(),
         supabase
@@ -280,6 +290,17 @@ export default function ProfilScreen() {
     const { error } = await supabase.from('profiles').update({ specialized_feed: newVal }).eq('id', profile.id);
     if (error) {
       setProfile(prev => ({ ...prev, specialized_feed: !newVal }));
+      showToast('Erreur mise à jour', { type: 'error' });
+    }
+  };
+
+  const changePersonality = async (key) => {
+    const prevKey = profile?.analysis_personality || 'fashion_week';
+    if (prevKey === key) return;
+    setProfile(prev => ({ ...prev, analysis_personality: key }));
+    const { error } = await supabase.from('profiles').update({ analysis_personality: key }).eq('id', profile.id);
+    if (error) {
+      setProfile(prev => ({ ...prev, analysis_personality: prevKey }));
       showToast('Erreur mise à jour', { type: 'error' });
     }
   };
@@ -678,6 +699,31 @@ export default function ProfilScreen() {
                   accent={theme.accent}
                 />
               </View>
+
+              {/* Personnalité du critique IA */}
+              <Text style={[styles.settingsLabel, { color: theme.textSub }]}>Personnalité du critique IA</Text>
+              {PERSONALITIES.map(p => {
+                const active = (profile?.analysis_personality || 'fashion_week') === p.key;
+                return (
+                  <TouchableOpacity
+                    key={p.key}
+                    style={[
+                      styles.settingsPrivacyRow,
+                      { backgroundColor: theme.bg, borderColor: active ? theme.accent : theme.border, marginBottom: 8 },
+                      active && { borderWidth: 2 },
+                    ]}
+                    onPress={() => changePersonality(p.key)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 20, marginRight: 10 }}>{p.emoji}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.settingsFieldValue, { color: theme.textPri }]}>{p.label}</Text>
+                      <Text style={{ fontSize: 11, color: theme.textSub, marginTop: 2 }}>{p.desc}</Text>
+                    </View>
+                    {active && <Ionicons name="checkmark-circle" size={20} color={theme.accent} />}
+                  </TouchableOpacity>
+                );
+              })}
 
             </ScrollView>
 
