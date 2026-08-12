@@ -10,7 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import Skeleton from '../components/Skeleton';
@@ -19,6 +19,7 @@ import Bouncy from '../components/Bouncy';
 import { getLogoConfig } from '../lib/logoConfig';
 import { isPwaStandalone, promptInstall } from '../lib/pwa';
 import { downloadImageToDevice } from '../lib/downloadImage';
+import { resolveTier, isPersonaUnlocked, tierLabel, PERSONA_TIER } from '../lib/tier';
 
 // Mapping notes : la DB stocke score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
 const NOTE_BADGES = [
@@ -28,12 +29,12 @@ const NOTE_BADGES = [
 ];
 
 // Clés strictement synchronisées avec supabase/functions/analyze-outfit (PERSONALITIES)
-// et la contrainte CHECK profiles_analysis_personality_valid.
+// et lib/tier.js (PERSONA_TIER). Ordre = du plus accessible au plus exclusif.
 const PERSONALITIES = [
-  { key: 'fashion_week', emoji: '🔥', label: 'Critique fashion week', desc: 'Exigeante, sans complaisance' },
+  { key: 'coach',        emoji: '🎯', label: 'Coach mode motivant',  desc: 'Constructif, orienté progression' },
   { key: 'bienveillant', emoji: '🌸', label: 'Styliste bienveillant', desc: 'Douce, encourageante, positive' },
   { key: 'pote_hype',    emoji: '💅', label: 'Meilleure pote hype',   desc: 'Fun, complice, énergique' },
-  { key: 'coach',        emoji: '🎯', label: 'Coach mode motivant',  desc: 'Constructif, orienté progression' },
+  { key: 'fashion_week', emoji: '🔥', label: 'Critique fashion week', desc: 'Exigeante, sans complaisance' },
   { key: 'streetwear',   emoji: '🖤', label: 'Icône streetwear',     desc: 'Culture urbaine, audace, tendances' },
 ];
 
@@ -119,6 +120,7 @@ const GridItem = memo(function GridItem({ item, index, onPress }) {
 });
 
 export default function ProfilScreen() {
+  const navigation = useNavigation();
   const [profile, setProfile] = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [ootds, setOotds] = useState([]);
@@ -141,6 +143,7 @@ export default function ProfilScreen() {
   const ootdsPageRef = useRef(0);
   const ootdsHasMoreRef = useRef(true);
   const OOTDS_PAGE = 21; // multiple de 3 pour la grille
+  const [showHistoryLock, setShowHistoryLock] = useState(false);
   const [installable, setInstallable] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [editUsername, setEditUsername] = useState('');
@@ -182,7 +185,7 @@ export default function ProfilScreen() {
       const [{ data: profileData }, { data: ootdsData }, { data: subData }] = await Promise.all([
         supabase
           .from('profiles')
-          .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats, specialized_feed, analysis_personality')
+          .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats, specialized_feed, analysis_personality, has_analysis_pass, has_ootd_plus_pass')
           .eq('id', user.id)
           .single(),
         supabase
@@ -200,7 +203,17 @@ export default function ProfilScreen() {
 
       setProfile(profileData);
       setOotds(ootdsData || []);
-      ootdsHasMoreRef.current = (ootdsData || []).length === OOTDS_PAGE;
+      // Historique complet = perk Plus/Elite (Cahier des charges Monétisation 2026-08-12).
+      // Gratuit : plafonné à la 1ère page (21 tenues les plus récentes), pas de pagination
+      // au-delà — évite un appel réseau inutile à chaque scroll pour ce tier.
+      const moreExists = (ootdsData || []).length === OOTDS_PAGE;
+      const freshTier = resolveTier({
+        subscription: subData,
+        hasPlus: profileData?.has_ootd_plus_pass,
+        hasAnalysis: profileData?.has_analysis_pass,
+      });
+      ootdsHasMoreRef.current = moreExists && freshTier !== 'free';
+      setShowHistoryLock(moreExists && freshTier === 'free');
       ootdsPageRef.current = 1;
       setSubscription(subData);
       setUserEmail(user.email || '');
@@ -294,8 +307,9 @@ export default function ProfilScreen() {
     }
   };
 
-  const changePersonality = async (key) => {
-    const prevKey = profile?.analysis_personality || 'fashion_week';
+  const changePersonality = async (key, unlocked) => {
+    if (!unlocked) { navigation.navigate('Shop'); return; }
+    const prevKey = profile?.analysis_personality || 'coach';
     if (prevKey === key) return;
     setProfile(prev => ({ ...prev, analysis_personality: key }));
     const { error } = await supabase.from('profiles').update({ analysis_personality: key }).eq('id', profile.id);
@@ -431,6 +445,11 @@ export default function ProfilScreen() {
   const premiumLabel = subActive
     ? (subscription.plan_type === 'elite' ? '💎 Elite' : '⭐ Plus')
     : null;
+  const tier = resolveTier({
+    subscription,
+    hasPlus: profile?.has_ootd_plus_pass,
+    hasAnalysis: profile?.has_analysis_pass,
+  });
 
   if (loading) return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]} edges={[]}>
@@ -465,9 +484,21 @@ export default function ProfilScreen() {
         onEndReached={loadMoreOotds}
         onEndReachedThreshold={0.3}
         getItemLayout={getGridItemLayout}
-        ListFooterComponent={loadingMoreOotds
-          ? <ActivityIndicator color={theme.accent} style={{ padding: 16 }} />
-          : null}
+        ListFooterComponent={loadingMoreOotds ? (
+          <ActivityIndicator color={theme.accent} style={{ padding: 16 }} />
+        ) : showHistoryLock ? (
+          <TouchableOpacity
+            style={[styles.historyLockCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+            onPress={() => navigation.navigate('Shop')}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="lock-closed" size={18} color={theme.accent} />
+            <Text style={[styles.historyLockText, { color: theme.textPri }]}>
+              Débloque l'historique complet de tes tenues avec OOTD Plus
+            </Text>
+            <Text style={[styles.historyLockCta, { color: theme.accent }]}>Voir les offres →</Text>
+          </TouchableOpacity>
+        ) : null}
         ListHeaderComponent={
           <View>
             <View style={styles.header}>
@@ -703,7 +734,8 @@ export default function ProfilScreen() {
               {/* Personnalité du critique IA */}
               <Text style={[styles.settingsLabel, { color: theme.textSub }]}>Personnalité du critique IA</Text>
               {PERSONALITIES.map(p => {
-                const active = (profile?.analysis_personality || 'fashion_week') === p.key;
+                const active = (profile?.analysis_personality || 'coach') === p.key;
+                const unlocked = isPersonaUnlocked(p.key, tier);
                 return (
                   <TouchableOpacity
                     key={p.key}
@@ -711,8 +743,9 @@ export default function ProfilScreen() {
                       styles.settingsPrivacyRow,
                       { backgroundColor: theme.bg, borderColor: active ? theme.accent : theme.border, marginBottom: 8 },
                       active && { borderWidth: 2 },
+                      !unlocked && { opacity: 0.5 },
                     ]}
-                    onPress={() => changePersonality(p.key)}
+                    onPress={() => changePersonality(p.key, unlocked)}
                     activeOpacity={0.8}
                   >
                     <Text style={{ fontSize: 20, marginRight: 10 }}>{p.emoji}</Text>
@@ -720,7 +753,16 @@ export default function ProfilScreen() {
                       <Text style={[styles.settingsFieldValue, { color: theme.textPri }]}>{p.label}</Text>
                       <Text style={{ fontSize: 11, color: theme.textSub, marginTop: 2 }}>{p.desc}</Text>
                     </View>
-                    {active && <Ionicons name="checkmark-circle" size={20} color={theme.accent} />}
+                    {active ? (
+                      <Ionicons name="checkmark-circle" size={20} color={theme.accent} />
+                    ) : !unlocked ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="lock-closed" size={14} color={theme.textSub} />
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textSub }}>
+                          {tierLabel(PERSONA_TIER[p.key])}
+                        </Text>
+                      </View>
+                    ) : null}
                   </TouchableOpacity>
                 );
               })}
@@ -949,6 +991,10 @@ const styles = StyleSheet.create({
   privacySub:     { fontSize: 12, lineHeight: 17 },
   gridCell:       { width: '33.33%', aspectRatio: 1 },
   gridPhoto:      { width: '100%', height: '100%' },
+
+  historyLockCard: { alignItems: 'center', gap: 6, borderRadius: 16, borderWidth: 1, padding: 20, margin: 12 },
+  historyLockText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  historyLockCta:  { fontSize: 13, fontWeight: '800' },
 
   skeletonHeader: { padding: 20, paddingBottom: 10 },
   skeletonCard:   { alignItems: 'center', padding: 20 },
