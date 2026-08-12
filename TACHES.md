@@ -1,6 +1,23 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-08-11 — Nouveau prompt d'analyse IA + personnalité du critique choisie par l'utilisateur.
+> Dernière mise à jour : 2026-08-12 — Monétisation : gating des personas IA par tier, historique galerie Plus/Elite, rappels contextuels, toast points manquants.
+
+---
+
+## Monétisation — gating tier, verrouillages, rappels — 2026-08-12
+
+D'après le Cahier des charges Monétisation OOTD (Shop, verrouillages, rappels).
+
+- [x] **`lib/tier.js`** (nouveau, partagé) : `resolveTier()`, `getSubActive()`/`getActivePlan()`, `PERSONA_TIER`, `isPersonaUnlocked()`, `tierLabel()`. Réutilisé dans ShopScreen (refactor, dédoublonne `subActive`/`activePlan`), ProfilScreen, AccueilScreen.
+- [x] **Personas IA par tier** : `coach`→Gratuit, `bienveillant`→Plus, `pote_hype`/`fashion_week`/`streetwear`→Elite. Vérifié **côté serveur** dans `analyze-outfit` (copie TS de la logique tier, dupliquée car pas de module partagé Expo/Deno — synchroniser manuellement avec `lib/tier.js` en cas de changement), jamais sur la seule foi du client.
+- [x] **Migration** `20260812120000_persona_tier_gating.sql` : réassigne à `'coach'` les profils actuellement sur une personnalité désormais hors de portée (ex-défaut `fashion_week` devenu Elite-only), et change le défaut colonne en `'coach'`. **Appliquée en prod + Edge Function redéployée.**
+- [x] **ProfilScreen** : personas hors tier affichées grisées + 🔒 + tier requis, tap → Shop (pas de sélection). Historique galerie plafonné à 21 tenues pour le Gratuit (`showHistoryLock`), bannière CTA → Shop ; Plus/Elite = pagination infinie inchangée.
+- [x] **AccueilScreen** : 2 nouveaux rappels contextuels (cartes, pas des toasts — le composant toast de l'app n'a pas de CTA cliquable) : "Dernière analyse du jour" (Gratuit, `credits===1`, 1×/jour) et "Note ≥ 8/10" (Gratuit+Plus, jamais Elite, 1×/3 jours). Throttle via `AsyncStorage`, pas en DB.
+- [x] **ShopScreen** : achat cosmétique avec points insuffisants → bouton visuellement grisé mais tap actif, toast "Il te manque N pts". Perks Plus/Elite mis à jour pour mentionner les personas IA débloquées.
+- [x] **Anomalie "Historique complet" résolue** (option a du cahier des charges) : gating réellement implémenté plutôt que retiré de la liste des perks.
+- [x] Vérifications : `npm test` (64/64) + `npx expo export --platform web` après implémentation complète.
+- [ ] **À faire manuellement** : tester chaque ligne de la matrice sur un compte de chaque tier (gratuit/Plus/Elite) — non fait, nécessite des comptes de test réels.
+- [ ] Ce qui n'a volontairement PAS été construit (déjà tranché) : achat direct d'un badge en argent réel, produit "reset de flamme" séparé (redondant avec le Gel de Flamme).
 
 ---
 

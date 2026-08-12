@@ -131,11 +131,20 @@ Reçoit `{ navigation }` de React Navigation (navigue vers Shop).
 - Gratuit → 2/jour
 - Si `credits === 0` : carte `noCreditsCard` + bouton "Obtenir plus" → Shop
 - **Le crédit quotidien est partagé** entre l'analyse principale et l'analyse contextuelle (même RPC `consume_daily_credit`)
+- Tier résolu via `lib/tier.resolveTier()` (`userTier` state) — partagé avec ProfilScreen/ShopScreen
+
+**Rappels de monétisation** (Cahier des charges 2026-08-12, cartes réutilisant le style `noCreditsCard` — le composant toast de l'app n'a pas de CTA cliquable, insuffisant pour ces rappels) :
+| Rappel | Condition | Fréquence | Stockage throttle |
+|---|---|---|---|
+| Dernière analyse du jour | `userTier==='free' && credits===1` | 1×/jour | `AsyncStorage['@ootd_reminder_lastcredit_date']` |
+| Note ≥ 8/10 | Résultat `global >= 8` et `userTier !== 'elite'` | 1× / 3 jours | `AsyncStorage['@ootd_reminder_highscore_ts']` |
+
+Throttle en `AsyncStorage` (pas en DB) : purement un état d'affichage local, pas une donnée métier à synchroniser entre appareils.
 
 **Phase 3 — Analyse IA principale**
 - `supabase.functions.invoke("analyze-outfit", { body: { base64Image, personality } })`
 - `base64Image` = `data:image/{jpeg|png|webp};base64,{raw}` (préfixe MIME obligatoire)
-- `personality` = clé fermée lue depuis `profiles.analysis_personality` (voir « Personnalité du critique IA » ci-dessous), fallback `'fashion_week'`
+- `personality` = clé fermée lue depuis `profiles.analysis_personality` (voir « Personnalité du critique IA » ci-dessous), fallback `'coach'`
 - Rate-limit : 5 requêtes/minute (`check_analyze_rate_limit` RPC, avant consommation crédit)
 - Timeout : 25 secondes via `withTimeout()`
 - Résultats : 3 jauges arc (Fit, Harmonie, Détails) via `components/Gauge.js` (react-native-svg), 1-2 hashtags de style
@@ -239,7 +248,8 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 - Galerie 3 colonnes avec pagination (21/page), lightbox horizontal swipe enrichie : badge note globale + date, 3 badges colorés (Fit/Harmonie/Détails), chips de style, section Description (`caption`), section Conseils IA structurée (points forts / à améliorer)
 - **Téléchargement d'image** : bouton (avec spinner) dans la lightbox → `lib/downloadImage.downloadImageToDevice()`
 - **Suppression de tenue** : `doDeleteOotd()`/`deleteOotd()` — nettoyage Storage inclus
-- Modal paramètres : username, bio (160 chars), is_private toggle, **toggle "contenu spécialisé"** (`profiles.specialized_feed`), **toggle apparence dark/light** (`colorMode`), **sélecteur "Personnalité du critique IA"** (5 options, `profiles.analysis_personality`, constante client `PERSONALITIES` — labels/emoji uniquement, le texte de ton réel reste côté serveur), email (RO), déconnexion
+- Modal paramètres : username, bio (160 chars), is_private toggle, **toggle "contenu spécialisé"** (`profiles.specialized_feed`), **toggle apparence dark/light** (`colorMode`), **sélecteur "Personnalité du critique IA"** (5 options, `profiles.analysis_personality`, constante client `PERSONALITIES` — labels/emoji uniquement, le texte de ton réel reste côté serveur) : options hors du tier de l'utilisateur affichées grisées avec 🔒 + tier requis (`lib/tier.isPersonaUnlocked`), tap → `navigation.navigate('Shop')` au lieu de sélectionner, email (RO), déconnexion
+- **Historique de la galerie** (perk Plus/Elite) : tier Gratuit plafonné à la 1ère page (21 tenues les plus récentes) — `ootdsHasMoreRef` forcé à `false` dès `fetchProfil` pour ce tier, pas d'appel réseau `loadMoreOotds` inutile. Bannière `🔒 Débloque l'historique complet...` en fin de liste (`showHistoryLock`), tap → Shop. Plus/Elite : pagination infinie normale.
 - **PWA** : bouton "Télécharger l'app" si `!isPwaStandalone()` et web (`lib/pwa.web.js`)
 
 ### ShopScreen (`screens/ShopScreen.js`)
@@ -248,8 +258,10 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 **1. Premium (Stripe — abonnements récurrents)**
 | Plan | Prix | Avantages |
 |------|------|-----------|
-| OOTD Plus | 2,99€/mois | 20 analyses/jour, badge ⭐ |
-| OOTD Elite | 4,99€/mois | Analyses illimitées, tous cosmétiques, badge 💎 |
+| OOTD Plus | 2,99€/mois | 20 analyses/jour, badge ⭐, historique complet, personnalité "Styliste bienveillant" |
+| OOTD Elite | 4,99€/mois | Analyses illimitées, tous cosmétiques, badge 💎, toutes les personnalités IA |
+
+Détection de tier via `lib/tier.js` (`getSubActive`/`getActivePlan`, partagé avec ProfilScreen/AccueilScreen — ne pas dupliquer `['active','trialing'].includes(status)` localement).
 
 - Bouton → `create-checkout-session` Edge Function → `Linking.openURL(url)`
 - Gérer / résilier → `create-portal-session` → Customer Portal Stripe
@@ -266,6 +278,7 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 - **Logos App** (nouvelle sous-catégorie, images réelles `assets/logos/*.jpg`) : Bleu Néon `500 pts`, Vert Néon `500 pts`, Sunset `600 pts`, Rose Flashy `650 pts`, Rose Pastel `750 pts` — partagent le même `item_type:'logo'`/colonnes `unlocked_logos`/`active_logo` que les icônes emoji ; équiper un logo-image met aussi à jour le favicon web
 - Flux : `buy_cosmetic` RPC → `equip_cosmetic` RPC → `refreshTheme()`
 - Elite : tout gratuit (Équiper direct)
+- **Points insuffisants** : bouton "Acheter" visuellement grisé mais jamais `disabled` — le tap reste actif et affiche un toast `Il te manque N pts pour débloquer « X »` au lieu de bloquer silencieusement l'interaction.
 
 **Gels mensuels** : `claim_monthly_freezes()` RPC (Free=1, Elite=2, idempotente par mois). Compteur ❄️ en haut du Shop.
 
@@ -326,6 +339,11 @@ Props : `visible`, `ootdId`, `userId`, `onClose`, `onThreadCount(ootdId, count)`
 ---
 
 ## Bibliothèques partagées (`lib/`)
+
+### `lib/tier.js` — détection de tier (Gratuit/Plus/Elite), partagée
+- `getSubActive(subscription)` / `getActivePlan(subscription)` : dédoublonne `['active','trialing'].includes(status)`, dupliqué historiquement dans ShopScreen/ProfilScreen/AccueilScreen
+- `resolveTier({ subscription, hasPlus, hasAnalysis })` → `'free'|'plus'|'elite'` (passes legacy `has_ootd_plus_pass`/`has_analysis_pass` = équivalent Plus, jamais Elite — nuance différente de `isThemeOwned`/`isLogoOwned` dans ShopScreen qui traitent `hasPlus` comme Elite pour les cosmétiques, gardée locale à cet écran)
+- `PERSONA_TIER`, `DEFAULT_PERSONA` ('coach'), `isPersonaUnlocked(key, tier)`, `tierLabel(tier)` — **DOIT rester synchronisé** avec la copie TS dans `supabase/functions/analyze-outfit/index.ts` (pas de module partagé entre l'app Expo et les Edge Functions Deno)
 
 ### `lib/supabase.js`
 Client unique exporté comme `supabase`. `AsyncStorage` pour persister la session. `detectSessionInUrl` conditionné à `Platform.OS === 'web'` pour parser les deep links web (récupération password).
@@ -408,7 +426,16 @@ La logique PWA réelle vit désormais dans `pwa.web.js` (le fichier `pwa.js` imp
 
 Note globale calculée côté serveur (moyenne clampée 0–10), pas par l'IA. `styles` filtré contre une whitelist fixe côté serveur avant retour/stockage.
 
-**Personnalité du critique IA** (`personality`) : clé fermée uniquement — le client n'envoie jamais de texte libre, seulement une des 5 clés ci-dessus (mappées à un texte de ton côté serveur dans `PERSONALITIES`, non exposé au client). Clé invalide/absente → fallback `fashion_week`. **N'affecte que le ton** des textes générés (`*_analyse`, `points_forts`, `axes_amelioration`) — le barème de notation (Critères 1-3) est appliqué à l'identique quelle que soit la personnalité, pour que les notes/points restent comparables entre utilisateurs. Choisie par l'utilisateur dans `ProfilScreen` → Paramètres → « Personnalité du critique IA », persistée dans `profiles.analysis_personality` (migration `20260811120000`).
+**Personnalité du critique IA** (`personality`) : clé fermée uniquement — le client n'envoie jamais de texte libre, seulement une des 5 clés ci-dessus (mappées à un texte de ton côté serveur dans `PERSONALITIES`, non exposé au client). Clé invalide/absente → fallback `coach`. **N'affecte que le ton** des textes générés (`*_analyse`, `points_forts`, `axes_amelioration`) — le barème de notation (Critères 1-3) est appliqué à l'identique quelle que soit la personnalité, pour que les notes/points restent comparables entre utilisateurs. Choisie par l'utilisateur dans `ProfilScreen` → Paramètres → « Personnalité du critique IA », persistée dans `profiles.analysis_personality` (migration `20260811120000`).
+
+**Gating par tier** (Cahier des charges Monétisation, migration `20260812120000`) — vérifié côté serveur, jamais sur la seule foi du client :
+| Personnalité | Tier requis |
+|---|---|
+| `coach` (Coach mode motivant) | Gratuit |
+| `bienveillant` (Styliste bienveillant) | Plus |
+| `pote_hype`, `fashion_week`, `streetwear` | Elite |
+
+La fonction reçoit `personality`, résout le tier réel de l'utilisateur (`profiles.has_ootd_plus_pass/has_analysis_pass` + `subscriptions.status/plan_type`, via une résolution dupliquée en TS — DOIT rester synchronisée avec `lib/tier.js`), et retombe sur `coach` si la clé demandée dépasse le tier réel. `coach` est le seul choix garanti accessible à tous — c'est le défaut de la colonne (`DEFAULT 'coach'`) depuis cette migration.
 
 **Secrets** : `GEMINI_API_KEY`, `GROQ_API_KEY`, `APP_ORIGIN`
 
