@@ -6,6 +6,7 @@ import {
 } from '../lib/flammesUtils';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { decode } from 'base64-arraybuffer';
 import {
   View, Text, StyleSheet, ScrollView, Animated, Easing,
@@ -22,6 +23,7 @@ import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
 import { dismissDeliveredFlammeReminder } from '../lib/notifications';
 import { ENV } from '../lib/env';
+import { resolveTier } from '../lib/tier';
 import Gauge from '../components/Gauge';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
@@ -208,7 +210,10 @@ export default function AccueilScreen({ navigation }) {
   const [credits, setCredits] = useState(null);
   const [maxCredits, setMaxCredits] = useState(2);
   const [unlimited, setUnlimited] = useState(false);
-  const [analysisPersonality, setAnalysisPersonality] = useState('fashion_week');
+  const [analysisPersonality, setAnalysisPersonality] = useState('coach');
+  const [userTier, setUserTier] = useState('free');
+  const [highScoreReminder, setHighScoreReminder] = useState(null); // { note } | null
+  const [showLowCreditsReminder, setShowLowCreditsReminder] = useState(false);
   const [topOotds, setTopOotds] = useState([]);
   // Stories
   const [userId, setUserId] = useState(null);
@@ -362,14 +367,13 @@ export default function AccueilScreen({ navigation }) {
         .maybeSingle(),
     ]);
     if (!data) return;
-    setAnalysisPersonality(data.analysis_personality || 'fashion_week');
+    setAnalysisPersonality(data.analysis_personality || 'coach');
 
     // Tier : Elite (abonnement) = illimité · Plus (abonnement) ou pass legacy = 20 · sinon 2
-    const subActive = sub && ['active', 'trialing'].includes(sub.status);
-    const plan = subActive ? sub.plan_type : null;
-    const hasPass = !!(data.has_analysis_pass || data.has_ootd_plus_pass);
+    const tier = resolveTier({ subscription: sub, hasPlus: data.has_ootd_plus_pass, hasAnalysis: data.has_analysis_pass });
+    setUserTier(tier);
 
-    if (plan === 'elite') {
+    if (tier === 'elite') {
       setUnlimited(true);
       setMaxCredits(Infinity);
       setCredits(Infinity);
@@ -377,7 +381,7 @@ export default function AccueilScreen({ navigation }) {
     }
 
     setUnlimited(false);
-    const max = (plan === 'plus' || hasPass) ? 20 : 2;
+    const max = tier === 'plus' ? 20 : 2;
     setMaxCredits(max);
     const today = new Date().toISOString().split('T')[0];
     const effective = data.credits_reset_date < today ? max : data.daily_credits;
@@ -395,6 +399,36 @@ export default function AccueilScreen({ navigation }) {
       .limit(5);
     if (data) setTopOotds(data);
   }, []);
+
+  // Rappel n°2 (Cahier des charges Monétisation 2026-08-12) : dernière analyse du
+  // jour, gratuit uniquement, 1x/jour max — AsyncStorage plutôt que DB (pur throttle
+  // d'affichage local, pas une donnée métier à synchroniser entre appareils).
+  // Rendu en carte (pas en toast) : le toast de l'app n'a pas de CTA cliquable
+  // (pointerEvents: 'none'), or ce rappel exige un chemin direct vers le Shop.
+  useEffect(() => {
+    if (userTier !== 'free' || credits !== 1) { setShowLowCreditsReminder(false); return; }
+    let cancelled = false;
+    (async () => {
+      const todayKey = new Date().toISOString().split('T')[0];
+      const lastShown = await AsyncStorage.getItem('@ootd_reminder_lastcredit_date');
+      if (cancelled || lastShown === todayKey) return;
+      setShowLowCreditsReminder(true);
+      AsyncStorage.setItem('@ootd_reminder_lastcredit_date', todayKey);
+    })();
+    return () => { cancelled = true; };
+  }, [userTier, credits]);
+
+  // Rappel n°3 : note ≥ 8/10, gratuit + Plus uniquement (jamais Elite, déjà tout
+  // débloqué), 1x tous les 3 jours max.
+  const maybeShowHighScoreReminder = useCallback(async (globalScore) => {
+    if (userTier === 'elite' || typeof globalScore !== 'number' || globalScore < 8) return;
+    const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
+    const lastShownRaw = await AsyncStorage.getItem('@ootd_reminder_highscore_ts');
+    const lastShown = lastShownRaw ? Number(lastShownRaw) : 0;
+    if (Date.now() - lastShown < THREE_DAYS_MS) return;
+    setHighScoreReminder({ note: globalScore });
+    AsyncStorage.setItem('@ootd_reminder_highscore_ts', String(Date.now()));
+  }, [userTier]);
 
   useFocusEffect(useCallback(() => {
     fetchCredits();
@@ -431,6 +465,7 @@ export default function AccueilScreen({ navigation }) {
 
   const applyPickedImage = (asset) => {
     setScore(null);
+    setHighScoreReminder(null);
     cachedPublicUrlRef.current = null;
     setPublishedToFeed(false);
     setSentFlammesToAll(false);
@@ -575,6 +610,7 @@ export default function AccueilScreen({ navigation }) {
       setSentFlammesToAll(false);
       lastAnalyzedRef.current = { uri: image.uri, ts: Date.now() };
       setScore(parsed);
+      maybeShowHighScoreReminder(parsed.global);
     } catch (e) {
       showToast(e.message || "Une erreur est survenue pendant l'analyse.", { type: "error" });
       console.log("analyzeOutfit error:", e);
@@ -921,6 +957,23 @@ export default function AccueilScreen({ navigation }) {
               </View>
             )}
 
+            {/* Rappel n°2 : dernière analyse du jour (gratuit, 1x/jour) */}
+            {!unlimited && credits === 1 && showLowCreditsReminder && (
+              <View style={s.noCreditsCard}>
+                <Text style={s.noCreditsTitle}>⚡ Dernière analyse du jour !</Text>
+                <Text style={s.noCreditsText}>
+                  Passe à OOTD Plus pour ne jamais être à court d'analyses.
+                </Text>
+                <TouchableOpacity
+                  style={s.noCreditsBtn}
+                  onPress={() => navigation.navigate('Shop')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={s.noCreditsBtnText}>Découvrir Plus →</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Bouton analyser */}
             {image && credits !== 0 && (
               <Bouncy
@@ -1143,6 +1196,23 @@ export default function AccueilScreen({ navigation }) {
               </View>
             )}
 
+            {/* Rappel n°3 : note ≥ 8/10 (gratuit + Plus, jamais Elite) */}
+            {highScoreReminder && (
+              <View style={s.noCreditsCard}>
+                <Text style={s.noCreditsTitle}>🔥 {highScoreReminder.note}/10, sérieux !</Text>
+                <Text style={s.noCreditsText}>
+                  Débloque le mode IA Sévère et plus d'analyses comme celle-ci avec OOTD Plus.
+                </Text>
+                <TouchableOpacity
+                  style={s.noCreditsBtn}
+                  onPress={() => navigation.navigate('Shop')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={s.noCreditsBtnText}>Voir les offres →</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Actions post-analyse */}
             <View style={s.postAnalysisActions}>
               <Bouncy
@@ -1156,6 +1226,7 @@ export default function AccueilScreen({ navigation }) {
                 onPress={() => {
                   setImage(null);
                   setScore(null);
+                  setHighScoreReminder(null);
                   cachedPublicUrlRef.current = null;
                   setPublishedToFeed(false);
                   setSentFlammesToAll(false);
