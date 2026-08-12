@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
+import { getSubActive, getActivePlan } from '../lib/tier';
 
 // ─── Catalogue cosmétiques (économie points, inchangée) ─────────────────────────
 
@@ -62,6 +63,7 @@ const PLANS = [
       '20 analyses IA par jour',
       'Badge premium sur ton profil',
       'Historique complet de tes OOTD',
+      'Personnalité IA "Styliste bienveillant"',
     ],
   },
   {
@@ -74,6 +76,7 @@ const PLANS = [
       'Analyses IA illimitées',
       'Tous les thèmes & logos débloqués',
       'Badge Elite exclusif',
+      'Toutes les personnalités IA',
     ],
   },
 ];
@@ -246,8 +249,8 @@ export default function ShopScreen() {
   };
 
   // ── État calculé ───────────────────────────────────────────────────────────
-  const subActive   = subscription && ['active', 'trialing'].includes(subscription.status);
-  const activePlan  = subActive ? subscription.plan_type : null;
+  const subActive   = getSubActive(subscription);
+  const activePlan  = getActivePlan(subscription);
   const isElite     = activePlan === 'elite';
   const renewalDate = fmtDate(subscription?.current_period_end);
 
@@ -302,8 +305,14 @@ export default function ShopScreen() {
         ) : (
           <TouchableOpacity
             style={[s.buyBtn, { backgroundColor: theme.accent }, !canAfford && { backgroundColor: theme.border }]}
-            onPress={() => confirmBuyItem(itemType, item, price)}
-            disabled={!!buying || !canAfford}
+            onPress={() => {
+              if (!canAfford) {
+                showToast(`Il te manque ${fmtPts(price - pts)} pour débloquer « ${item.name} »`, { type: 'warning' });
+                return;
+              }
+              confirmBuyItem(itemType, item, price);
+            }}
+            disabled={!!buying}
           >
             {isBuying
               ? <ActivityIndicator color="#fff" size="small" />
