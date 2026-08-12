@@ -24,7 +24,33 @@ const PERSONALITIES: Record<string, string> = {
   coach: "Un coach mode motivant et constructif, qui formule chaque remarque comme un prochain palier à atteindre plutôt qu'un jugement.",
   streetwear: "Une icône du streetwear, pointue sur la culture urbaine et les tendances actuelles, qui valorise l'audace et l'originalité.",
 };
-const DEFAULT_PERSONALITY = 'fashion_week';
+const DEFAULT_PERSONALITY = 'coach';
+
+// Gating par tier (Cahier des charges Monétisation 2026-08-12) — DOIT rester
+// synchronisé avec lib/tier.js (PERSONA_TIER) côté client. Appliqué ici côté
+// serveur car le client ne doit jamais être la seule barrière : un client
+// modifié pourrait sinon envoyer n'importe quelle clé de personnalité.
+const PERSONA_TIER: Record<string, 'free' | 'plus' | 'elite'> = {
+  coach: 'free',
+  bienveillant: 'plus',
+  pote_hype: 'elite',
+  fashion_week: 'elite',
+  streetwear: 'elite',
+};
+const TIER_RANK: Record<'free' | 'plus' | 'elite', number> = { free: 0, plus: 1, elite: 2 };
+
+function resolveTier(sub: { status?: string; plan_type?: string } | null, hasPlus: boolean, hasAnalysis: boolean): 'free' | 'plus' | 'elite' {
+  const subActive = !!(sub && ['active', 'trialing'].includes(sub.status ?? ''));
+  const activePlan = subActive ? sub!.plan_type : null;
+  if (activePlan === 'elite') return 'elite';
+  if (activePlan === 'plus' || hasPlus || hasAnalysis) return 'plus';
+  return 'free';
+}
+
+function isPersonaUnlocked(personaKey: string, tier: 'free' | 'plus' | 'elite'): boolean {
+  const required = PERSONA_TIER[personaKey] ?? 'elite';
+  return TIER_RANK[tier] >= TIER_RANK[required];
+}
 
 function buildPrompt(personaText: string): string {
   return `Tu es un expert en style et mode. Ton attitude pour cette analyse est définie ainsi : ${personaText} Ce ton doit transparaître dans la façon dont tu formules tes analyses, points forts et axes d'amélioration — mais applique dans tous les cas les barèmes de notation ci-dessous à l'identique, pour que les notes restent comparables entre utilisateurs quelle que soit la personnalité. Évalue uniquement ce qui est VISIBLE sur la photo. Utilise toute l'échelle 0–10 (outfit basique/négligé = 2–4 ; correct sans recherche = 5).
@@ -164,12 +190,6 @@ serve(async (req: Request) => {
     if (!VALID_PREFIXES.some(p => base64Image.startsWith(p))) {
       return json({ error: 'Format image invalide (jpeg/png/webp requis)' }, 400);
     }
-    // Clé fermée uniquement (jamais de texte libre client) — voir PERSONALITIES ci-dessus.
-    const personaKey = (typeof personality === 'string' && PERSONALITIES[personality])
-      ? personality
-      : DEFAULT_PERSONALITY;
-    const prompt = buildPrompt(PERSONALITIES[personaKey]);
-
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
@@ -178,6 +198,19 @@ serve(async (req: Request) => {
 
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) return json({ error: 'Session invalide ou expirée' }, 401);
+
+    // Résolution de la personnalité : clé fermée (jamais de texte libre client), et
+    // toujours vérifiée contre le tier réel de l'utilisateur — un client modifié qui
+    // enverrait directement une clé Elite en étant Gratuit retombe sur DEFAULT_PERSONALITY.
+    const [{ data: profileRow }, { data: subRow }] = await Promise.all([
+      supabaseClient.from('profiles').select('has_ootd_plus_pass, has_analysis_pass').eq('id', user.id).single(),
+      supabaseClient.from('subscriptions').select('status, plan_type').eq('user_id', user.id).maybeSingle(),
+    ]);
+    const tier = resolveTier(subRow ?? null, !!profileRow?.has_ootd_plus_pass, !!profileRow?.has_analysis_pass);
+    const personaKey = (typeof personality === 'string' && PERSONALITIES[personality] && isPersonaUnlocked(personality, tier))
+      ? personality
+      : DEFAULT_PERSONALITY;
+    const prompt = buildPrompt(PERSONALITIES[personaKey]);
 
     // Rate-limit : max 5 requêtes/minute (protection indépendante des crédits)
     const { data: rateLimitOk, error: rateErr } = await supabaseClient.rpc(
