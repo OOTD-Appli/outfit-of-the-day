@@ -9,12 +9,10 @@ import {
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode, Audio } from 'expo-av';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
-import { ENV } from '../lib/env';
 import { flammeOrderedIds } from '../lib/flammesUtils';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
@@ -25,6 +23,9 @@ import { triggerHaptic } from '../lib/haptics';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
 import InAppCamera from '../components/InAppCamera';
+import { pickStoryMediaWeb, pickStoryMediaFromGallery, uploadAndPublishStory } from '../lib/storyActions';
+import MediaCropEditor from '../components/MediaCropEditor';
+import StoryMedia, { STORY_ASPECT } from '../components/StoryMedia';
 
 // DB : score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
 const SNAP_NOTES = [
@@ -38,13 +39,17 @@ function fmtSnapNote(value) {
   return Number.isInteger(value) ? `${value}` : value.toFixed(1).replace('.', ',');
 }
 
-function AudioMessage({ url, isPlaying, onPlay, theme, duration }) {
+function AudioMessage({ url, isPlaying, isLoading, onPlay, theme, duration }) {
   const bars = [3, 6, 10, 7, 12, 8, 4, 9, 5, 11, 7, 9];
   const fmtDur = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
   return (
-    <TouchableOpacity style={styles.audioMsgRow} onPress={onPlay} activeOpacity={0.75}>
+    <TouchableOpacity style={styles.audioMsgRow} onPress={onPlay} activeOpacity={0.75} disabled={isLoading}>
       <View style={[styles.audioPlayCircle, { backgroundColor: theme.accent + '33' }]}>
-        <Feather name={isPlaying ? 'pause' : 'play'} size={14} color={theme.accent} />
+        {isLoading ? (
+          <ActivityIndicator size="small" color={theme.accent} />
+        ) : (
+          <Feather name={isPlaying ? 'pause' : 'play'} size={14} color={theme.accent} />
+        )}
       </View>
       <View style={styles.audioWaveform}>
         {bars.map((h, i) => (
@@ -253,7 +258,7 @@ function GradientAvatar({ uri, initial, size = 52, colors, theme, hasStory, show
 // Le fil de discussion n'est donc plus 100% remonté en permanence côté FlatList.
 const MessageBubble = memo(function MessageBubble({
   msg, mine, parentMsg, selectedFriendUsername, userId, theme, msgImgSize, showSnapNotes,
-  playingAudioId, audioDuration, onReply, onBubbleTap, onBubbleLongPress, onPlayAudio, onOpenUserProfile,
+  playingAudioId, loadingAudioId, audioDuration, onReply, onBubbleTap, onBubbleLongPress, onPlayAudio, onOpenUserProfile,
 }) {
   return (
     <AnimatedMsgRow mine={mine} style={[styles.msgRow, mine ? styles.msgRowRight : styles.msgRowLeft]}>
@@ -311,6 +316,7 @@ const MessageBubble = memo(function MessageBubble({
                   <AudioMessage
                     url={msg.audio_url}
                     isPlaying={playingAudioId === msg.id}
+                    isLoading={loadingAudioId === msg.id}
                     onPlay={() => onPlayAudio(msg.id, msg.audio_url)}
                     theme={theme}
                     duration={audioDuration}
@@ -413,7 +419,11 @@ const ConversationRow = memo(function ConversationRow({
 export default function FlammesScreen() {
   const { width: ww } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const msgImgSize = Math.round(ww * 0.55);
+  // La photo doit remplir exactement la bulle (elle-même plafonnée à 50% de la
+  // largeur utile, cf. styles.msgRow) plutôt qu'un ratio fixe de l'écran déconnecté
+  // de la largeur réelle de la bulle — sinon l'image déborde visuellement de la bulle.
+  // 32 = padding horizontal de msgListContent (16+16) ; 24 = padding horizontal de la bulle (12+12).
+  const msgImgSize = Math.round((ww - 32) * 0.5 - 24);
   const [view, setView] = useState('list');
   const [friends, setFriends] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
@@ -433,6 +443,7 @@ export default function FlammesScreen() {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingTimerRef = useRef(null);
   const [playingAudioId, setPlayingAudioId] = useState(null);
+  const [loadingAudioId, setLoadingAudioId] = useState(null);
   const [audioDurations, setAudioDurations] = useState({});
   const audioRecordingRef = useRef(null);
   const audioSoundRef = useRef(null);
@@ -457,8 +468,11 @@ export default function FlammesScreen() {
   const [lastMessages, setLastMessages] = useState({});
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState(null);
-  const [storyPreview, setStoryPreview] = useState({ visible: false, videoUri: null, overlayText: '', caption: '', compressing: false, posting: false });
+  const [storyPreview, setStoryPreview] = useState({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
   const [storyViewer, setStoryViewer] = useState({ visible: false, story: null });
+  const [storyCamera, setStoryCamera] = useState({ visible: false, mode: 'video' });
+  const [storyCrop, setStoryCrop] = useState({ visible: false, uri: null, mediaType: 'image' });
+  const [chatPhotoCrop, setChatPhotoCrop] = useState({ visible: false, uri: null });
   const [myProfile, setMyProfile] = useState(null);
   const [unreadCounts, setUnreadCounts] = useState({});
   const lastReadRef = useRef({});
@@ -1169,6 +1183,13 @@ export default function FlammesScreen() {
   };
 
   const onChangeMessageText = (text) => {
+    // Retour à la ligne tapé (touche Entrée) → on envoie au lieu d'insérer un saut de
+    // ligne. Ne pas appeler setMessageText ici : le TextInput contrôlé (value=messageText)
+    // revient alors à l'état précédent, ce qui efface visuellement le "\n" inséré.
+    if (text.endsWith('\n')) {
+      sendTextMessage();
+      return;
+    }
     setMessageText(text);
     const now = Date.now();
     // Throttle l'émission « typing:true » à 1×/1.5s
@@ -1381,6 +1402,10 @@ export default function FlammesScreen() {
     }
     // Deuxième clic sur le même message = pause
     if (playingAudioId === msgId) { setPlayingAudioId(null); return; }
+    // Retour visuel immédiat (spinner) : le fetch/décodage réseau qui suit peut
+    // prendre un instant sans qu'aucun état ne bouge sinon, donnant l'impression
+    // que le tap n'a rien fait.
+    setLoadingAudioId(msgId);
     try {
       // setAudioModeAsync peut échouer silencieusement sur web
       try { await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false }); } catch (_) {}
@@ -1400,6 +1425,8 @@ export default function FlammesScreen() {
     } catch (e) {
       console.error('[playAudioMsg]', e?.message || e);
       showToast(e?.message || 'Lecture impossible', { type: 'error' });
+    } finally {
+      setLoadingAudioId(current => (current === msgId ? null : current));
     }
   };
 
@@ -1453,6 +1480,7 @@ export default function FlammesScreen() {
         msgImgSize={msgImgSize}
         showSnapNotes={showSnapNotes}
         playingAudioId={playingAudioId}
+        loadingAudioId={loadingAudioId}
         audioDuration={audioDurations[msg.id]}
         onReply={handleReply}
         onBubbleTap={stableBubbleTap}
@@ -1463,19 +1491,20 @@ export default function FlammesScreen() {
     );
   }, [
     userId, messagesById, selectedFriend, theme, msgImgSize, showSnapNotes,
-    playingAudioId, audioDurations, handleReply, stableBubbleTap, stableBubbleLongPress,
+    playingAudioId, loadingAudioId, audioDurations, handleReply, stableBubbleTap, stableBubbleLongPress,
     stablePlayAudio, stableOpenUserProfile,
   ]);
 
-  const sendPhotoMessageFromUri = async (uri) => {
+  const sendPhotoMessageFromUri = async (uri, mime = 'image/jpeg') => {
     if (!selectedFriend || sendingMessage) return;
     setSendingMessage(true);
     try {
-      const fileName = `messages/${userId}/${Date.now()}.jpg`;
+      const ext = mime === 'image/webp' ? 'webp' : 'jpg';
+      const fileName = `messages/${userId}/${Date.now()}.${ext}`;
       const fetchResponse = await fetch(uri);
       if (!fetchResponse.ok) throw new Error('Impossible de lire la photo');
       const blob = await fetchResponse.blob();
-      await supabase.storage.from('ootds').upload(fileName, blob, { contentType: 'image/jpeg' });
+      await supabase.storage.from('ootds').upload(fileName, blob, { contentType: mime });
       const { data: urlData } = supabase.storage.from('ootds').getPublicUrl(fileName);
       const { error } = await supabase.from('messages').insert({ sender_id: userId, receiver_id: selectedFriend.id, image_url: urlData.publicUrl });
       if (error) throw error;
@@ -1500,6 +1529,24 @@ export default function FlammesScreen() {
     setSendingMessage(false);
   };
 
+  // Web : ouvre directement l'appareil photo (capture='environment'), comme
+  // AccueilScreen.pickImageWeb — sans ça <input type=file> sans capture ouvre la
+  // galerie/le sélecteur de fichiers, jamais l'appareil photo, alors que le bouton
+  // du chat est une icône caméra qui promet une prise de vue directe.
+  const pickChatPhotoWeb = () => {
+    if (typeof document === 'undefined') return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.setAttribute('capture', 'environment');
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      setChatPhotoCrop({ visible: true, uri: URL.createObjectURL(file) });
+    };
+    input.click();
+  };
+
   const sendPhotoMessage = async () => {
     if (!selectedFriend || sendingMessage) return;
     if (Platform.OS !== 'web') {
@@ -1507,93 +1554,42 @@ export default function FlammesScreen() {
       setShowSnapCamera(true);
       return;
     }
-    // Web : repli galerie
-    const libPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!libPerm.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5, allowsEditing: true, aspect: [1, 1] });
-    if (result.canceled) return;
-    await sendPhotoMessageFromUri(result.assets[0].uri);
+    pickChatPhotoWeb();
+  };
+
+  const onStoryMediaPicked = ({ uri, isVideo }) => {
+    setStoryCrop({ visible: true, uri, mediaType: isVideo ? 'video' : 'image' });
+  };
+
+  const onStoryCropConfirm = (result) => {
+    setStoryCrop({ visible: false, uri: null, mediaType: 'image' });
+    if (result.mode === 'baked') {
+      setStoryPreview({ visible: true, videoUri: null, imageUri: result.asset.uri, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
+    } else {
+      setStoryPreview({ visible: true, videoUri: storyCrop.uri, imageUri: null, overlayText: '', caption: '', mediaScale: result.scale, mediaOffsetX: result.offsetX, mediaOffsetY: result.offsetY, posting: false });
+    }
   };
 
   const postStory = async () => {
-    if (Platform.OS === 'web') {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) { showToast('Permission refusée', { type: 'warning' }); return; }
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], allowsEditing: false });
-      if (result.canceled) return;
-      setStoryPreview({ visible: true, videoUri: result.assets[0].uri, overlayText: '', caption: '', compressing: false, posting: false });
-      return;
-    }
-    const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!cameraPermission.granted) { showToast('Permission caméra refusée', { type: 'warning' }); return; }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['videos'],
-      videoMaxDuration: 30,
-      videoQuality: ImagePicker.UIImagePickerControllerQualityType?.Medium ?? 0.5,
-      allowsEditing: false,
-    });
-    if (result.canceled) return;
-    setStoryPreview({ visible: true, videoUri: result.assets[0].uri, overlayText: '', caption: '', compressing: false, posting: false });
+    if (Platform.OS === 'web') { pickStoryMediaWeb(onStoryMediaPicked); return; }
+    Alert.alert('Publier une story', 'Choisir le type de contenu', [
+      { text: 'Vidéo (caméra)', onPress: () => setStoryCamera({ visible: true, mode: 'video' }) },
+      { text: 'Photo / vidéo (galerie)', onPress: () => pickStoryMediaFromGallery(onStoryMediaPicked, showToast) },
+      { text: 'Annuler', style: 'cancel' },
+    ]);
   };
 
   const publishStory = async () => {
-    if (!storyPreview.videoUri || storyPreview.posting) return;
+    const { videoUri, imageUri } = storyPreview;
+    if ((!videoUri && !imageUri) || storyPreview.posting) return;
     setStoryPreview(prev => ({ ...prev, posting: true }));
-
     try {
-      const videoUri = storyPreview.videoUri;
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error('Session expirée. Reconnecte-toi.');
-
-      const fileName = `${userId}/${Date.now()}.mp4`;
-
-      if (Platform.OS === 'web') {
-        // Sur web, fetch().blob() fonctionne correctement (pas de contrainte mémoire native)
-        const fetchResponse = await fetch(videoUri);
-        const blob = await fetchResponse.blob();
-        const { error: uploadError } = await supabase.storage
-          .from('stories')
-          .upload(fileName, blob, { contentType: blob.type || 'video/mp4', upsert: false });
-        if (uploadError) throw uploadError;
-      } else {
-        // XHR + FormData : seule méthode fiable pour les gros fichiers vidéo sur Android.
-        // fetch().blob() + supabase.storage.upload() échoue avec "Network request failed"
-        // car la totalité du fichier est chargée en mémoire avant l'envoi HTTP.
-        await new Promise((resolve, reject) => {
-          const form = new FormData();
-          form.append('', { uri: videoUri, name: `${Date.now()}.mp4`, type: 'video/mp4' });
-
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', `${ENV.supabaseUrl}/storage/v1/object/stories/${fileName}`);
-          xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
-          xhr.setRequestHeader('x-upsert', 'false');
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              resolve();
-            } else {
-              reject(new Error(`Upload échoué (${xhr.status})`));
-            }
-          };
-          xhr.onerror = () => {
-            reject(new Error('Erreur réseau lors de l\'upload vidéo'));
-          };
-          xhr.send(form);
-        });
-      }
-
-      const { data: urlData } = supabase.storage.from('stories').getPublicUrl(fileName);
-
-      const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
-      const { error: insErr } = await supabase.from('stories').insert({
-        user_id: userId,
-        video_url: urlData.publicUrl,
-        overlay_text: storyPreview.overlayText.trim() || null,
-        caption: storyPreview.caption.trim() || null,
-        expires_at: expiresAt,
+      await uploadAndPublishStory({
+        userId, videoUri, imageUri,
+        overlayText: storyPreview.overlayText, caption: storyPreview.caption,
+        mediaScale: storyPreview.mediaScale, mediaOffsetX: storyPreview.mediaOffsetX, mediaOffsetY: storyPreview.mediaOffsetY,
       });
-      if (insErr) throw insErr;
-
-      setStoryPreview({ visible: false, videoUri: null, overlayText: '', caption: '', compressing: false, posting: false });
+      setStoryPreview({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
       await fetchData({ silent: true });
       showToast('Story publiée ! Elle disparaît dans 24h', { type: 'success' });
     } catch (e) {
@@ -1773,7 +1769,18 @@ export default function FlammesScreen() {
           onClose={() => setShowSnapCamera(false)}
           onCapture={(asset) => {
             setShowSnapCamera(false);
-            if (asset?.uri) sendPhotoMessageFromUri(asset.uri);
+            if (asset?.uri) setChatPhotoCrop({ visible: true, uri: asset.uri });
+          }}
+        />
+        <MediaCropEditor
+          visible={chatPhotoCrop.visible}
+          uri={chatPhotoCrop.uri}
+          mediaType="image"
+          aspect={STORY_ASPECT}
+          onCancel={() => setChatPhotoCrop({ visible: false, uri: null })}
+          onConfirm={(result) => {
+            setChatPhotoCrop({ visible: false, uri: null });
+            if (result.mode === 'baked') sendPhotoMessageFromUri(result.asset.uri, result.asset.uploadMime);
           }}
         />
       </SafeAreaView>
@@ -1793,11 +1800,7 @@ export default function FlammesScreen() {
               <Feather name="x" size={26} color="#fff" />
             </TouchableOpacity>
           </View>
-          {storyViewer.story?.video_url ? (
-            <Video source={{ uri: storyViewer.story.video_url }} style={styles.viewerMedia} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay isLooping={false} />
-          ) : storyViewer.story?.image_url ? (
-            <ExpoImage source={{ uri: storyViewer.story.image_url }} style={styles.viewerMedia} contentFit="contain" />
-          ) : null}
+          <StoryMedia story={storyViewer.story} style={styles.viewerMedia} videoProps={{ useNativeControls: true, shouldPlay: true }} />
           {storyViewer.story?.overlay_text ? <View style={styles.viewerOverlayTextWrap}><Text style={styles.viewerOverlayText}>{storyViewer.story.overlay_text}</Text></View> : null}
           {storyViewer.story?.caption ? <View style={styles.viewerCaptionWrap}><Text style={styles.viewerCaption}>{storyViewer.story.caption}</Text></View> : null}
         </View>
@@ -1808,17 +1811,20 @@ export default function FlammesScreen() {
           <View style={[styles.storyModalSheet, { backgroundColor: theme.card }]}>
             <Text style={[styles.storyModalTitle, { color: theme.textPri }]}>Prévisualisation story</Text>
             <View style={styles.storyVideoWrap}>
-              {storyPreview.videoUri ? (
-                <Video
-                  source={{ uri: storyPreview.videoUri }}
+              {storyPreview.videoUri || storyPreview.imageUri ? (
+                <StoryMedia
+                  story={{
+                    video_url: storyPreview.videoUri,
+                    image_url: storyPreview.imageUri,
+                    media_scale: storyPreview.mediaScale,
+                    media_offset_x: storyPreview.mediaOffsetX,
+                    media_offset_y: storyPreview.mediaOffsetY,
+                  }}
                   style={styles.storyVideoPreview}
-                  resizeMode={ResizeMode.CONTAIN}
-                  useNativeControls
-                  shouldPlay={false}
-                  isLooping={false}
+                  videoProps={{ useNativeControls: true, shouldPlay: false }}
                 />
               ) : (
-                <Feather name="video" size={36} color={theme.textSub} />
+                <Feather name="image" size={36} color={theme.textSub} />
               )}
             </View>
             <Text style={[styles.storyFieldLabel, { color: theme.textSub }]}>Texte sur la vidéo (optionnel)</Text>
@@ -1836,6 +1842,25 @@ export default function FlammesScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Caméra in-app pour vidéo de story (native) */}
+      <InAppCamera
+        visible={storyCamera.visible}
+        mode={storyCamera.mode}
+        onClose={() => setStoryCamera(prev => ({ ...prev, visible: false }))}
+        onCapture={(asset) => {
+          setStoryCamera(prev => ({ ...prev, visible: false }));
+          if (asset?.uri) onStoryMediaPicked({ uri: asset.uri, isVideo: true });
+        }}
+      />
+      <MediaCropEditor
+        visible={storyCrop.visible}
+        uri={storyCrop.uri}
+        mediaType={storyCrop.mediaType}
+        aspect={STORY_ASPECT}
+        onCancel={() => setStoryCrop({ visible: false, uri: null, mediaType: 'image' })}
+        onConfirm={onStoryCropConfirm}
+      />
 
       <SafeAreaView style={{ flex: 1 }} edges={[]}>
         {/* Header */}
@@ -2189,7 +2214,7 @@ const styles = StyleSheet.create({
   msgEmpty:        { alignItems: 'center', paddingTop: 48, gap: 10 },
   msgEmptyText:    { fontSize: 16, fontWeight: '600' },
   msgEmptySub:     { fontSize: 12 },
-  msgRow:          { maxWidth: '78%' },
+  msgRow:          { maxWidth: '50%' },
   msgRowRight:     { alignSelf: 'flex-end', alignItems: 'flex-end' },
   msgRowLeft:      { alignSelf: 'flex-start', alignItems: 'flex-start' },
   bubble:          { borderRadius: 18, padding: 12, maxWidth: '100%' },
@@ -2228,13 +2253,13 @@ const styles = StyleSheet.create({
   replyQuote:      { borderLeftWidth: 3, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5, marginBottom: 6 },
   replyQuoteSender:{ fontSize: 11, fontWeight: '700', marginBottom: 2 },
   replyQuoteText:  { fontSize: 12 },
-  swipeableBubbleWrap: { maxWidth: '78%' },
+  swipeableBubbleWrap: { maxWidth: '50%' },
 
   /* Story modal */
   storyModalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   storyModalSheet:      { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 36 },
   storyModalTitle:      { fontSize: 17, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
-  storyVideoWrap:       { borderRadius: 16, overflow: 'hidden', height: 260, marginBottom: 20, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  storyVideoWrap:       { borderRadius: 16, overflow: 'hidden', width: '100%', aspectRatio: STORY_ASPECT, marginBottom: 20, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   storyVideoPreview:    { width: '100%', height: '100%' },
   storyFieldLabel:      { fontSize: 12, fontWeight: '600', marginBottom: 6 },
   storyFieldInput:      { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginBottom: 14, borderWidth: 1 },
@@ -2263,7 +2288,7 @@ const styles = StyleSheet.create({
   sharePickerName:     { fontWeight: '600', fontSize: 15, flex: 1 },
 
   /* Carte profil dans bulle de message */
-  profileCardMsg:  { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, borderWidth: 1, padding: 10, minWidth: 180 },
+  profileCardMsg:  { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, borderWidth: 1, padding: 10 },
   profileCardName: { fontWeight: '700', fontSize: 14 },
   profileCardSub:  { fontSize: 12, marginTop: 2 },
 
@@ -2280,7 +2305,7 @@ const styles = StyleSheet.create({
   viewerOverlay:         { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
   viewerHeader:          { position: 'absolute', top: 56, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 10 },
   viewerUsername:        { color: '#fff', fontWeight: '700', fontSize: 16 },
-  viewerMedia:           { width: '100%', height: '80%' },
+  viewerMedia:           { width: '90%', aspectRatio: STORY_ASPECT },
   viewerOverlayTextWrap: { position: 'absolute', bottom: 120, left: 20, right: 20, alignItems: 'center' },
   viewerOverlayText:     { color: '#fff', fontSize: 22, fontWeight: '800', textAlign: 'center' },
   viewerCaptionWrap:     { position: 'absolute', bottom: 60, left: 20, right: 20, alignItems: 'center' },

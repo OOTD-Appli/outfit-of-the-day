@@ -202,8 +202,10 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 
 **Vue chat**
 - Header : avatar (cadre logo), pseudo (badge logo), streak
-- Messages bulles gauche/droite selon `sender_id`
-- Photo : `<InAppCamera mode="photo">` (au lieu du picker système) → upload `ootds/messages/<uid>/<ts>.jpg` → insert `messages` → update `flammes.streak`
+- Messages bulles gauche/droite selon `sender_id`, **largeur plafonnée à 50%** de la largeur utile (`styles.msgRow`/`swipeableBubbleWrap`) — texte wrappe tôt plutôt que de s'étaler
+- **Saisie** : `onChangeMessageText` détecte un `\n` en fin de texte (touche Entrée) et appelle `sendTextMessage()` au lieu de l'insérer — pas besoin de taper sur le bouton d'envoi. Le `TextInput` reste contrôlé (`value={messageText}`), donc le saut de ligne ne s'affiche jamais.
+- Photo : `<InAppCamera mode="photo">` sur natif (au lieu du picker système) → upload `ootds/messages/<uid>/<ts>.jpg` → insert `messages` → update `flammes.streak`. **Sur web**, `pickChatPhotoWeb()` ouvre directement l'appareil photo via `<input type=file capture="environment">` (même technique que `AccueilScreen.pickImageWeb`) plutôt que la galerie.
+- `msgImgSize` (taille de la photo affichée dans la bulle) calculée à partir de la largeur réelle de bulle disponible (`(ww - 32) * 0.5 - 24`), pas d'un ratio fixe de l'écran déconnecté de la bulle — évite que l'image déborde visuellement.
 - **Messages vocaux** : bouton micro dans la barre de saisie.
   - `startRecording()` : `Audio.Recording.createAsync(HIGH_QUALITY)`, timer `recordingDuration`
   - `stopAndSendRecording()` : annule si < 1s ; sinon upload Storage `ootds/audio/<uid>/<ts>.<ext>` (`webm` web / `m4a` natif) → insert `messages.audio_url`, affichage optimiste immédiat
