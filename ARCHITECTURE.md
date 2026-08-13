@@ -202,10 +202,10 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 
 **Vue chat**
 - Header : avatar (cadre logo), pseudo (badge logo), streak
-- Messages bulles gauche/droite selon `sender_id`, **largeur plafonnée à 100%** de la largeur utile (`styles.msgRow`/`swipeableBubbleWrap` — plafond retenu après ajustement, testé à 50% dans un premier temps) ; le texte reste compact naturellement (le plafond ne s'applique qu'aux messages/photos longs)
+- Messages bulles gauche/droite selon `sender_id`, **largeur fixe à 50%** de la largeur utile — `styles.msgRow` a `width: '50%'` (pas `maxWidth`, pour que même un message très court occupe la même largeur, cf. demande produit), `swipeableBubbleWrap`/`bubble` en `width: '100%'` de leur parent pour remplir exactement cette colonne. *(Historique : d'abord un `maxWidth` en % (78% puis 50% puis 100%) combiné à une taille d'image calculée en pixels depuis `ww` — approche fragile qui a produit deux régressions de débordement avant cette réécriture en tailles 100% relatives.)*
 - **Saisie** : `onChangeMessageText` détecte un `\n` en fin de texte (touche Entrée) et appelle `sendTextMessage()` au lieu de l'insérer — pas besoin de taper sur le bouton d'envoi. Le `TextInput` reste contrôlé (`value={messageText}`), donc le saut de ligne ne s'affiche jamais.
 - Photo : `<InAppCamera mode="photo">` sur natif (au lieu du picker système) → upload `ootds/messages/<uid>/<ts>.jpg` → insert `messages` → update `flammes.streak`. **Sur web**, `pickChatPhotoWeb()` ouvre directement l'appareil photo via `<input type=file capture="environment">` (même technique que `AccueilScreen.pickImageWeb`) plutôt que la galerie.
-- `msgImgSize` (taille de la photo affichée dans la bulle) calculée à partir de la largeur réelle de bulle disponible (`(ww - 32) * 0.5 - 24`), pas d'un ratio fixe de l'écran déconnecté de la bulle — évite que l'image déborde visuellement.
+- **Photo dans la bulle** : `styles.msgImage` est `{ width: '100%', aspectRatio: 1 }` — 100% relatif à la bulle elle-même (donc toujours exactement encadrée, quelle que soit la largeur d'écran), plus de calcul de taille en pixels absolus depuis `ww`.
 - **Messages vocaux** : bouton micro dans la barre de saisie.
   - `startRecording()` : `Audio.Recording.createAsync(HIGH_QUALITY)`, timer `recordingDuration`
   - `stopAndSendRecording()` : annule si < 1s ; sinon upload Storage `ootds/audio/<uid>/<ts>.<ext>` (`webm` web / `m4a` natif) → insert `messages.audio_url`, affichage optimiste immédiat

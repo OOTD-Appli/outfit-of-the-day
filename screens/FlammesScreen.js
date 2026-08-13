@@ -4,7 +4,7 @@ import {
   View, Text, StyleSheet, Animated, Easing,
   FlatList, TouchableOpacity, ActivityIndicator,
   TextInput, ScrollView, Alert, KeyboardAvoidingView, Platform, Modal,
-  useWindowDimensions, PanResponder,
+  PanResponder,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -257,7 +257,7 @@ function GradientAvatar({ uri, initial, size = 52, colors, theme, hasStory, show
 // waveform audio...) quand un state sans rapport change (saisie, typing...).
 // Le fil de discussion n'est donc plus 100% remonté en permanence côté FlatList.
 const MessageBubble = memo(function MessageBubble({
-  msg, mine, parentMsg, selectedFriendUsername, userId, theme, msgImgSize, showSnapNotes,
+  msg, mine, parentMsg, selectedFriendUsername, userId, theme, showSnapNotes,
   playingAudioId, loadingAudioId, audioDuration, onReply, onBubbleTap, onBubbleLongPress, onPlayAudio, onOpenUserProfile,
 }) {
   return (
@@ -326,9 +326,9 @@ const MessageBubble = memo(function MessageBubble({
                     {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
                     {msg.image_url ? (
                       <>
-                        <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: msgImgSize, height: msgImgSize }]} contentFit="cover" />
+                        <ExpoImage source={{ uri: msg.image_url }} style={styles.msgImage} contentFit="cover" />
                         {showSnapNotes && typeof msg.score_global === 'number' && (
-                          <View style={[styles.snapNotesRow, { width: msgImgSize }]}>
+                          <View style={styles.snapNotesRow}>
                             <View style={[styles.snapNoteGlobal, { backgroundColor: theme.accent }]}>
                               <Feather name="star" size={10} color="#fff" />
                               <Text style={styles.snapNoteGlobalText}>{fmtSnapNote(msg.score_global)}</Text>
@@ -417,13 +417,7 @@ const ConversationRow = memo(function ConversationRow({
 });
 
 export default function FlammesScreen() {
-  const { width: ww } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  // La photo doit remplir exactement la bulle (elle-même plafonnée à 100% de la
-  // largeur utile, cf. styles.msgRow) plutôt qu'un ratio fixe de l'écran déconnecté
-  // de la largeur réelle de la bulle — sinon l'image déborde visuellement de la bulle.
-  // 32 = padding horizontal de msgListContent (16+16) ; 24 = padding horizontal de la bulle (12+12).
-  const msgImgSize = Math.round((ww - 32) - 24);
   const [view, setView] = useState('list');
   const [friends, setFriends] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
@@ -1477,7 +1471,6 @@ export default function FlammesScreen() {
         selectedFriendUsername={selectedFriend?.username}
         userId={userId}
         theme={theme}
-        msgImgSize={msgImgSize}
         showSnapNotes={showSnapNotes}
         playingAudioId={playingAudioId}
         loadingAudioId={loadingAudioId}
@@ -1490,7 +1483,7 @@ export default function FlammesScreen() {
       />
     );
   }, [
-    userId, messagesById, selectedFriend, theme, msgImgSize, showSnapNotes,
+    userId, messagesById, selectedFriend, theme, showSnapNotes,
     playingAudioId, loadingAudioId, audioDurations, handleReply, stableBubbleTap, stableBubbleLongPress,
     stablePlayAudio, stableOpenUserProfile,
   ]);
@@ -2214,15 +2207,15 @@ const styles = StyleSheet.create({
   msgEmpty:        { alignItems: 'center', paddingTop: 48, gap: 10 },
   msgEmptyText:    { fontSize: 16, fontWeight: '600' },
   msgEmptySub:     { fontSize: 12 },
-  msgRow:          { maxWidth: '100%' },
+  msgRow:          { width: '50%' },
   msgRowRight:     { alignSelf: 'flex-end', alignItems: 'flex-end' },
   msgRowLeft:      { alignSelf: 'flex-start', alignItems: 'flex-start' },
-  bubble:          { borderRadius: 18, padding: 12, maxWidth: '100%' },
+  bubble:          { borderRadius: 18, padding: 12, width: '100%' },
   bubbleSent:      { borderBottomRightRadius: 4 },
   bubbleRecv:      { borderBottomLeftRadius: 4 },
   bubbleText:      { fontSize: 14, lineHeight: 20 },
   bubbleDeleted:   { fontSize: 13, fontStyle: 'italic' },
-  msgImage:        { borderRadius: 12, marginBottom: 4 },
+  msgImage:        { width: '100%', aspectRatio: 1, borderRadius: 12, marginBottom: 4 },
   snapNotesRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginBottom: 4 },
   snapNoteGlobal:  { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
   snapNoteGlobalText: { color: '#fff', fontWeight: '800', fontSize: 12 },
@@ -2240,7 +2233,7 @@ const styles = StyleSheet.create({
   msgInput:        { flex: 1, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 100, borderWidth: 1 },
   sendBtn:         { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   micBtn:          { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  audioMsgRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 150, paddingVertical: 2 },
+  audioMsgRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%', paddingVertical: 2 },
   audioPlayCircle: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   audioWaveform:   { flexDirection: 'row', alignItems: 'center', gap: 2, flex: 1 },
   audioBar:        { width: 3, borderRadius: 2, minHeight: 3 },
@@ -2253,7 +2246,7 @@ const styles = StyleSheet.create({
   replyQuote:      { borderLeftWidth: 3, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5, marginBottom: 6 },
   replyQuoteSender:{ fontSize: 11, fontWeight: '700', marginBottom: 2 },
   replyQuoteText:  { fontSize: 12 },
-  swipeableBubbleWrap: { maxWidth: '100%' },
+  swipeableBubbleWrap: { width: '100%' },
 
   /* Story modal */
   storyModalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },

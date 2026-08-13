@@ -7,11 +7,15 @@
 ## Corrections page Chat — 2026-08-14
 
 - [x] **Entrée = envoyer** : dans `onChangeMessageText`, un texte se terminant par `\n` (touche Entrée) déclenche `sendTextMessage()` au lieu d'insérer un retour à la ligne — le `TextInput` contrôlé (`value={messageText}`) revient à l'état précédent, donc le `\n` ne s'affiche jamais. Plus besoin de taper sur la flèche d'envoi. *(Compromis assumé : plus de moyen de forcer un retour à la ligne manuel dans le champ — non demandé, à ajouter séparément si besoin un jour, ex. Shift+Entrée sur web.)*
-- [x] **Largeur des bulles** : `styles.msgRow`/`styles.swipeableBubbleWrap` — d'abord passés de `maxWidth: '78%'` à `'50%'` (demande initiale), puis remontés à `'100%'` après test rapide de l'utilisateur. Le texte des messages courts reste compact naturellement (le plafond ne joue que pour les messages/photos qui en ont besoin).
-- [x] **Taille photo dans la bulle recalculée** : `msgImgSize` (taille de l'image dans une bulle photo) était calculée comme `ww * 0.55`, complètement déconnectée de la largeur réelle de la bulle. Nouvelle formule alignée sur le plafond de largeur actuel (100%) : `(ww - 32) - 24`, qui fait correspondre l'image à l'espace intérieur disponible de la bulle. *(Si le plafond de largeur change à nouveau, ajuster le facteur ici en conséquence — voir le commentaire dans le code.)*
-- [x] **Carte "profil partagé" corrigée en même temps** : `profileCardMsg` avait un `minWidth: 180` qui aurait dépassé la largeur de bulle à 50% (état intermédiaire) sur la quasi-totalité des téléphones — `minWidth` retiré, le contenu (avatar + texte flexible) s'adapte naturellement. Reste valable avec le plafond à 100%.
+- [x] **Largeur des bulles — réécriture complète après 2 itérations ratées** : l'approche initiale (`maxWidth` en %, tour à tour 78%/50%/100%, combinée à une taille de photo calculée en pixels absolus depuis `ww`) était fragile et a produit un vrai bug visuel (photo qui dépasse de la bulle, capturé par l'utilisateur) — l'arithmétique de padding imbriqués (liste + bulle) ne donnait pas la largeur réellement rendue. Remplacée par une approche 100% relative :
+  - `styles.msgRow` : `width: '50%'` (fixe, pas un plafond — même un message très court occupe la même largeur, conforme à la demande explicite de l'utilisateur).
+  - `styles.swipeableBubbleWrap` et `styles.bubble` : `width: '100%'` de leur parent (remplissent exactement la colonne à 50%).
+  - `styles.msgImage` : `width: '100%', aspectRatio: 1` — la photo est désormais **structurellement** contenue dans sa bulle (plus aucun calcul en pixels depuis `ww` qui pouvait diverger de la largeur réelle rendue).
+  - `styles.audioMsgRow` : `minWidth: 150` (fixe) remplacé par `width: '100%'` — même raisonnement, plus de risque de dépassement sur petit écran.
+  - Variable `msgImgSize` et `useWindowDimensions()` supprimés de `FlammesScreen.js` (devenus inutiles, plus aucune taille calculée en pixels dans ce fichier pour les bulles).
+- [x] **Carte "profil partagé"** : `profileCardMsg` avait déjà un `minWidth: 180` retiré lors de l'itération précédente — reste valable, s'adapte à la largeur fixe de 50%.
 - [x] **Bug caméra chat (web) corrigé** : le bouton "Envoyer une photo" (icône caméra) ouvrait uniquement la galerie sur web (`ImagePicker.launchImageLibraryAsync`, sans `capture`), jamais l'appareil photo — alors que sur natif il ouvre bien `InAppCamera`. Nouvelle fonction `pickChatPhotoWeb()` (même technique que `AccueilScreen.pickImageWeb`) : `<input type=file accept="image/*" capture="environment">`, qui déclenche directement l'appareil photo sur mobile web/PWA. Import `expo-image-picker` retiré de `FlammesScreen.js` (devenu inutilisé).
-- [x] Vérifications : `npm test` (64/64) + `npx expo export --platform web`, à chaque itération (50% puis 100%).
+- [x] Vérifications : `npm test` (64/64) + `npx expo export --platform web`, à chaque itération.
 
 ---
 
