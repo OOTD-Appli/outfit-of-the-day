@@ -419,11 +419,11 @@ const ConversationRow = memo(function ConversationRow({
 export default function FlammesScreen() {
   const { width: ww } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  // La photo doit remplir exactement la bulle (elle-même plafonnée à 50% de la
+  // La photo doit remplir exactement la bulle (elle-même plafonnée à 100% de la
   // largeur utile, cf. styles.msgRow) plutôt qu'un ratio fixe de l'écran déconnecté
   // de la largeur réelle de la bulle — sinon l'image déborde visuellement de la bulle.
   // 32 = padding horizontal de msgListContent (16+16) ; 24 = padding horizontal de la bulle (12+12).
-  const msgImgSize = Math.round((ww - 32) * 0.5 - 24);
+  const msgImgSize = Math.round((ww - 32) - 24);
   const [view, setView] = useState('list');
   const [friends, setFriends] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
@@ -2214,7 +2214,7 @@ const styles = StyleSheet.create({
   msgEmpty:        { alignItems: 'center', paddingTop: 48, gap: 10 },
   msgEmptyText:    { fontSize: 16, fontWeight: '600' },
   msgEmptySub:     { fontSize: 12 },
-  msgRow:          { maxWidth: '50%' },
+  msgRow:          { maxWidth: '100%' },
   msgRowRight:     { alignSelf: 'flex-end', alignItems: 'flex-end' },
   msgRowLeft:      { alignSelf: 'flex-start', alignItems: 'flex-start' },
   bubble:          { borderRadius: 18, padding: 12, maxWidth: '100%' },
@@ -2253,7 +2253,7 @@ const styles = StyleSheet.create({
   replyQuote:      { borderLeftWidth: 3, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5, marginBottom: 6 },
   replyQuoteSender:{ fontSize: 11, fontWeight: '700', marginBottom: 2 },
   replyQuoteText:  { fontSize: 12 },
-  swipeableBubbleWrap: { maxWidth: '50%' },
+  swipeableBubbleWrap: { maxWidth: '100%' },
 
   /* Story modal */
   storyModalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
