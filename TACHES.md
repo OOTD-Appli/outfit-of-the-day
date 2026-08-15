@@ -1,6 +1,18 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-08-14 — Corrections page Chat : Entrée pour envoyer, largeur des bulles, bug caméra photo (web).
+> Dernière mise à jour : 2026-08-15 — Feed : vrai scroll-snap CSS sur web (le swipe ressemblait à un défilement libre au lieu d'un passage photo par photo).
+
+---
+
+## Feed — swipe photo par photo cassé sur web — 2026-08-15
+
+- [x] **Cause** : `react-native-web` ne traduit pas fiablement `snapToInterval`/`decelerationRate`/`disableIntervalMomentum` en vrai scroll-snap CSS — sur web, le Feed défilait librement ("bande roulante") au lieu de s'arrêter net photo par photo, alors que ces props fonctionnent correctement sur natif (iOS/Android).
+- [x] **Fix** : CSS scroll-snap natif ajouté directement, gated `Platform.OS === 'web'` (aucun effet sur natif, qui garde son comportement `snapToInterval` déjà correct) :
+  - `styles.feedListWeb` (`scrollSnapType: 'y mandatory'`, `overflowY: 'scroll'`) sur le `FlatList` du Feed.
+  - `styles.feedPageWeb` (`scrollSnapAlign: 'start'`, `scrollSnapStop: 'always'`) sur le wrapper plein écran de chaque post (`FeedPost`).
+  - Même technique déjà utilisée dans le repo pour du CSS web-only (`backdropFilter` sur la tab bar dans `App.js`) — les propriétés CSS non reconnues par RN passent telles quelles dans le style DOM sous react-native-web.
+- [x] Vérifications : `npm test` (64/64) + `npx expo export --platform web`.
+- [x] **Correction de doc au passage** : `ARCHITECTURE.md` mentionnait `pagingEnabled` sur ce `FlatList`, qui n'existe pas dans le code réel (seuls `snapToInterval`/`snapToAlignment`/`disableIntervalMomentum`/`decelerationRate` sont utilisés) — corrigé.
 
 ---
 

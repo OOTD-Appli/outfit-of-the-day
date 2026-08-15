@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, memo, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, Animated, TextInput,
   TouchableOpacity, ActivityIndicator,
-  RefreshControl, Modal, FlatList, useWindowDimensions,
+  RefreshControl, Modal, FlatList, useWindowDimensions, Platform,
 } from 'react-native';
 import HeartOverlay from '../components/HeartOverlay';
 import { Image as ExpoImage } from 'expo-image';
@@ -101,7 +101,7 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
   const actionsBottom = infoPadBottom + 120;
 
   return (
-    <View style={{ width: ww, height: pageH, backgroundColor: '#0a0a0a' }}>
+    <View style={[{ width: ww, height: pageH, backgroundColor: '#0a0a0a' }, Platform.OS === 'web' && styles.feedPageWeb]}>
       {/* Photo plein écran */}
       <ExpoImage
         source={{ uri: item.image_url }}
@@ -321,7 +321,7 @@ export default function FeedScreen() {
   const pageRef = useRef(0);
   const friendIdsRef = useRef([]);
   const userIdRef = useRef(null);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [currentlyPlayingId, setCurrentlyPlayingId] = useState(null);
   const [showSearch, setShowSearch] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
@@ -329,7 +329,7 @@ export default function FeedScreen() {
   const [specializedFeed, setSpecializedFeed] = useState(false);
   const [userTopStyles, setUserTopStyles] = useState([]);
   const soundRef = useRef(null);
-  const isMutedRef = useRef(false);
+  const isMutedRef = useRef(true);
   // audioActiveRef = true uniquement quand le Feed est au premier plan.
   // Évite la race condition où createAsync se termine après un changement
   // d'onglet (le son s'assigne après la cleanup et joue en arrière-plan).
@@ -355,9 +355,13 @@ export default function FeedScreen() {
     await stopCurrentSound();
     if (!previewUrl || !audioActiveRef.current) return;
     try {
+      // shouldPlay est toujours true : la visibilité (onViewableItemsChanged) décide déjà
+      // quel post doit jouer. Le son démarre systématiquement, silencieux tant que non
+      // démuté (isMuted initial) — évite qu'un shouldPlay figé sur une ref obsolète ne
+      // fasse silencieusement échouer le lancement du son à chaque nouveau post.
       const { sound } = await Audio.Sound.createAsync(
         { uri: previewUrl },
-        { shouldPlay: !isMutedRef.current, isLooping: true, volume: 1.0 },
+        { shouldPlay: true, isLooping: true, volume: 1.0, isMuted: isMutedRef.current },
       );
       // Vérification post-async : l'onglet a pu perdre le focus pendant le chargement
       if (!audioActiveRef.current) { sound.unloadAsync().catch(() => {}); return; }
@@ -755,7 +759,10 @@ export default function FeedScreen() {
           keyExtractor={item => item.id}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
-          pagingEnabled
+          style={Platform.OS === 'web' ? styles.feedListWeb : undefined}
+          snapToInterval={pageH}
+          snapToAlignment="start"
+          disableIntervalMomentum
           decelerationRate="fast"
           bounces={false}
           nestedScrollEnabled={false}
@@ -811,6 +818,14 @@ export default function FeedScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a0a' },
   center:    { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0a0a0a' },
+
+  // react-native-web ne traduit pas fiablement snapToInterval/decelerationRate en
+  // vrai scroll-snap CSS (défilement libre "façon bande roulante" au lieu d'un
+  // passage photo par photo) — on applique donc le CSS scroll-snap directement.
+  // Ces propriétés sont ignorées sur natif (elles passent simplement à travers le
+  // style RN sans effet), donc aucun changement de comportement sur iOS/Android.
+  feedListWeb: { scrollSnapType: 'y mandatory', overflowY: 'scroll' },
+  feedPageWeb: { scrollSnapAlign: 'start', scrollSnapStop: 'always' },
 
   /* FeedPost */
   postGradient: {

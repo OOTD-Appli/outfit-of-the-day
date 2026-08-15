@@ -176,7 +176,7 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 ```
 
 ### FeedScreen (`screens/FeedScreen.js`)
-- **UX TikTok** : `FlatList` `pagingEnabled`, `snapToInterval=pageH`, `decelerationRate="fast"`, chaque item = plein écran
+- **UX TikTok** : `FlatList` `snapToInterval=pageH`, `snapToAlignment="start"`, `disableIntervalMomentum`, `decelerationRate="fast"`, chaque item = plein écran. **Sur web**, ces props RN ne se traduisent pas fiablement en scroll-snap réel via react-native-web (défilement libre façon "bande roulante" au lieu d'un passage photo par photo) — complété par du vrai CSS scroll-snap (`scrollSnapType`/`scrollSnapAlign`/`scrollSnapStop`, styles `feedListWeb`/`feedPageWeb`, `Platform.OS === 'web'` uniquement, sans effet sur natif)
 - **Fetch** : `ootds` joint `profiles(username, avatar_url, active_logo, is_private)`, `likes(id, user_id)`, `comments(count)` + colonnes `styles, show_style_hashtag, visible_scores` — pagination 10/page, chargement infini (`onEndReached`)
 - **Confidentialité** : posts `is_private` filtrés côté DB sauf auteur ou ami accepté
 - **Recherche** : bouton loupe → overlay `TextInput` `searchQuery` ("Hashtag, description, @utilisateur...") — filtrage **côté client** (`useMemo`) sur `username`, `caption`, `styles[]`, appliqué aux posts déjà chargés
