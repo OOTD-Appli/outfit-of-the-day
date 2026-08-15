@@ -4,11 +4,12 @@ import {
   View, Text, StyleSheet, Animated, Easing,
   FlatList, TouchableOpacity, ActivityIndicator,
   TextInput, ScrollView, Alert, KeyboardAvoidingView, Platform, Modal,
-  PanResponder,
+  PanResponder, useWindowDimensions,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode, Audio } from 'expo-av';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
@@ -257,7 +258,7 @@ function GradientAvatar({ uri, initial, size = 52, colors, theme, hasStory, show
 // waveform audio...) quand un state sans rapport change (saisie, typing...).
 // Le fil de discussion n'est donc plus 100% remonté en permanence côté FlatList.
 const MessageBubble = memo(function MessageBubble({
-  msg, mine, parentMsg, selectedFriendUsername, userId, theme, showSnapNotes,
+  msg, mine, parentMsg, selectedFriendUsername, userId, theme, photoSize, showSnapNotes,
   playingAudioId, loadingAudioId, audioDuration, onReply, onBubbleTap, onBubbleLongPress, onPlayAudio, onOpenUserProfile,
 }) {
   return (
@@ -326,9 +327,9 @@ const MessageBubble = memo(function MessageBubble({
                     {msg.content ? <Text style={[styles.bubbleText, { color: theme.textPri }]}>{msg.content}</Text> : null}
                     {msg.image_url ? (
                       <>
-                        <ExpoImage source={{ uri: msg.image_url }} style={styles.msgImage} contentFit="cover" />
+                        <ExpoImage source={{ uri: msg.image_url }} style={[styles.msgImage, { width: photoSize, height: photoSize }]} contentFit="cover" />
                         {showSnapNotes && typeof msg.score_global === 'number' && (
-                          <View style={styles.snapNotesRow}>
+                          <View style={[styles.snapNotesRow, { width: photoSize }]}>
                             <View style={[styles.snapNoteGlobal, { backgroundColor: theme.accent }]}>
                               <Feather name="star" size={10} color="#fff" />
                               <Text style={styles.snapNoteGlobalText}>{fmtSnapNote(msg.score_global)}</Text>
@@ -417,7 +418,13 @@ const ConversationRow = memo(function ConversationRow({
 });
 
 export default function FlammesScreen() {
+  const { width: ww } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  // Taille de la photo dans une bulle de chat : calculée indépendamment du cap de
+  // largeur de la bulle (msgRow.maxWidth) plutôt que dérivée de lui — un formule
+  // couplée aux deux (largeur écran ET padding imbriqués) a déjà causé 2 régressions
+  // de débordement. Ici la bulle (content-hugging) s'adapte simplement à la photo.
+  const photoSize = Math.min(Math.round(ww * 0.55), 260);
   const [view, setView] = useState('list');
   const [friends, setFriends] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
@@ -1471,6 +1478,7 @@ export default function FlammesScreen() {
         selectedFriendUsername={selectedFriend?.username}
         userId={userId}
         theme={theme}
+        photoSize={photoSize}
         showSnapNotes={showSnapNotes}
         playingAudioId={playingAudioId}
         loadingAudioId={loadingAudioId}
@@ -1483,7 +1491,7 @@ export default function FlammesScreen() {
       />
     );
   }, [
-    userId, messagesById, selectedFriend, theme, showSnapNotes,
+    userId, messagesById, selectedFriend, theme, photoSize, showSnapNotes,
     playingAudioId, loadingAudioId, audioDurations, handleReply, stableBubbleTap, stableBubbleLongPress,
     stablePlayAudio, stableOpenUserProfile,
   ]);
@@ -1522,16 +1530,16 @@ export default function FlammesScreen() {
     setSendingMessage(false);
   };
 
-  // Web : ouvre directement l'appareil photo (capture='environment'), comme
-  // AccueilScreen.pickImageWeb — sans ça <input type=file> sans capture ouvre la
-  // galerie/le sélecteur de fichiers, jamais l'appareil photo, alors que le bouton
-  // du chat est une icône caméra qui promet une prise de vue directe.
-  const pickChatPhotoWeb = () => {
+  // Web : useCamera=true ouvre directement l'appareil photo (capture='environment'),
+  // comme AccueilScreen.pickImageWeb — sans ça <input type=file> sans capture ouvre
+  // la galerie/le sélecteur de fichiers. useCamera=false = galerie explicite (pas
+  // de capture), même <input> réutilisé pour les deux entrées du chat (caméra/galerie).
+  const pickChatPhotoWeb = (useCamera) => {
     if (typeof document === 'undefined') return;
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.setAttribute('capture', 'environment');
+    if (useCamera) input.setAttribute('capture', 'environment');
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return;
@@ -1547,7 +1555,21 @@ export default function FlammesScreen() {
       setShowSnapCamera(true);
       return;
     }
-    pickChatPhotoWeb();
+    pickChatPhotoWeb(true);
+  };
+
+  // Envoi d'une photo depuis la galerie (bouton dédié, distinct de la caméra).
+  const pickChatPhotoFromGallery = async () => {
+    if (!selectedFriend || sendingMessage) return;
+    if (Platform.OS === 'web') { pickChatPhotoWeb(false); return; }
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      showToast('Permission refusée pour accéder à la galerie', { type: 'warning' });
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5, allowsEditing: false });
+    if (result.canceled) return;
+    setChatPhotoCrop({ visible: true, uri: result.assets[0].uri });
   };
 
   const onStoryMediaPicked = ({ uri, isVideo }) => {
@@ -1721,6 +1743,18 @@ export default function FlammesScreen() {
                 maxLength={500}
                 editable={!isRecording}
               />
+              {!messageText.trim() && !isRecording && (
+                <TouchableOpacity
+                  style={[styles.micBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+                  onPress={pickChatPhotoFromGallery}
+                  disabled={sendingMessage}
+                  accessibilityRole="button"
+                  accessibilityLabel="Envoyer une photo depuis la galerie"
+                  accessibilityState={{ disabled: sendingMessage }}
+                >
+                  <Feather name="image" size={18} color={theme.textSub} />
+                </TouchableOpacity>
+              )}
               {!messageText.trim() && (
                 <TouchableOpacity
                   style={[styles.micBtn, { backgroundColor: isRecording ? '#FF4A4A' : theme.card, borderColor: isRecording ? '#FF4A4A44' : theme.border }]}
@@ -2207,15 +2241,15 @@ const styles = StyleSheet.create({
   msgEmpty:        { alignItems: 'center', paddingTop: 48, gap: 10 },
   msgEmptyText:    { fontSize: 16, fontWeight: '600' },
   msgEmptySub:     { fontSize: 12 },
-  msgRow:          { width: '50%' },
+  msgRow:          { maxWidth: '75%' },
   msgRowRight:     { alignSelf: 'flex-end', alignItems: 'flex-end' },
   msgRowLeft:      { alignSelf: 'flex-start', alignItems: 'flex-start' },
-  bubble:          { borderRadius: 18, padding: 12, width: '100%' },
+  bubble:          { borderRadius: 18, padding: 12, maxWidth: '100%' },
   bubbleSent:      { borderBottomRightRadius: 4 },
   bubbleRecv:      { borderBottomLeftRadius: 4 },
   bubbleText:      { fontSize: 14, lineHeight: 20 },
   bubbleDeleted:   { fontSize: 13, fontStyle: 'italic' },
-  msgImage:        { width: '100%', aspectRatio: 1, borderRadius: 12, marginBottom: 4 },
+  msgImage:        { borderRadius: 12, marginBottom: 4 },
   snapNotesRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginBottom: 4 },
   snapNoteGlobal:  { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
   snapNoteGlobalText: { color: '#fff', fontWeight: '800', fontSize: 12 },
@@ -2233,7 +2267,7 @@ const styles = StyleSheet.create({
   msgInput:        { flex: 1, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 100, borderWidth: 1 },
   sendBtn:         { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   micBtn:          { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  audioMsgRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%', paddingVertical: 2 },
+  audioMsgRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 140, paddingVertical: 2 },
   audioPlayCircle: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   audioWaveform:   { flexDirection: 'row', alignItems: 'center', gap: 2, flex: 1 },
   audioBar:        { width: 3, borderRadius: 2, minHeight: 3 },
@@ -2246,7 +2280,7 @@ const styles = StyleSheet.create({
   replyQuote:      { borderLeftWidth: 3, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5, marginBottom: 6 },
   replyQuoteSender:{ fontSize: 11, fontWeight: '700', marginBottom: 2 },
   replyQuoteText:  { fontSize: 12 },
-  swipeableBubbleWrap: { width: '100%' },
+  swipeableBubbleWrap: { maxWidth: '100%' },
 
   /* Story modal */
   storyModalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },

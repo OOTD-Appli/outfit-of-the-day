@@ -1,8 +1,19 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-08-15 — Feed : vrai scroll-snap CSS sur web (le swipe ressemblait à un défilement libre au lieu d'un passage photo par photo).
+> Dernière mise à jour : 2026-08-15 — Chat façon Instagram : bulles content-hugging, envoi photo galerie ajouté.
 
 ---
+
+## Chat façon Instagram (taille des bulles + galerie) — 2026-08-15
+
+D'après 2 captures d'écran de référence (chat Instagram) fournies par l'utilisateur.
+
+- [x] **Bulles "content-hugging"** : retour à `msgRow.maxWidth: '75%'` (au lieu de la largeur fixe 50%/100% des itérations précédentes) — un message court reste compact/arrondi (comme sur les captures), un message long wrappe dans la limite de 75%. Forme et couleurs OOTD **inchangées** (demande explicite de l'utilisateur) : seule la mécanique de largeur a changé.
+- [x] **Taille photo découplée du cap de largeur de la bulle** : `photoSize = Math.min(Math.round(ww * 0.55), 260)`, appliqué en `width`/`height` explicites — indépendant de `msgRow.maxWidth` cette fois (contrairement aux 2 tentatives précédentes qui couplaient les deux et avaient causé des débordements). La bulle (content-hugging) s'adapte à la photo, jamais l'inverse.
+- [x] **`audioMsgRow`** : `minWidth: 140` (au lieu du `width: 100%` de l'itération précédente, devenu incohérent avec des bulles de nouveau content-hugging).
+- [x] **Envoi de photo depuis la galerie ajouté** (fonctionnalité manquante — seule la caméra existait) : nouveau bouton dédié (icône image) dans la barre de saisie, à côté du micro. `pickChatPhotoFromGallery()` → `ImagePicker.launchImageLibraryAsync` sur natif, `pickChatPhotoWeb(false)` (sans `capture`) sur web. Le bouton caméra existant (`sendPhotoMessage`) reste inchangé pour la prise de vue directe.
+- [x] **Déjà présents, vérifiés sans modification** : like par double-tap sur message reçu (`handleBubbleTap`), réponse par swipe vers la droite sur message reçu (`SwipeableMessageBubble`).
+- [x] Vérifications : `npm test` (64/64) + `npx expo export --platform web`.
 
 ## Feed — swipe photo par photo cassé sur web — 2026-08-15
 
