@@ -6,6 +6,8 @@ const screens = [
   '../App',
   '../screens/AccueilScreen',
   '../screens/AuthScreen',
+  '../screens/CompetitionScreen',
+  '../screens/CreateCompetitionScreen',
   '../screens/CustomizationScreen',
   '../screens/FeedScreen',
   '../screens/FlammesScreen',

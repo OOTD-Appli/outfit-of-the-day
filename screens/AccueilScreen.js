@@ -218,6 +218,9 @@ export default function AccueilScreen({ navigation }) {
   const [highScoreReminder, setHighScoreReminder] = useState(null); // { note } | null
   const [showLowCreditsReminder, setShowLowCreditsReminder] = useState(false);
   const [topOotds, setTopOotds] = useState([]);
+  // Compétitions
+  const [competitions, setCompetitions] = useState([]);
+  const [competitionsLoading, setCompetitionsLoading] = useState(true);
   // Stories
   const [userId, setUserId] = useState(null);
   const [myStory, setMyStory] = useState(null);
@@ -340,6 +343,34 @@ export default function AccueilScreen({ navigation }) {
     setCredits(effective);
   }, []);
 
+  const fetchCompetitions = useCallback(async () => {
+    setCompetitionsLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('competition_members')
+        .select('last_read_at, competitions(id, name, created_at)')
+        .eq('user_id', user.id)
+        .order('competitions(created_at)', { ascending: false });
+      if (error) throw error;
+      const rows = (data || []).filter(r => r.competitions);
+      const withUnread = await Promise.all(rows.map(async (r) => {
+        const { count } = await supabase
+          .from('competition_messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('competition_id', r.competitions.id)
+          .gt('created_at', r.last_read_at)
+          .neq('sender_id', user.id);
+        return { ...r.competitions, unread: count || 0 };
+      }));
+      setCompetitions(withUnread);
+    } catch (_) {
+      // silencieux : la liste des compétitions n'est pas critique au chargement
+    }
+    setCompetitionsLoading(false);
+  }, []);
+
   const fetchTopOotds = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -386,7 +417,8 @@ export default function AccueilScreen({ navigation }) {
     fetchCredits();
     fetchTopOotds();
     fetchMyStory();
-  }, [fetchCredits, fetchTopOotds, fetchMyStory]));
+    fetchCompetitions();
+  }, [fetchCredits, fetchTopOotds, fetchMyStory, fetchCompetitions]));
 
   const searchMusic = (query) => {
     setMusicPicker(prev => ({ ...prev, query }));
@@ -1173,6 +1205,51 @@ export default function AccueilScreen({ navigation }) {
           </Animated.View>
         )}
 
+        {/* ===== MES COMPÉTITIONS (toujours visible en scrollant) ===== */}
+        <View style={s.storiesSection}>
+          <View style={s.storiesSectionHeader}>
+            <Ionicons name="trophy-outline" size={16} color={ACCENT} />
+            <Text style={s.storiesSectionTitle}>Mes compétitions</Text>
+          </View>
+
+          {competitionsLoading ? (
+            <ActivityIndicator color={ACCENT} style={{ marginVertical: 12 }} />
+          ) : competitions.length === 0 ? (
+            <Text style={{ color: TEXT_SEC, fontSize: 13, marginBottom: 10 }}>
+              Aucune compétition pour l'instant.
+            </Text>
+          ) : (
+            competitions.map((c) => (
+              <TouchableOpacity
+                key={c.id}
+                style={s.competitionRow}
+                activeOpacity={0.85}
+                onPress={() => navigation.navigate('Competition', { competitionId: c.id, competitionName: c.name })}
+              >
+                <View style={s.competitionIconWrap}>
+                  <Ionicons name="people" size={18} color={ACCENT} />
+                </View>
+                <Text style={s.competitionName} numberOfLines={1}>{c.name}</Text>
+                {c.unread > 0 && (
+                  <View style={s.competitionUnreadDot}>
+                    <Text style={s.competitionUnreadText}>{c.unread > 9 ? '9+' : c.unread}</Text>
+                  </View>
+                )}
+                <Ionicons name="chevron-forward" size={18} color={TEXT_SEC} />
+              </TouchableOpacity>
+            ))
+          )}
+
+          <TouchableOpacity
+            style={s.createCompetitionBtn}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('CreateCompetition')}
+          >
+            <Ionicons name="add-circle-outline" size={18} color={ACCENT} />
+            <Text style={s.createCompetitionText}>Créer une compétition</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* ===== SECTION STORIES (toujours visible en scrollant) ===== */}
         <View style={s.storiesSection}>
           <View style={s.storiesSectionHeader}>
@@ -1649,6 +1726,15 @@ function createStyles(theme) {
   storiesSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   storiesSectionTitle:  { fontWeight: '800', fontSize: 17, color: PRI_T, flex: 1 },
   storiesSectionSub:    { fontSize: 12, color: SUB_T },
+
+  /* Section Compétitions */
+  competitionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: CARD_T, borderRadius: 16, borderWidth: 1, borderColor: BRD_T, padding: 14, marginBottom: 10 },
+  competitionIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT + '1A', alignItems: 'center', justifyContent: 'center' },
+  competitionName: { flex: 1, fontWeight: '700', fontSize: 14.5, color: PRI_T },
+  competitionUnreadDot: { backgroundColor: ACCENT, borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  competitionUnreadText: { color: '#fff', fontSize: 10.5, fontWeight: '800' },
+  createCompetitionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: ACCENT, borderRadius: 16, paddingVertical: 13, marginTop: 4 },
+  createCompetitionText: { color: ACCENT, fontWeight: '800', fontSize: 14 },
 
   myStoryPreview:    { borderRadius: 20, overflow: 'hidden', height: 200, marginBottom: 14, position: 'relative' },
   myStoryThumb:      { width: '100%', height: '100%' },

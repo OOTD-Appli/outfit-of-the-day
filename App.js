@@ -49,6 +49,8 @@ import AccueilScreen from './screens/AccueilScreen';
 import FeedScreen from './screens/FeedScreen';
 import ProfilScreen from './screens/ProfilScreen';
 import ShopScreen from './screens/ShopScreen';
+import CreateCompetitionScreen from './screens/CreateCompetitionScreen';
+import CompetitionScreen from './screens/CompetitionScreen';
 
 const Tab = createBottomTabNavigator();
 const AccueilStackNav = createNativeStackNavigator();
@@ -58,8 +60,9 @@ function AccueilStack() {
   return (
     <AccueilStackNav.Navigator screenOptions={{ headerShown: false }}>
       <AccueilStackNav.Screen name="AccueilHome" component={AccueilScreen} />
-      {/* CompetitionScreen / ShareToCompetitionScreen / CreateCompetitionScreen
-          rejoignent cette stack en Phase 1-2 de la refonte Compétitions. */}
+      <AccueilStackNav.Screen name="CreateCompetition" component={CreateCompetitionScreen} />
+      <AccueilStackNav.Screen name="Competition" component={CompetitionScreen} />
+      {/* ShareToCompetitionScreen rejoint cette stack juste après. */}
     </AccueilStackNav.Navigator>
   );
 }
