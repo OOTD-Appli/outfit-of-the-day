@@ -5,8 +5,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { decode } from 'base64-arraybuffer';
 import {
   View, Text, StyleSheet, ScrollView, Animated, Easing,
-  Alert, TouchableOpacity, ActivityIndicator, TextInput,
-  useWindowDimensions, Platform, Keyboard,
+  Alert, TouchableOpacity, ActivityIndicator,
+  useWindowDimensions, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -194,10 +194,6 @@ export default function AccueilScreen({ navigation }) {
   const [showCustomization, setShowCustomization] = useState(false);
   const [showStyleHashtag, setShowStyleHashtag] = useState(true);
   const [visibleScores, setVisibleScores] = useState([]); // clés de notes affichées sur le post
-  const [showContextPanel, setShowContextPanel] = useState(false);
-  const [contextText, setContextText] = useState('');
-  const [contextResult, setContextResult] = useState(null);
-  const [loadingContext, setLoadingContext] = useState(false);
   const [musicPicker, setMusicPicker] = useState({ visible: false, query: '', results: [], searching: false });
   const musicSearchTimeout = useRef(null);
   useEffect(() => () => {
@@ -385,9 +381,6 @@ export default function AccueilScreen({ navigation }) {
     setPhotoIncomplete(null);
     setHighScoreReminder(null);
     cachedPublicUrlRef.current = null;
-    setShowContextPanel(false);
-    setContextText('');
-    setContextResult(null);
     setVisibleScores([]);
     setImage(asset);
   };
@@ -517,35 +510,6 @@ export default function AccueilScreen({ navigation }) {
       console.log("analyzeOutfit error:", e);
     }
     setLoading(false);
-  };
-
-  const analyzeContext = async () => {
-    if (!image || !contextText.trim() || loadingContext) return;
-    setLoadingContext(true);
-    try {
-      if (!image.base64) throw new Error('Image introuvable.');
-      const base64Image = `data:image/jpeg;base64,${image.base64}`;
-      const { data: parsed, error: fnError } = await withTimeout(
-        supabase.functions.invoke('contextual-analysis', { body: { base64Image, context: contextText.trim() } }),
-        REQUEST_TIMEOUT_MS,
-        "L'analyse contextuelle est trop longue. Verifie ta connexion.",
-      );
-      if (fnError) {
-        let errMsg = 'Analyse contextuelle indisponible';
-        try {
-          const errBody = await fnError.context?.json?.();
-          if (errBody?.error) errMsg = errBody.error;
-          if (typeof errBody?.credits === 'number') setCredits(errBody.credits);
-        } catch (_) {}
-        throw new Error(errMsg);
-      }
-      if (!parsed || typeof parsed.coherent !== 'boolean') throw new Error('Reponse IA invalide.');
-      if (typeof parsed.credits_remaining === 'number') setCredits(parsed.credits_remaining);
-      setContextResult(parsed);
-    } catch (e) {
-      showToast(e.message || 'Erreur analyse contextuelle.', { type: 'error' });
-    }
-    setLoadingContext(false);
   };
 
   const uploadAnalyzedImageIfNeeded = useCallback(async () => {
@@ -740,117 +704,13 @@ export default function AccueilScreen({ navigation }) {
               </View>
             )}
 
-            {/* Conseil contextuel — saisi avant l'analyse */}
-            {image && (
-              <View style={{ marginBottom: 20 }}>
-                <TouchableOpacity
-                  style={s.contextBtn}
-                  onPress={() => { setShowContextPanel(p => !p); setContextResult(null); }}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="location-outline" size={16} color="#1a0a10" />
-                  <Text style={s.contextBtnText}>
-                    {showContextPanel ? 'Masquer le conseil contextuel' : 'Conseil contextuel'}
-                  </Text>
-                </TouchableOpacity>
-                {showContextPanel && (
-                  <View style={s.contextPanel}>
-                    <Text style={s.contextLabel}>Decris le contexte de ta tenue</Text>
-                    <TextInput
-                      style={s.contextInput}
-                      placeholder="Ex : soiree formelle, rendez-vous professionnel..."
-                      placeholderTextColor={TEXT_SEC}
-                      value={contextText}
-                      onChangeText={setContextText}
-                      maxLength={120}
-                      multiline
-                    />
-                    <Bouncy
-                      style={[s.contextAnalyzeBtn, (loadingContext || !contextText.trim()) && s.analyzeBtnDisabled]}
-                      onPress={analyzeContext}
-                      disabled={loadingContext || !contextText.trim()}
-                      accessibilityRole="button"
-                      accessibilityLabel={loadingContext ? 'Analyse en cours' : 'Analyser le contexte'}
-                      accessibilityState={{ disabled: !!(loadingContext || !contextText.trim()) }}
-                    >
-                      {loadingContext ? (
-                        <View style={s.analyzeBtnInner}>
-                          <ActivityIndicator color="#1a0a10" size="small" />
-                          <Text style={s.analyzeBtnText}>  Analyse...</Text>
-                        </View>
-                      ) : (
-                        <Text style={s.analyzeBtnText}>Analyser le contexte</Text>
-                      )}
-                    </Bouncy>
-                    {contextResult && (
-                      <View style={[s.contextResultCard, { borderColor: contextResult.coherent ? '#4AFF7A44' : '#FF8C0044' }]}>
-                        {/* Badge verdict */}
-                        <View style={[s.contextBadge, { backgroundColor: contextResult.coherent ? '#4AFF7A18' : '#FF8C0018' }]}>
-                          <Ionicons
-                            name={contextResult.coherent ? 'checkmark-circle' : 'alert-circle'}
-                            size={15}
-                            color={contextResult.coherent ? '#4AFF7A' : '#FF8C00'}
-                          />
-                          <Text style={[s.contextBadgeText, { color: contextResult.coherent ? '#4AFF7A' : '#FF8C00' }]}>
-                            {contextResult.badge || (contextResult.coherent ? 'Validé pour la situation' : 'À ajuster')}
-                          </Text>
-                        </View>
-                        {/* Pourquoi (nouveau champ) ou fallback explication */}
-                        {!!(contextResult.pourquoi || contextResult.explication) && (
-                          <Text style={s.contextExplication}>
-                            {contextResult.pourquoi || contextResult.explication}
-                          </Text>
-                        )}
-                        {/* Conseil */}
-                        {!!contextResult.conseil && (
-                          <Text style={s.contextConseil}>{contextResult.conseil}</Text>
-                        )}
-                        {/* Alternative (si tenue inadaptée) */}
-                        {!!contextResult.alternative && (
-                          <View style={s.contextAltBlock}>
-                            <Text style={s.contextAltLabel}>Alternative :</Text>
-                            <Text style={s.contextAltText}>{contextResult.alternative}</Text>
-                          </View>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                )}
-              </View>
-            )}
 
-            {/* Carte conseil */}
-            <View style={s.tipCard}>
-              <View style={s.tipIconWrap}>
-                <Ionicons name="bulb-outline" size={20} color={theme.accent} />
-              </View>
-              <View style={s.tipTexts}>
-                <View style={s.tipTitleRow}>
-                  <Text style={s.tipTitle}>Conseil</Text>
-                  <Ionicons name="heart-outline" size={13} color={ACCENT} accessibilityElementsHidden />
-                </View>
-                <Text style={s.tipBody}>
-                  Une bonne lumière et une photo complète de ta tenue aident à l'analyser au mieux !
-                </Text>
-              </View>
-            </View>
-
-            {/* Comment ça marche */}
-            <Text style={s.howTitle}>Comment ça marche ?</Text>
-            <View style={s.howRow}>
-              {[
-                { icon: 'camera-outline',     title: '1. Prends ta photo',        text: 'Prends une photo de ta tenue en pied, dans un endroit bien éclairé.' },
-                { icon: 'sparkles-outline',   title: '2. Analyse personnalisée',  text: "Notre IA analyse ton look selon plusieurs critères de style et d'harmonie." },
-                { icon: 'star-outline',       title: '3. Reçois ton feedback',    text: 'Découvre ta note, des conseils et des astuces pour tes prochains looks !' },
-              ].map((item, i) => (
-                <View key={i} style={s.howCard}>
-                  <View style={s.howIconCircle}>
-                    <Ionicons name={item.icon} size={20} color={theme.accent} />
-                  </View>
-                  <Text style={s.howCardTitle}>{item.title}</Text>
-                  <Text style={s.howText}>{item.text}</Text>
-                </View>
-              ))}
+            {/* Conseil compact — laisse la place à "Mes compétitions" en dessous */}
+            <View style={s.tipCardCompact}>
+              <Ionicons name="bulb-outline" size={15} color={theme.accent} />
+              <Text style={s.tipBodyCompact} numberOfLines={1}>
+                Bonne lumière + tenue entière = meilleure analyse
+              </Text>
             </View>
           </AnimatedEntrance>
         )}
@@ -973,9 +833,6 @@ export default function AccueilScreen({ navigation }) {
                   setScore(null);
                   setHighScoreReminder(null);
                   cachedPublicUrlRef.current = null;
-                  setShowContextPanel(false);
-                  setContextText('');
-                  setContextResult(null);
                 }}
               >
                 <Text style={s.retryText}>Analyser une nouvelle tenue</Text>
@@ -1185,22 +1042,13 @@ function createStyles(theme) {
   tipHeart: { fontSize: 12 },
   tipBody:  { fontSize: 12.5, lineHeight: 17, color: SUB_T },
 
-  // Comment ça marche
-  howTitle: { fontSize: 17, fontWeight: '800', color: PRI_T, marginBottom: 14, textAlign: 'center' },
-  howRow:   { flexDirection: 'row', gap: 10 },
-  howCard:  {
-    flex: 1, backgroundColor: CARD_T, borderRadius: 18, padding: 14, alignItems: 'center',
-    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  // Conseil compact (remplace l'ancien bloc "Conseil" + "Comment ça marche" —
+  // moins de place prise, plus de place pour "Mes compétitions" en dessous)
+  tipCardCompact: {
+    flexDirection: 'row', alignItems: 'center', gap: 7,
+    marginBottom: 14,
   },
-  howIconCircle: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: TIP_T,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 10,
-  },
-  howCardTitle: { fontSize: 12, fontWeight: '800', color: PRI_T, marginBottom: 6, textAlign: 'center' },
-  howText:  { fontSize: 10.5, lineHeight: 14, textAlign: 'center', color: SUB_T },
+  tipBodyCompact: { fontSize: 11.5, color: SUB_T, flex: 1 },
 
   // APRÈS — en-tête
   afterHeader:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 },
@@ -1323,22 +1171,6 @@ function createStyles(theme) {
 
   /* Post-analyse actions */
   postAnalysisActions: { gap: 10, marginTop: 20, marginBottom: 4 },
-
-  /* Conseil contextuel */
-  contextBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 16, backgroundColor: ACC_T, borderRadius: 16, marginBottom: 0, justifyContent: 'center', shadowColor: ACC_T, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
-  contextBtnText: { fontSize: 16, fontWeight: '700', color: '#1a0a10' },
-  contextPanel: { backgroundColor: CARD_T, borderRadius: 18, padding: 16, marginTop: 10, marginBottom: 4, borderWidth: 1, borderColor: BRD_T },
-  contextLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, color: SUB_T, marginBottom: 8 },
-  contextInput: { borderRadius: 10, borderWidth: 1, borderColor: BRD_T, backgroundColor: BG_T, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: PRI_T, minHeight: 56, textAlignVertical: 'top' },
-  contextAnalyzeBtn: { borderRadius: 16, padding: 16, alignItems: 'center', marginTop: 12, backgroundColor: ACC_T, shadowColor: ACC_T, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
-  contextResultCard: { marginTop: 14, borderRadius: 14, borderWidth: 1.5, padding: 14 },
-  contextBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, alignSelf: 'flex-start', marginBottom: 10 },
-  contextBadgeText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.2 },
-  contextExplication: { fontSize: 13, color: PRI_T, lineHeight: 19, marginBottom: 6 },
-  contextConseil: { fontSize: 12, color: SUB_T, lineHeight: 17, fontStyle: 'italic', marginBottom: 6 },
-  contextAltBlock: { marginTop: 4, borderRadius: 10, borderWidth: 1, borderColor: BRD_T, backgroundColor: BG_T, padding: 10 },
-  contextAltLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4, color: SUB_T, marginBottom: 3 },
-  contextAltText: { fontSize: 12, color: PRI_T, lineHeight: 17 },
 
   /* Section Stories */
   storiesSection:    { marginTop: 28, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: BRD_T },

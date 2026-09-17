@@ -521,32 +521,6 @@ export default function RecapScreen() {
             <View style={styles.header}>
               <View>
                 <Text style={[styles.title, { color: theme.textPri }]}>Récap</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-                  <TouchableOpacity
-                    style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                    onPress={openSettings}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="settings-outline" size={16} color={theme.accent} />
-                    <Text style={[styles.logoutText, { color: theme.accent }]}>Réglages</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                    onPress={() => navigation.navigate('Shop')}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="star-outline" size={16} color={theme.accent} />
-                    <Text style={[styles.logoutText, { color: theme.accent }]}>Abonnement</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                    onPress={() => navigation.navigate('Friends')}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="people-outline" size={16} color={theme.accent} />
-                    <Text style={[styles.logoutText, { color: theme.accent }]}>Mes amis</Text>
-                  </TouchableOpacity>
-                </View>
               </View>
               <View style={styles.headerActions}>
                 <TouchableOpacity
@@ -644,6 +618,33 @@ export default function RecapScreen() {
                 <View style={[styles.niveauFill, { width: `${levelInfo.percent}%`, backgroundColor: theme.accent }]} />
               </View>
               <Text style={[styles.niveauSub, { color: theme.textSub }]}>{levelInfo.progressInLevel} / {levelInfo.threshold} points pour le prochain niveau</Text>
+            </View>
+
+            <View style={styles.actionsRow}>
+              <TouchableOpacity
+                style={[styles.actionBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                onPress={openSettings}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="settings-outline" size={16} color={theme.accent} />
+                <Text style={[styles.actionBtnText, { color: theme.accent }]}>Réglages</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                onPress={() => navigation.navigate('Shop')}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="star-outline" size={16} color={theme.accent} />
+                <Text style={[styles.actionBtnText, { color: theme.accent }]}>Abonnement</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                onPress={() => navigation.navigate('Friends')}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="people-outline" size={16} color={theme.accent} />
+                <Text style={[styles.actionBtnText, { color: theme.accent }]}>Mes amis</Text>
+              </TouchableOpacity>
             </View>
 
             {(top3App.length > 0 || top3Friends.length > 0) && (
@@ -1062,6 +1063,10 @@ const styles = StyleSheet.create({
   niveauFill:     { height: '100%', borderRadius: 4 },
   niveauSub:      { fontSize: 11 },
 
+  actionsRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginHorizontal: 16, marginBottom: 20 },
+  actionBtn:      { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1.5 },
+  actionBtnText:  { fontWeight: '800', fontSize: 12.5 },
+
   galerieTitle:   { fontWeight: '700', fontSize: 16, padding: 16, paddingBottom: 8 },
 
   top3Section:    { paddingHorizontal: 16, gap: 16, marginTop: 4 },
@@ -1076,8 +1081,8 @@ const styles = StyleSheet.create({
   privacyLeft:    { flex: 1, marginRight: 12 },
   privacyLabel:   { fontWeight: '700', fontSize: 14, marginBottom: 3 },
   privacySub:     { fontSize: 12, lineHeight: 17 },
-  gridCell:       { width: '33.33%', aspectRatio: 1 },
-  gridPhoto:      { width: '100%', height: '100%' },
+  gridCell:       { width: '33.33%', aspectRatio: 1, padding: 3 },
+  gridPhoto:      { width: '100%', height: '100%', borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(128,128,128,0.28)' },
 
   historyLockCard: { alignItems: 'center', gap: 6, borderRadius: 16, borderWidth: 1, padding: 20, margin: 12 },
   historyLockText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },

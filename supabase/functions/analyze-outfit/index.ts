@@ -72,6 +72,17 @@ CALIBRAGE : base ton jugement sur ta connaissance générale des tenues largemen
 comme réussies (mode de rue, éditos, tendances) — pas sur une simple checklist mécanique.
 Ne cite JAMAIS de marque, d'article ou de source précise inventée.
 
+IMPORTANT — CALIBRAGE DES NOTES (lis ceci avant de noter) : la note globale est une SOMME
+sur 100, pas une moyenne, et la plupart des tenues du quotidien doivent atterrir entre 55 et
+80/100. Une tenue simple mais cohérente et sans erreur (ex : jean droit + t-shirt uni bien
+assorti + baskets propres, rien d'exceptionnel mais rien de raté) est une tenue CORRECTE :
+elle doit obtenir un score proche de 65-70/100, PAS un score proche de 0 ou 20. Réserve les
+scores en dessous de 40 aux tenues avec de vrais problèmes visibles et cumulés (plusieurs
+couleurs qui se heurtent frontalement, coupe qui ne va manifestement pas, tenue négligée ou
+tachée). Réserve les scores au-dessus de 85 aux tenues avec une vraie recherche stylistique
+évidente (silhouette travaillée, accessoires pertinents, layering maîtrisé). Une tenue neutre
+n'est ni un échec ni un exploit : elle doit rester dans la moyenne-haute, pas s'effondrer.
+
 GESTION DU CADRAGE ET DE LA VISIBILITÉ : si un élément secondaire n'est pas visible à cause
 du cadrage ou de la lumière (ex : chaussures partiellement masquées), n'applique aucun malus
 ni bonus sur cet élément précis et concentre-toi sur ce qui est clairement identifiable.
@@ -82,28 +93,33 @@ citer un élément concret et visible sur LA PHOTO (une couleur précise, un vê
 comme "ce jean baggy", un accessoire). Interdiction des formules génériques. Si tu ne peux
 pas être spécifique sur un point, ne le mentionne pas.
 
-NOTATION SUR 100 — trois critères, chacun avec des sous-points précis qui s'additionnent.
-Les fourchettes sont un guide de calibrage selon la gravité réelle observée, pas un barème
-à appliquer mécaniquement au chiffre près.
+NOTATION SUR 100 — trois critères, chacun avec un POINT DE DÉPART représentant une tenue
+correcte et neutre sur ce critère précis (ni ratée ni remarquable), à AJUSTER à la hausse ou
+à la baisse selon ce que tu observes vraiment. Les fourchettes sont un guide de calibrage
+selon la gravité/qualité réelle observée, pas un barème à appliquer mécaniquement au chiffre
+près — et rien n'oblige à utiliser tout l'écart : une tenue neutre reste proche du départ.
 
-CRITÈRE 1 — HARMONIE COULEURS & MATIÈRES (34 points, départ à 34)
+CRITÈRE 1 — HARMONIE COULEURS & MATIÈRES (34 points, départ à 24/34 pour une palette neutre et cohérente)
+• Palette particulièrement harmonieuse ou choix de couleurs qui subliment la tenue : +4 à +10 pts
 • Trop de couleurs non neutres qui se dispersent (plus de 3, hors noir/blanc/gris/beige) : -3 à -10 pts
 • Couleurs qui se heurtent (conflit chaud/froid, saturations qui jurent) : -3 à -10 pts
 • Monochrome plat sans variation de texture : -3 à -6 pts
 • Matières qui ne vont pas ensemble : -3 à -6 pts
-Minimum : 0.
+Plage : 0 à 34.
 
-CRITÈRE 2 — COUPE & SILHOUETTE (33 points, départ à 0)
-• Volumes équilibrés haut/bas : +5 à +13 pts
-• Ligne de taille marquée (French tuck, ceinture, crop top) : +3 à +7 pts
-• Tombé et longueurs impeccables : +3 à +7 pts
-• Type de coupe maîtrisé (oversized assumé, slim net, regular propre) : +3 à +6 pts
+CRITÈRE 2 — COUPE & SILHOUETTE (33 points, départ à 23/33 pour une coupe correcte et bien portée)
+• Volumes/silhouette particulièrement travaillés, ligne de taille marquée, tombé impeccable : +4 à +10 pts
+• Volumes déséquilibrés ou peu flatteurs pour la silhouette : -5 à -12 pts
+• Coupe mal ajustée (trop grand/petit sans que ce soit un choix de style assumé) : -5 à -15 pts
+Plage : 0 à 33.
 
-CRITÈRE 3 — STYLE & FINITIONS (33 points, départ à 0)
-• Layering cohérent : +5 à +10 pts
-• Accessoire présent et pertinent : +2 pts par accessoire, max +10 pts
-• Chaussures cohérentes avec le style global : +5 à +10 pts
-• Vêtement visible froissé ou taché : -3 à -6 pts
+CRITÈRE 3 — STYLE & FINITIONS (33 points, départ à 20/33 pour un style simple sans effort ni négligence particulière)
+• Layering cohérent : +3 à +7 pts
+• Accessoire présent et pertinent : +2 pts par accessoire, max +8 pts
+• Chaussures cohérentes avec le style global : +3 à +7 pts
+• Absence quasi totale d'accessoires ou de finitions sur une tenue qui s'y prêtait : -3 à -6 pts
+• Vêtement visible froissé, taché ou dépareillé : -5 à -12 pts
+Plage : 0 à 33.
 
 CRITÈRE STYLES (obligatoire, sauf si photo_complete est false) :
 Choisis exactement 1 ou 2 styles parmi cette liste — ne jamais inventer d'autres valeurs :
