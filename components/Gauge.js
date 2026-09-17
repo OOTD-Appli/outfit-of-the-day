@@ -18,7 +18,7 @@ export default function Gauge({
   const circ = 2 * Math.PI * r;
   const dash = circ * pct;
   const center = size / 2;
-  const display = Number.isFinite(num) ? num.toFixed(1).replace('.', ',') : '–';
+  const display = Number.isFinite(num) ? String(Math.round(num)) : '–';
 
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
@@ -40,7 +40,7 @@ export default function Gauge({
         <Text style={{ fontSize: size * 0.27, fontWeight: '800', color: textColor || color, lineHeight: size * 0.32 }}>
           {display}
         </Text>
-        <Text style={{ fontSize: size * 0.13, color: '#9A9A9A', marginTop: 1 }}>/10</Text>
+        <Text style={{ fontSize: size * 0.13, color: '#9A9A9A', marginTop: 1 }}>/{max}</Text>
       </View>
     </View>
   );

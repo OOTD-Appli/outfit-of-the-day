@@ -192,7 +192,7 @@ export default function RecapScreen() {
           .single(),
         supabase
           .from('ootds')
-          .select('id, image_url, score_global, score_couleurs, score_coupe, score_tendance, conseil, caption, styles, created_at')
+          .select('id, image_url, score_global, score_couleurs, score_coupe, score_tendance, score_scale, conseil, caption, styles, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .range(0, OOTDS_PAGE - 1),
@@ -232,7 +232,7 @@ export default function RecapScreen() {
     const start = ootdsPageRef.current * OOTDS_PAGE;
     const { data } = await supabase
       .from('ootds')
-      .select('id, image_url, score_global, score_couleurs, score_coupe, score_tendance, conseil, caption, styles, created_at')
+      .select('id, image_url, score_global, score_couleurs, score_coupe, score_tendance, score_scale, conseil, caption, styles, created_at')
       .eq('user_id', profile.id)
       .order('created_at', { ascending: false })
       .range(start, start + OOTDS_PAGE - 1);
@@ -447,8 +447,13 @@ export default function RecapScreen() {
     setUploadingAvatar(false);
   };
 
+  // Normalise chaque tenue sur 100 avant de moyenner : les tenues antérieures
+  // au prompt IA v3 (score_scale=10) ne doivent pas fausser la moyenne face
+  // aux nouvelles notées sur 100.
   const moyenneScore = ootds.length > 0
-    ? (ootds.reduce((acc, o) => acc + o.score_global, 0) / ootds.length).toFixed(1)
+    ? Math.round(
+        ootds.reduce((acc, o) => acc + (o.score_global / (o.score_scale || 100)) * 100, 0) / ootds.length,
+      )
     : '-';
 
   const levelInfo = computeLevelInfo(profile?.points || 0);
@@ -920,7 +925,7 @@ export default function RecapScreen() {
                     <View style={[styles.lbGlobalBadge, { backgroundColor: theme.accent }]}>
                       <Ionicons name="star" size={15} color="#fff" />
                       <Text style={styles.lbGlobalScore}>{fmtNote(cur.score_global)}</Text>
-                      <Text style={styles.lbGlobalMax}>/10</Text>
+                      <Text style={styles.lbGlobalMax}>/{cur.score_scale || 100}</Text>
                     </View>
                     <Text style={styles.lbDate}>
                       {new Date(cur.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}

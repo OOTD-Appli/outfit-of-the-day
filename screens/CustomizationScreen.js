@@ -75,11 +75,12 @@ export default function CustomizationScreen({
   if (!score) return null;
   const busy = continuing;
   // DB : score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
+  // Note /100 (v3) : global = somme des 3 sous-critères (34+33+33).
   const chips = [
-    { k: 'Global', v: score.global, c: theme.accent, dbKey: 'score_global' },
-    { k: 'Fit', v: score.fit, c: '#ED93B1', dbKey: 'score_coupe' },
-    { k: 'Harmonie', v: score.harmonie, c: '#B0809A', dbKey: 'score_couleurs' },
-    { k: 'Détails', v: score.detail, c: '#C9A47A', dbKey: 'score_tendance' },
+    { k: 'Global', v: score.global, max: 100, c: theme.accent, dbKey: 'score_global' },
+    { k: 'Fit', v: score.fit, max: 33, c: '#ED93B1', dbKey: 'score_coupe' },
+    { k: 'Harmonie', v: score.harmonie, max: 34, c: '#B0809A', dbKey: 'score_couleurs' },
+    { k: 'Détails', v: score.detail, max: 33, c: '#C9A47A', dbKey: 'score_tendance' },
   ];
 
   return (
@@ -111,7 +112,7 @@ export default function CustomizationScreen({
                     activeOpacity={0.8}
                     onPress={() => onToggleScore?.(ch.dbKey)}
                     accessibilityRole="button"
-                    accessibilityLabel={`Note ${ch.k} ${ch.v} sur 10`}
+                    accessibilityLabel={`Note ${ch.k} ${ch.v} sur ${ch.max}`}
                     accessibilityState={{ selected }}
                     style={[
                       styles.chip,
@@ -124,7 +125,7 @@ export default function CustomizationScreen({
                         <Ionicons name="checkmark" size={11} color="#fff" />
                       </View>
                     )}
-                    <Text style={[styles.chipVal, { color: ch.c }]}>{ch.v}<Text style={styles.chipMax}>/10</Text></Text>
+                    <Text style={[styles.chipVal, { color: ch.c }]}>{ch.v}<Text style={styles.chipMax}>/{ch.max}</Text></Text>
                     <Text style={[styles.chipKey, { color: theme.textSub }]}>{ch.k}</Text>
                   </TouchableOpacity>
                 );

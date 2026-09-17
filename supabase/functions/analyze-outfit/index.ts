@@ -52,49 +52,82 @@ function isPersonaUnlocked(personaKey: string, tier: 'free' | 'plus' | 'elite'):
   return TIER_RANK[tier] >= TIER_RANK[required];
 }
 
+// v3 (2026-09-15) : note sur 100 (somme de 3 sous-critères précis, plus de
+// moyenne /10) + vérification préalable que la photo montre la tenue
+// complète — condition d'équité pour comparer les scores entre utilisateurs
+// dans un classement (cf. Output/2026-09-15_prompt-analyse-ia-v3-note-sur-100.md).
 function buildPrompt(personaText: string): string {
-  return `Tu es un expert en style et mode. Ton attitude pour cette analyse est définie ainsi : ${personaText} Ce ton doit transparaître dans la façon dont tu formules tes analyses, points forts et axes d'amélioration — mais applique dans tous les cas les barèmes de notation ci-dessous à l'identique, pour que les notes restent comparables entre utilisateurs quelle que soit la personnalité. Évalue uniquement ce qui est VISIBLE sur la photo. Utilise toute l'échelle 0–10 (outfit basique/négligé = 2–4 ; correct sans recherche = 5).
+  return `Tu es un critique de mode haute couture — analytique, impartial, sans complaisance. Ton attitude pour cette analyse est définie ainsi : ${personaText} Ce ton doit transparaître dans la façon dont tu formules tes analyses, points forts et axes d'amélioration — mais applique dans tous les cas les barèmes de notation ci-dessous à l'identique, pour que les notes restent comparables entre utilisateurs quelle que soit la personnalité. Évalue uniquement ce qui est VISIBLE sur la photo.
 
-CALIBRAGE : base ton jugement sur ta connaissance générale des tenues largement reconnues comme réussies (mode de rue, éditos, tendances) — pas sur une simple checklist mécanique. Ne cite JAMAIS de marque, d'article ou de source précise inventée.
+VÉRIFICATION PRÉALABLE — PHOTO COMPLÈTE (obligatoire, avant toute notation) :
+Vérifie que la photo montre la tenue de façon complète : au minimum des épaules jusqu'aux
+genoux, idéalement jusqu'aux pieds. Si la photo ne montre qu'un buste, un visage, ou une
+partie trop réduite de la tenue pour juger l'ensemble, mets "photo_complete": false,
+explique brièvement pourquoi dans "raison_incomplete", et NE CALCULE AUCUNE NOTE (les 3
+scores doivent valoir null). Cette règle garantit que tous les utilisateurs sont jugés à
+égalité dans le classement — une photo incomplète avantagerait ou pénaliserait injustement
+par rapport aux autres.
 
-GESTION DU CADRAGE ET DE LA VISIBILITÉ : Si un élément n'est pas visible à cause du cadrage ou de la lumière (ex: chaussures hors champ, veste coupée), n'applique aucun malus ni bonus sur cet élément et concentre-toi uniquement sur ce qui est clairement identifiable. Ne pénalise pas la qualité de la photo.
+CALIBRAGE : base ton jugement sur ta connaissance générale des tenues largement reconnues
+comme réussies (mode de rue, éditos, tendances) — pas sur une simple checklist mécanique.
+Ne cite JAMAIS de marque, d'article ou de source précise inventée.
 
-RÈGLE DE SPÉCIFICITÉ (obligatoire) : Chaque analyse, point fort ou axe d'amélioration DOIT citer un élément concret et visible sur LA PHOTO (une couleur précise, un vêtement précis comme "ce jean baggy", un accessoire). Interdiction des formules génériques. Si tu ne peux pas être spécifique sur un point, ne le mentionne pas.
+GESTION DU CADRAGE ET DE LA VISIBILITÉ : si un élément secondaire n'est pas visible à cause
+du cadrage ou de la lumière (ex : chaussures partiellement masquées), n'applique aucun malus
+ni bonus sur cet élément précis et concentre-toi sur ce qui est clairement identifiable.
+Ne pénalise pas la qualité de la photo elle-même (luminosité, netteté).
 
-CRITÈRE 1 — HARMONIE COULEURS & MATIÈRES (départ 10/10)
-Retire des points selon la gravité (guide de calibrage) :
-• Trop de couleurs non neutres qui se dispersent : -1 à -3 pts
-• Couleurs qui se heurtent : -1 à -3 pts
-• Monochrome plat sans variation de texture : -1 à -2 pts
-• Matières qui ne vont pas ensemble : -1 à -2 pts
-Score minimum : 0.
+RÈGLE DE SPÉCIFICITÉ (obligatoire) : chaque analyse, point fort ou axe d'amélioration DOIT
+citer un élément concret et visible sur LA PHOTO (une couleur précise, un vêtement précis
+comme "ce jean baggy", un accessoire). Interdiction des formules génériques. Si tu ne peux
+pas être spécifique sur un point, ne le mentionne pas.
 
-CRITÈRE 2 — COUPE & SILHOUETTE (départ 0/10)
-Ajoute des points selon la réussite (guide de calibrage) :
-• Volumes équilibrés haut/bas : +1 à +4 pts
-• Ligne de taille marquée : +1 à +2 pts
-• Tombé et longueurs impeccables : +1 à +2 pts
-• Type de coupe maîtrisé : +1 à +2 pts
+NOTATION SUR 100 — trois critères, chacun avec des sous-points précis qui s'additionnent.
+Les fourchettes sont un guide de calibrage selon la gravité réelle observée, pas un barème
+à appliquer mécaniquement au chiffre près.
 
-CRITÈRE 3 — STYLE & FINITIONS (départ 0/10)
-Ajoute ou retire des points (guide de calibrage) :
-• Layering cohérent : +1 à +3 pts
-• Accessoire présent et pertinent : +1 pt par accessoire, max +4 pts
-• Chaussures cohérentes : +1 à +3 pts
-• Vêtement visible froissé ou taché : -1 à -2 pts
+CRITÈRE 1 — HARMONIE COULEURS & MATIÈRES (34 points, départ à 34)
+• Trop de couleurs non neutres qui se dispersent (plus de 3, hors noir/blanc/gris/beige) : -3 à -10 pts
+• Couleurs qui se heurtent (conflit chaud/froid, saturations qui jurent) : -3 à -10 pts
+• Monochrome plat sans variation de texture : -3 à -6 pts
+• Matières qui ne vont pas ensemble : -3 à -6 pts
+Minimum : 0.
 
-CRITÈRE STYLES (obligatoire) :
-Choisis exactement 1 ou 2 styles parmi cette liste (jamais d'autres) :
+CRITÈRE 2 — COUPE & SILHOUETTE (33 points, départ à 0)
+• Volumes équilibrés haut/bas : +5 à +13 pts
+• Ligne de taille marquée (French tuck, ceinture, crop top) : +3 à +7 pts
+• Tombé et longueurs impeccables : +3 à +7 pts
+• Type de coupe maîtrisé (oversized assumé, slim net, regular propre) : +3 à +6 pts
+
+CRITÈRE 3 — STYLE & FINITIONS (33 points, départ à 0)
+• Layering cohérent : +5 à +10 pts
+• Accessoire présent et pertinent : +2 pts par accessoire, max +10 pts
+• Chaussures cohérentes avec le style global : +5 à +10 pts
+• Vêtement visible froissé ou taché : -3 à -6 pts
+
+CRITÈRE STYLES (obligatoire, sauf si photo_complete est false) :
+Choisis exactement 1 ou 2 styles parmi cette liste — ne jamais inventer d'autres valeurs :
 #StreetwearOversize #Athleisure #CasualChic #Gorpcore #Y2K #IndieSleaze #Blokecore #EclectiqueGrandpa #CleanLook #OfficeSiren #QuietLuxury #MinimalismeScandinave #AcubiStyle #SubversiveBasics #Techwear #DarkMode #Cottagecore #FairyGrunge #BohemeChic #Coquette
 
-Réponds EXCLUSIVEMENT en JSON valide sans markdown ni balises de code :
-{"couleurs_note":0,"couleurs_analyse":"...","coupe_note":0,"coupe_analyse":"...","style_note":0,"style_analyse":"...","points_forts":["...","..."],"axes_amelioration":["...","..."],"styles":["#CasualChic"]}
+Réponds EXCLUSIVEMENT en JSON valide sans markdown :
+{
+  "photo_complete": true,
+  "raison_incomplete": null,
+  "couleurs_note": 0,
+  "couleurs_analyse": "...",
+  "coupe_note": 0,
+  "coupe_analyse": "...",
+  "style_note": 0,
+  "style_analyse": "...",
+  "points_forts": ["...", "..."],
+  "axes_amelioration": ["...", "..."],
+  "styles": ["#CasualChic"]
+}
 
 Règles de contenu :
-- couleurs_analyse / coupe_analyse / style_analyse : 1 phrase concise (12–20 mots max), qui cite au moins un élément visuel précis.
-- points_forts : 2 à 3 éléments positifs notables (5–8 mots max chacun), ancrés dans un détail visible.
-- axes_amelioration : 2 à 3 pistes d'amélioration concrètes (5–8 mots max chacun), ancrées dans un détail visible.
-- styles : tableau de 1 ou 2 hashtags exacts issus de la liste ci-dessus, jamais 0, jamais plus de 2.`;
+- couleurs_analyse / coupe_analyse / style_analyse : 1 phrase concise (12-20 mots max), qui cite au moins un élément visuel précis.
+- points_forts / axes_amelioration : 2 à 3 éléments (5-8 mots max chacun), ancrés dans un détail visible.
+- Si photo_complete est false, laisse tous les champs de notation/analyse à null et n'inclus pas "styles".`;
 }
 
 function json(body: unknown, status: number) {
@@ -221,18 +254,12 @@ serve(async (req: Request) => {
       return json({ error: 'Trop de requêtes, réessaie dans une minute' }, 429);
     }
 
-    const { data: creditResult, error: creditError } = await supabaseClient.rpc(
-      'consume_daily_credit',
-      { p_user_id: user.id },
-    );
-    if (creditError || !creditResult?.ok) {
-      const msg = creditResult?.error ?? 'Plus d\'analyses disponibles aujourd\'hui';
-      return json({ error: msg, credits: creditResult?.credits ?? 0 }, 403);
-    }
-
     // Gemini en priorité ; repli automatique sur Groq si Gemini échoue
     // (clé absente, quota épuisé, modèle indisponible…). Garantit que l'analyse
-    // continue de fonctionner pendant la bascule vers Gemini.
+    // continue de fonctionner pendant la bascule vers Gemini. Volontairement
+    // AVANT consume_daily_credit (voir plus bas) : le rate-limit protège déjà
+    // contre l'abus d'appel IA, et facturer un crédit ne doit arriver qu'après
+    // avoir confirmé que la photo est effectivement notable.
     let text: string;
     let provider = 'gemini';
     try {
@@ -246,23 +273,49 @@ serve(async (req: Request) => {
     const clean = text.replace(/```json|```/g, '').trim();
     const raw = JSON.parse(clean);
 
+    // Photo incomplète : aucun crédit consommé, aucun score calculé — erreur
+    // de cadrage côté utilisateur, pas une mauvaise analyse à faire payer.
+    if (raw.photo_complete === false) {
+      return json({
+        photo_complete: false,
+        raison_incomplete: (typeof raw.raison_incomplete === 'string' && raw.raison_incomplete.trim())
+          || 'Photo incomplète : reprends une photo qui montre ta tenue en entier, des épaules aux genoux minimum.',
+        provider,
+      }, 200);
+    }
+
     // Validation de la structure stricte renvoyée par l'IA
     const notes = [raw.couleurs_note, raw.coupe_note, raw.style_note];
     const analyses = [raw.couleurs_analyse, raw.coupe_analyse, raw.style_analyse];
     if (!notes.every(n => typeof n === 'number')) return json({ error: 'Notes IA manquantes ou invalides' }, 502);
     if (!analyses.every(s => typeof s === 'string' && s.trim().length > 0)) return json({ error: 'Analyses IA manquantes' }, 502);
 
-    const clamp = (n: number) => Math.max(0, Math.min(10, Math.round(n)));
-    const harmonie = clamp(raw.couleurs_note); // CRITÈRE 1 → couleurs
-    const fit = clamp(raw.coupe_note);         // CRITÈRE 2 → coupe
-    const detail = clamp(raw.style_note);      // CRITÈRE 3 → style/effort
-    // Moyenne globale calculée mathématiquement côté serveur
-    const global = Math.round((harmonie + fit + detail) / 3);
+    // Note sur 100 (v3) : chaque sous-critère a son propre plafond (34/33/33),
+    // le global est la SOMME directe — plus de division par 3, les 3 critères
+    // totalisent déjà 100.
+    const clampTo = (n: number, max: number) => Math.max(0, Math.min(max, Math.round(n)));
+    const harmonie = clampTo(raw.couleurs_note, 34); // CRITÈRE 1 → couleurs
+    const fit = clampTo(raw.coupe_note, 33);         // CRITÈRE 2 → coupe
+    const detail = clampTo(raw.style_note, 33);      // CRITÈRE 3 → style/effort
+    const global = harmonie + fit + detail;
+
+    // Crédit consommé seulement maintenant : la photo est confirmée notable et
+    // le JSON valide. Effet de bord positif : un JSON malformé ou une
+    // exception plus haut ne brûle plus de crédit non plus (avant, le crédit
+    // était décompté avant même l'appel IA, sans possibilité de rollback).
+    const { data: creditResult, error: creditError } = await supabaseClient.rpc(
+      'consume_daily_credit',
+      { p_user_id: user.id },
+    );
+    if (creditError || !creditResult?.ok) {
+      const msg = creditResult?.error ?? 'Plus d\'analyses disponibles aujourd\'hui';
+      return json({ error: msg, credits: creditResult?.credits ?? 0 }, 403);
+    }
 
     // Structurer les points forts et axes d'amélioration (avec fallback si l'IA ne les retourne pas)
     const pts: string[] = (Array.isArray(raw.points_forts) && raw.points_forts.every((x: unknown) => typeof x === 'string') && raw.points_forts.length > 0)
       ? raw.points_forts.slice(0, 4)
-      : [`Harmonie des couleurs (${harmonie}/10)`, `Coupe et silhouette (${fit}/10)`, `Effort de style (${detail}/10)`];
+      : [`Harmonie des couleurs (${harmonie}/34)`, `Coupe et silhouette (${fit}/33)`, `Effort de style (${detail}/33)`];
     const axes: string[] = (Array.isArray(raw.axes_amelioration) && raw.axes_amelioration.every((x: unknown) => typeof x === 'string') && raw.axes_amelioration.length > 0)
       ? raw.axes_amelioration.slice(0, 4)
       : ['Travailler les proportions et volumes', 'Soigner les accessoires et finitions'];

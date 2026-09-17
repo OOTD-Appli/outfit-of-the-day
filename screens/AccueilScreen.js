@@ -40,49 +40,51 @@ const BTN_TEXT    = '#5C1A2E';
 
 const REQUEST_TIMEOUT_MS = 25000;
 
+// Seuils proportionnels à l'ancienne échelle /10 (8→26, 6→20, 4→13 sur un max de 33 ;
+// 8→27, 6→20, 4→14 sur un max de 34) — mêmes ratios, juste recalibrés sur la note /100 (v3).
 const CRITERION_META = {
   fit: {
-    icon: 'shirt-outline', name: 'Fit', color: '#ED93B1', track: '#F8E5EC',
+    icon: 'shirt-outline', name: 'Fit', color: '#ED93B1', track: '#F8E5EC', max: 33,
     labels: [
-      [8, 'Ajustement parfait !'],
-      [6, 'Bonne silhouette'],
-      [4, 'À ajuster'],
+      [26, 'Ajustement parfait !'],
+      [20, 'Bonne silhouette'],
+      [13, 'À ajuster'],
       [0, 'Coupes à rééquilibrer'],
     ],
     descs: [
-      [8, "Les volumes et proportions valorisent parfaitement ta silhouette."],
-      [6, "La coupe est équilibrée, quelques ajustements pourraient l'affiner."],
-      [4, "L'équilibre des volumes et des longueurs mérite attention."],
+      [26, "Les volumes et proportions valorisent parfaitement ta silhouette."],
+      [20, "La coupe est équilibrée, quelques ajustements pourraient l'affiner."],
+      [13, "L'équilibre des volumes et des longueurs mérite attention."],
       [0, "Les proportions et coupes gagneraient à être repensées."],
     ],
   },
   harmonie: {
-    icon: 'color-palette-outline', name: 'Harmonie', color: '#B0809A', track: '#EFE3EA',
+    icon: 'color-palette-outline', name: 'Harmonie', color: '#B0809A', track: '#EFE3EA', max: 34,
     labels: [
-      [8, 'Palette maîtrisée !'],
-      [6, 'Bon accord couleurs & matières'],
-      [4, 'Quelques contrastes à harmoniser'],
+      [27, 'Palette maîtrisée !'],
+      [20, 'Bon accord couleurs & matières'],
+      [14, 'Quelques contrastes à harmoniser'],
       [0, 'Combinaison à rééquilibrer'],
     ],
     descs: [
-      [8, "Couleurs et matières se complètent avec élégance."],
-      [6, "L'accord chromatique fonctionne, les textures peuvent s'affiner."],
-      [4, "Certaines couleurs ou matières créent une légère dissonance."],
+      [27, "Couleurs et matières se complètent avec élégance."],
+      [20, "L'accord chromatique fonctionne, les textures peuvent s'affiner."],
+      [14, "Certaines couleurs ou matières créent une légère dissonance."],
       [0, "La palette et les matières manquent de cohérence."],
     ],
   },
   detail: {
-    icon: 'sparkles-outline', name: 'Détails', color: '#C9A47A', track: '#F1E8DC',
+    icon: 'sparkles-outline', name: 'Détails', color: '#C9A47A', track: '#F1E8DC', max: 33,
     labels: [
-      [8, 'Styling soigné !'],
-      [6, 'Bons accessoires & finitions'],
-      [4, 'Des détails à ajouter'],
+      [26, 'Styling soigné !'],
+      [20, 'Bons accessoires & finitions'],
+      [13, 'Des détails à ajouter'],
       [0, 'Finitions à soigner'],
     ],
     descs: [
-      [8, "Les accessoires et finitions élèvent la tenue au niveau supérieur."],
-      [6, "Les détails renforcent le style, quelques ajouts sublimeront l'ensemble."],
-      [4, "L'outfit manque d'une touche finale pour se démarquer."],
+      [26, "Les accessoires et finitions élèvent la tenue au niveau supérieur."],
+      [20, "Les détails renforcent le style, quelques ajouts sublimeront l'ensemble."],
+      [13, "L'outfit manque d'une touche finale pour se démarquer."],
       [0, "Les accessoires et finitions nécessitent une attention particulière."],
     ],
   },
@@ -147,18 +149,17 @@ function ConseilBlock({ conseil, s }) {
   );
 }
 
+// Seuils note sur 100 (v3) : 90/70/50/30, mêmes proportions que les anciens 9/7/5/3 sur 10.
 function globalMessage(value) {
-  if (value >= 9) return 'Tu as un style de fou !';
-  if (value >= 7) return 'Très bon look !';
-  if (value >= 5) return 'Pas mal, il y a moyen de peaufiner !';
-  if (value >= 3) return 'Quelques efforts à faire sur cette tenue.';
+  if (value >= 90) return 'Tu as un style de fou !';
+  if (value >= 70) return 'Très bon look !';
+  if (value >= 50) return 'Pas mal, il y a moyen de peaufiner !';
+  if (value >= 30) return 'Quelques efforts à faire sur cette tenue.';
   return 'On retente une tenue différente ?';
 }
 
 function fr(value) {
-  return typeof value === 'number'
-    ? (Number.isInteger(value) ? `${value},0` : value.toFixed(1).replace('.', ','))
-    : '-';
+  return typeof value === 'number' ? String(Math.round(value)) : '-';
 }
 
 function formatHearts(n) {
@@ -184,6 +185,7 @@ export default function AccueilScreen({ navigation }) {
 
   const [image, setImage] = useState(null);
   const [score, setScore] = useState(null);
+  const [photoIncomplete, setPhotoIncomplete] = useState(null); // raison, ou null
   const [loading, setLoading] = useState(false);
   const [continuingToShare, setContinuingToShare] = useState(false);
   const [selectedMusic, setSelectedMusic] = useState(null); // { title, artist, previewUrl, coverUrl }
@@ -391,10 +393,10 @@ export default function AccueilScreen({ navigation }) {
     return () => { cancelled = true; };
   }, [userTier, credits]);
 
-  // Rappel n°3 : note ≥ 8/10, gratuit + Plus uniquement (jamais Elite, déjà tout
+  // Rappel n°3 : note ≥ 80/100, gratuit + Plus uniquement (jamais Elite, déjà tout
   // débloqué), 1x tous les 3 jours max.
   const maybeShowHighScoreReminder = useCallback(async (globalScore) => {
-    if (userTier === 'elite' || typeof globalScore !== 'number' || globalScore < 8) return;
+    if (userTier === 'elite' || typeof globalScore !== 'number' || globalScore < 80) return;
     const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
     const lastShownRaw = await AsyncStorage.getItem('@ootd_reminder_highscore_ts');
     const lastShown = lastShownRaw ? Number(lastShownRaw) : 0;
@@ -439,6 +441,7 @@ export default function AccueilScreen({ navigation }) {
 
   const applyPickedImage = (asset) => {
     setScore(null);
+    setPhotoIncomplete(null);
     setHighScoreReminder(null);
     cachedPublicUrlRef.current = null;
     setShowContextPanel(false);
@@ -547,7 +550,15 @@ export default function AccueilScreen({ navigation }) {
         } catch (_) {}
         throw new Error(errMsg);
       }
+      if (parsed?.photo_complete === false) {
+        // Aucun crédit consommé côté serveur dans ce cas — juste un message
+        // clair + possibilité de reprendre une photo, pas un échec d'analyse.
+        setPhotoIncomplete(parsed.raison_incomplete || 'Photo incomplète : reprends une photo qui montre ta tenue en entier, des épaules aux genoux minimum.');
+        setLoading(false);
+        return;
+      }
       if (!parsed || typeof parsed.global !== "number") throw new Error("Reponse IA invalide, reessaie.");
+      setPhotoIncomplete(null);
       if (parsed.max_credits === -1 || parsed.credits_remaining === -1) {
         setUnlimited(true);
         setCredits(Infinity);
@@ -772,6 +783,22 @@ export default function AccueilScreen({ navigation }) {
               </Bouncy>
             )}
 
+            {/* Photo incomplète (v3) : aucun crédit consommé, juste une invite à reprendre */}
+            {photoIncomplete && (
+              <View style={s.tipCard}>
+                <View style={s.tipIconWrap}>
+                  <Ionicons name="camera-reverse-outline" size={20} color={theme.accent} />
+                </View>
+                <View style={s.tipTexts}>
+                  <Text style={s.tipTitle}>Photo incomplète</Text>
+                  <Text style={s.tipBody}>{photoIncomplete}</Text>
+                  <TouchableOpacity onPress={openImageSourcePicker} style={{ marginTop: 8 }} activeOpacity={0.8}>
+                    <Text style={{ color: theme.accent, fontWeight: '700', fontSize: 13 }}>Reprendre la photo</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
             {/* Conseil contextuel — saisi avant l'analyse */}
             {image && (
               <View style={{ marginBottom: 20 }}>
@@ -916,7 +943,7 @@ export default function AccueilScreen({ navigation }) {
                   <View key={key} style={s.criterionCard}>
                     <Ionicons name={meta.icon} size={18} color={meta.color} style={{ marginBottom: 4 }} />
                     <Text style={s.criterionName}>{meta.name}</Text>
-                    <Gauge value={val} size={ringSize} thickness={Math.round(ringSize * 0.1)} color={meta.color} track={meta.track} textColor={theme.textPri} />
+                    <Gauge value={val} max={meta.max} size={ringSize} thickness={Math.round(ringSize * 0.1)} color={meta.color} track={meta.track} textColor={theme.textPri} />
                     <Text style={[s.criterionLabel, { color: meta.color }]}>{criterionLabel(meta, val)}</Text>
                     <Text style={s.criterionDesc}>{criterionDesc(meta, val)}</Text>
                   </View>
@@ -933,7 +960,7 @@ export default function AccueilScreen({ navigation }) {
                 </View>
                 <View style={s.globalScoreRow}>
                   <Text style={s.globalScore}>{fr(score.global)}</Text>
-                  <Text style={s.globalSub}> /10</Text>
+                  <Text style={s.globalSub}> /100</Text>
                 </View>
               </View>
               <View style={s.globalDivider} />
@@ -973,10 +1000,10 @@ export default function AccueilScreen({ navigation }) {
               </View>
             )}
 
-            {/* Rappel n°3 : note ≥ 8/10 (gratuit + Plus, jamais Elite) */}
+            {/* Rappel n°3 : note ≥ 80/100 (gratuit + Plus, jamais Elite) */}
             {highScoreReminder && (
               <View style={s.noCreditsCard}>
-                <Text style={s.noCreditsTitle}>🔥 {highScoreReminder.note}/10, sérieux !</Text>
+                <Text style={s.noCreditsTitle}>🔥 {highScoreReminder.note}/100, sérieux !</Text>
                 <Text style={s.noCreditsText}>
                   Débloque le mode IA Sévère et plus d'analyses comme celle-ci avec OOTD Plus.
                 </Text>
