@@ -1,4 +1,4 @@
-import { registerForPushNotifications, savePushToken, scheduleFlammeReminder } from './lib/notifications';
+import { registerForPushNotifications, savePushToken, scheduleDailyReminder } from './lib/notifications';
 import { registerWebPush } from './lib/webPush';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useState, useEffect } from 'react';
@@ -243,7 +243,7 @@ export default function App() {
           await registerWebPush();
           return;
         }
-        await scheduleFlammeReminder(); // rappel local quotidien « prends ta photo » (natif)
+        await scheduleDailyReminder(); // rappel local quotidien « prends ta photo » (natif)
         if (Constants.appOwnership === 'expo') return;
         const token = await registerForPushNotifications();
         if (token) await savePushToken(token);

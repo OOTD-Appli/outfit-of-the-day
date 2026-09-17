@@ -6,11 +6,11 @@ import { decode } from 'base64-arraybuffer';
 import {
   View, Text, StyleSheet, ScrollView, Animated, Easing,
   Alert, TouchableOpacity, ActivityIndicator, TextInput,
-  FlatList, Modal, useWindowDimensions, Platform, Keyboard,
+  useWindowDimensions, Platform, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { Video, ResizeMode } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
@@ -19,9 +19,11 @@ import { useTheme } from '../lib/themeContext';
 import { ENV } from '../lib/env';
 import { resolveTier } from '../lib/tier';
 import { setPendingOutfit } from '../lib/pendingOutfit';
-import { pickStoryMediaWeb, pickStoryMediaFromGallery, uploadAndPublishStory, fetchMyActiveStory } from '../lib/storyActions';
 import MediaCropEditor from '../components/MediaCropEditor';
-import StoryMedia, { STORY_ASPECT } from '../components/StoryMedia';
+
+// Ratio de recadrage 9:16, repris de l'ancien components/StoryMedia.js (supprimé
+// avec les Stories) — encore utilisé ici pour le crop de la photo de tenue.
+const CROP_ASPECT = 9 / 16;
 import Gauge from '../components/Gauge';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
@@ -213,12 +215,6 @@ export default function AccueilScreen({ navigation }) {
   // Compétitions
   const [competitions, setCompetitions] = useState([]);
   const [competitionsLoading, setCompetitionsLoading] = useState(true);
-  // Stories
-  const [userId, setUserId] = useState(null);
-  const [myStory, setMyStory] = useState(null);
-  const [storyPreview, setStoryPreview] = useState({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
-  const [storyViewer, setStoryViewer] = useState({ visible: false, story: null });
-  const [storyCrop, setStoryCrop] = useState({ visible: false, uri: null, mediaType: 'image' });
   const [outfitCrop, setOutfitCrop] = useState({ visible: false, uri: null });
   // Caméra in-app (native uniquement — web garde le fallback file-input)
   const [inAppCamera, setInAppCamera] = useState({ visible: false, mode: 'photo' });
@@ -243,60 +239,6 @@ export default function AccueilScreen({ navigation }) {
       }),
     ]).start();
   }, [score, resultFade, resultRise]);
-
-  const fetchMyStory = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    setUserId(user.id);
-    setMyStory(await fetchMyActiveStory(user.id));
-  }, []);
-
-  const onStoryMediaPicked = ({ uri, isVideo }) => {
-    setStoryCrop({ visible: true, uri, mediaType: isVideo ? 'video' : 'image' });
-  };
-
-  const onStoryCropConfirm = (result) => {
-    setStoryCrop({ visible: false, uri: null, mediaType: 'image' });
-    if (result.mode === 'baked') {
-      setStoryPreview({ visible: true, videoUri: null, imageUri: result.asset.uri, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
-    } else {
-      setStoryPreview({ visible: true, videoUri: storyCrop.uri, imageUri: null, overlayText: '', caption: '', mediaScale: result.scale, mediaOffsetX: result.offsetX, mediaOffsetY: result.offsetY, posting: false });
-    }
-  };
-
-  const openStoryPicker = async () => {
-    if (Platform.OS === 'web') { pickStoryMediaWeb(onStoryMediaPicked); return; }
-    Alert.alert('Publier une story', 'Choisir le type de contenu', [
-      { text: 'Vidéo (caméra)', onPress: () => {
-        // Ouvre la caméra in-app en mode vidéo
-        setInAppCamera({ visible: true, mode: 'video' });
-      }},
-      { text: 'Photo / vidéo (galerie)', onPress: () => pickStoryMediaFromGallery(onStoryMediaPicked, showToast) },
-      { text: 'Annuler', style: 'cancel' },
-    ]);
-  };
-
-  const publishStory = async () => {
-    const { videoUri, imageUri } = storyPreview;
-    if (!videoUri && !imageUri) return;
-    if (storyPreview.posting) return;
-    setStoryPreview(prev => ({ ...prev, posting: true }));
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Non authentifié');
-      await uploadAndPublishStory({
-        userId: user.id, videoUri, imageUri,
-        overlayText: storyPreview.overlayText, caption: storyPreview.caption,
-        mediaScale: storyPreview.mediaScale, mediaOffsetX: storyPreview.mediaOffsetX, mediaOffsetY: storyPreview.mediaOffsetY,
-      });
-      setStoryPreview({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
-      showToast('Story publiée ! Elle disparaît dans 24h ✨', { type: 'success' });
-      fetchMyStory();
-    } catch (e) {
-      setStoryPreview(prev => ({ ...prev, posting: false }));
-      showToast(e?.message || 'Impossible de publier la story', { type: 'error' });
-    }
-  };
 
   const fetchCredits = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -408,9 +350,8 @@ export default function AccueilScreen({ navigation }) {
   useFocusEffect(useCallback(() => {
     fetchCredits();
     fetchTopOotds();
-    fetchMyStory();
     fetchCompetitions();
-  }, [fetchCredits, fetchTopOotds, fetchMyStory, fetchCompetitions]));
+  }, [fetchCredits, fetchTopOotds, fetchCompetitions]));
 
   const searchMusic = (query) => {
     setMusicPicker(prev => ({ ...prev, query }));
@@ -1089,159 +1030,23 @@ export default function AccueilScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* ===== SECTION STORIES (toujours visible en scrollant) ===== */}
-        <View style={s.storiesSection}>
-          <View style={s.storiesSectionHeader}>
-            <Feather name="circle" size={16} color={ACCENT} />
-            <Text style={s.storiesSectionTitle}>Ma story</Text>
-            <Text style={s.storiesSectionSub}>Disparaît dans 24h</Text>
-          </View>
-
-          {myStory ? (
-            /* Story active — aperçu + option remplacer */
-            <TouchableOpacity style={s.myStoryPreview} onPress={() => setStoryViewer({ visible: true, story: myStory })} activeOpacity={0.85}>
-              {myStory.image_url ? (
-                <ExpoImage source={{ uri: myStory.image_url }} style={s.myStoryThumb} contentFit="cover" />
-              ) : (
-                <View style={[s.myStoryThumb, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
-                  <Feather name="video" size={28} color="#fff" />
-                </View>
-              )}
-              <View style={s.myStoryOverlay}>
-                <Text style={s.myStoryOverlayText}>Voir ma story</Text>
-              </View>
-              <View style={[s.storyActiveBadge, { backgroundColor: ACCENT }]}>
-                <View style={s.storyActiveDot} />
-                <Text style={s.storyActiveTxt}>En ligne</Text>
-              </View>
-            </TouchableOpacity>
-          ) : (
-            /* Pas de story — bouton publier */
-            <TouchableOpacity style={s.storyPublishBtn} onPress={openStoryPicker} activeOpacity={0.85}>
-              <LinearGradient colors={['#F7A8C4', '#ED7AA6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.storyPublishGradient}>
-                <Feather name="plus" size={26} color="#fff" />
-              </LinearGradient>
-              <View>
-                <Text style={s.storyPublishTitle}>Publier une story</Text>
-                <Text style={s.storyPublishSub}>Photo ou vidéo · visible 24h</Text>
-              </View>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Story viewer modal */}
-        <Modal visible={storyViewer.visible} transparent animationType="fade" onRequestClose={() => setStoryViewer({ visible: false, story: null })}>
-          <View style={s.viewerOverlay}>
-            <View style={s.viewerHeader}>
-              <Text style={s.viewerUsername}>Ma story</Text>
-              <TouchableOpacity onPress={() => setStoryViewer({ visible: false, story: null })}>
-                <Feather name="x" size={26} color="#fff" />
-              </TouchableOpacity>
-            </View>
-            <StoryMedia story={storyViewer.story} style={s.viewerMedia} videoProps={{ useNativeControls: true, shouldPlay: true }} />
-            {storyViewer.story?.overlay_text ? (
-              <View style={s.viewerTextWrap}><Text style={s.viewerText}>{storyViewer.story.overlay_text}</Text></View>
-            ) : null}
-            {storyViewer.story?.caption ? (
-              <View style={s.viewerCaptionWrap}><Text style={s.viewerCaptionText}>{storyViewer.story.caption}</Text></View>
-            ) : null}
-            <TouchableOpacity style={s.replaceStoryBtn} onPress={() => { setStoryViewer({ visible: false, story: null }); openStoryPicker(); }}>
-              <Text style={s.replaceStoryBtnText}>Remplacer la story</Text>
-            </TouchableOpacity>
-          </View>
-        </Modal>
-
-        {/* Story preview / publication modal */}
-        <Modal
-          visible={storyPreview.visible}
-          transparent
-          animationType="slide"
-          onRequestClose={() => { if (!storyPreview.posting) setStoryPreview(prev => ({ ...prev, visible: false })); }}
-        >
-          <View style={s.storyModalOverlay}>
-            <View style={[s.storyModalSheet, { backgroundColor: theme.card }]}>
-              <View style={[s.storyModalHandle, { backgroundColor: theme.border }]} />
-              <Text style={[s.storyModalTitle, { color: theme.textPri }]}>Publier une story</Text>
-              <View style={s.storyVideoWrap}>
-                {storyPreview.videoUri || storyPreview.imageUri ? (
-                  <StoryMedia
-                    story={{
-                      video_url: storyPreview.videoUri,
-                      image_url: storyPreview.imageUri,
-                      media_scale: storyPreview.mediaScale,
-                      media_offset_x: storyPreview.mediaOffsetX,
-                      media_offset_y: storyPreview.mediaOffsetY,
-                    }}
-                    style={s.storyVideoPreview}
-                    videoProps={{ useNativeControls: true, shouldPlay: false }}
-                  />
-                ) : (
-                  <Feather name="image" size={36} color={TEXT_SEC} />
-                )}
-              </View>
-              <Text style={[s.storyFieldLabel, { color: TEXT_SEC }]}>Texte sur la story (optionnel)</Text>
-              <TextInput
-                style={[s.storyFieldInput, { backgroundColor: theme.bg, borderColor: BORDER, color: TEXT_PRI }]}
-                placeholder="Ex : Mon look du jour ✨"
-                placeholderTextColor={TEXT_SEC}
-                value={storyPreview.overlayText}
-                onChangeText={t => setStoryPreview(prev => ({ ...prev, overlayText: t }))}
-                maxLength={60}
-                editable={!storyPreview.posting}
-              />
-              <Text style={[s.storyFieldLabel, { color: TEXT_SEC }]}>Description (optionnel)</Text>
-              <TextInput
-                style={[s.storyFieldInput, s.storyFieldInputMulti, { backgroundColor: theme.bg, borderColor: BORDER, color: TEXT_PRI }]}
-                placeholder="Décris ta tenue..."
-                placeholderTextColor={TEXT_SEC}
-                value={storyPreview.caption}
-                onChangeText={t => setStoryPreview(prev => ({ ...prev, caption: t }))}
-                maxLength={200}
-                multiline
-                editable={!storyPreview.posting}
-              />
-              <View style={s.storyModalBtns}>
-                <TouchableOpacity style={[s.storyModalCancel, { backgroundColor: theme.border }]} onPress={() => setStoryPreview(prev => ({ ...prev, visible: false }))} disabled={storyPreview.posting}>
-                  <Text style={[s.storyModalCancelText, { color: TEXT_PRI }]}>Annuler</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.storyModalPublish, { backgroundColor: ACCENT }, storyPreview.posting && { opacity: 0.6 }]} onPress={publishStory} disabled={storyPreview.posting}>
-                  {storyPreview.posting ? <ActivityIndicator color="#3a0d1e" size="small" /> : <Text style={s.storyModalPublishText}>Publier</Text>}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
       </ScrollView>
 
-      {/* Caméra in-app (photo tenue / vidéo story) */}
+      {/* Caméra in-app (photo tenue) */}
       <InAppCamera
         visible={inAppCamera.visible}
         mode={inAppCamera.mode}
         onClose={() => setInAppCamera(prev => ({ ...prev, visible: false }))}
         onCapture={(asset) => {
           setInAppCamera(prev => ({ ...prev, visible: false }));
-          if (inAppCamera.mode === 'video') {
-            if (asset?.uri) onStoryMediaPicked({ uri: asset.uri, isVideo: true });
-          } else if (asset?.uri) {
-            setOutfitCrop({ visible: true, uri: asset.uri });
-          }
+          if (asset?.uri) setOutfitCrop({ visible: true, uri: asset.uri });
         }}
-      />
-
-      <MediaCropEditor
-        visible={storyCrop.visible}
-        uri={storyCrop.uri}
-        mediaType={storyCrop.mediaType}
-        aspect={STORY_ASPECT}
-        onCancel={() => setStoryCrop({ visible: false, uri: null, mediaType: 'image' })}
-        onConfirm={onStoryCropConfirm}
       />
       <MediaCropEditor
         visible={outfitCrop.visible}
         uri={outfitCrop.uri}
         mediaType="image"
-        aspect={STORY_ASPECT}
+        aspect={CROP_ASPECT}
         onCancel={() => setOutfitCrop({ visible: false, uri: null })}
         onConfirm={onOutfitCropConfirm}
       />
@@ -1539,7 +1344,6 @@ function createStyles(theme) {
   storiesSection:    { marginTop: 28, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: BRD_T },
   storiesSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   storiesSectionTitle:  { fontWeight: '800', fontSize: 17, color: PRI_T, flex: 1 },
-  storiesSectionSub:    { fontSize: 12, color: SUB_T },
 
   /* Section Compétitions */
   competitionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: CARD_T, borderRadius: 16, borderWidth: 1, borderColor: BRD_T, padding: 14, marginBottom: 10 },
@@ -1549,46 +1353,5 @@ function createStyles(theme) {
   competitionUnreadText: { color: '#fff', fontSize: 10.5, fontWeight: '800' },
   createCompetitionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: ACCENT, borderRadius: 16, paddingVertical: 13, marginTop: 4 },
   createCompetitionText: { color: ACCENT, fontWeight: '800', fontSize: 14 },
-
-  myStoryPreview:    { borderRadius: 20, overflow: 'hidden', height: 200, marginBottom: 14, position: 'relative' },
-  myStoryThumb:      { width: '100%', height: '100%' },
-  myStoryOverlay:    { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 14, backgroundColor: 'rgba(0,0,0,0.32)' },
-  myStoryOverlayText:{ color: '#fff', fontWeight: '700', fontSize: 14 },
-  storyActiveBadge:  { position: 'absolute', top: 10, right: 10, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 },
-  storyActiveDot:    { width: 7, height: 7, borderRadius: 4, backgroundColor: '#fff' },
-  storyActiveTxt:    { color: '#fff', fontSize: 11, fontWeight: '700' },
-
-  storyPublishBtn:   { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 18, borderRadius: 20, borderWidth: 1.5, borderColor: ACC_T + '44', borderStyle: 'dashed' },
-  storyPublishGradient: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
-  storyPublishTitle: { fontWeight: '700', fontSize: 15, color: PRI_T },
-  storyPublishSub:   { fontSize: 12, color: SUB_T, marginTop: 2 },
-
-  /* Story viewer */
-  viewerOverlay:  { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-  viewerHeader:   { position: 'absolute', top: 56, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 10 },
-  viewerUsername: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  viewerMedia:    { width: '90%', aspectRatio: STORY_ASPECT },
-  viewerTextWrap: { position: 'absolute', bottom: 140, left: 20, right: 20, alignItems: 'center' },
-  viewerText:     { color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'center' },
-  viewerCaptionWrap: { position: 'absolute', bottom: 108, left: 20, right: 20, alignItems: 'center' },
-  viewerCaptionText: { color: 'rgba(255,255,255,0.85)', fontSize: 14, textAlign: 'center' },
-  replaceStoryBtn:    { position: 'absolute', bottom: 60, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 22, backgroundColor: ACC_T },
-  replaceStoryBtnText:{ color: '#3a0d1e', fontWeight: '800', fontSize: 14 },
-
-  /* Story preview modal */
-  storyModalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  storyModalSheet:      { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 36 },
-  storyModalHandle:     { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
-  storyModalTitle:      { fontSize: 17, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
-  storyVideoWrap:       { borderRadius: 16, overflow: 'hidden', width: '100%', aspectRatio: STORY_ASPECT, marginBottom: 20, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-  storyVideoPreview:    { width: '100%', height: '100%' },
-  storyFieldLabel:      { fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  storyFieldInput:      { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginBottom: 14, borderWidth: 1 },
-  storyFieldInputMulti: { minHeight: 72, textAlignVertical: 'top' },
-  storyModalBtns:       { flexDirection: 'row', gap: 10, marginTop: 4 },
-  storyModalCancel:     { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  storyModalCancelText: { fontWeight: '600', fontSize: 15 },
-  storyModalPublish:    { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  storyModalPublishText:{ color: '#3a0d1e', fontWeight: '800', fontSize: 15 },
   });
 }
