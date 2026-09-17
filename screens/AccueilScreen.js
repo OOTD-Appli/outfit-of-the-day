@@ -24,6 +24,9 @@ import { useTheme } from '../lib/themeContext';
 import { dismissDeliveredFlammeReminder } from '../lib/notifications';
 import { ENV } from '../lib/env';
 import { resolveTier } from '../lib/tier';
+import { pickStoryMediaWeb, pickStoryMediaFromGallery, uploadAndPublishStory, fetchMyActiveStory } from '../lib/storyActions';
+import MediaCropEditor from '../components/MediaCropEditor';
+import StoryMedia, { STORY_ASPECT } from '../components/StoryMedia';
 import Gauge from '../components/Gauge';
 import Bouncy from '../components/Bouncy';
 import AnimatedEntrance from '../components/AnimatedEntrance';
@@ -218,8 +221,10 @@ export default function AccueilScreen({ navigation }) {
   // Stories
   const [userId, setUserId] = useState(null);
   const [myStory, setMyStory] = useState(null);
-  const [storyPreview, setStoryPreview] = useState({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', posting: false });
+  const [storyPreview, setStoryPreview] = useState({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
   const [storyViewer, setStoryViewer] = useState({ visible: false, story: null });
+  const [storyCrop, setStoryCrop] = useState({ visible: false, uri: null, mediaType: 'image' });
+  const [outfitCrop, setOutfitCrop] = useState({ visible: false, uri: null });
   // Caméra in-app (native uniquement — web garde le fallback file-input)
   const [inAppCamera, setInAppCamera] = useState({ visible: false, mode: 'photo' });
   const { showToast } = useToast();
@@ -248,48 +253,30 @@ export default function AccueilScreen({ navigation }) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     setUserId(user.id);
-    const { data } = await supabase
-      .from('stories')
-      .select('id, user_id, image_url, video_url, overlay_text, caption, expires_at')
-      .eq('user_id', user.id)
-      .gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    setMyStory(data || null);
+    setMyStory(await fetchMyActiveStory(user.id));
   }, []);
 
-  const openStoryPicker = async () => {
-    if (Platform.OS === 'web') {
-      if (typeof document === 'undefined') return;
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*,video/*';
-      input.onchange = () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        const uri = URL.createObjectURL(file);
-        const isVideo = file.type.startsWith('video/');
-        setStoryPreview({ visible: true, videoUri: isVideo ? uri : null, imageUri: !isVideo ? uri : null, overlayText: '', caption: '', posting: false });
-      };
-      input.click();
-      return;
+  const onStoryMediaPicked = ({ uri, isVideo }) => {
+    setStoryCrop({ visible: true, uri, mediaType: isVideo ? 'video' : 'image' });
+  };
+
+  const onStoryCropConfirm = (result) => {
+    setStoryCrop({ visible: false, uri: null, mediaType: 'image' });
+    if (result.mode === 'baked') {
+      setStoryPreview({ visible: true, videoUri: null, imageUri: result.asset.uri, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
+    } else {
+      setStoryPreview({ visible: true, videoUri: storyCrop.uri, imageUri: null, overlayText: '', caption: '', mediaScale: result.scale, mediaOffsetX: result.offsetX, mediaOffsetY: result.offsetY, posting: false });
     }
+  };
+
+  const openStoryPicker = async () => {
+    if (Platform.OS === 'web') { pickStoryMediaWeb(onStoryMediaPicked); return; }
     Alert.alert('Publier une story', 'Choisir le type de contenu', [
       { text: 'Vidéo (caméra)', onPress: () => {
         // Ouvre la caméra in-app en mode vidéo
         setInAppCamera({ visible: true, mode: 'video' });
       }},
-      { text: 'Photo / vidéo (galerie)', onPress: async () => {
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!perm.granted) { showToast('Permission galerie refusée', { type: 'warning' }); return; }
-        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], allowsEditing: false });
-        if (!res.canceled) {
-          const asset = res.assets[0];
-          const isVideo = asset.type === 'video' || (asset.uri || '').match(/\.(mp4|mov|avi)$/i);
-          setStoryPreview({ visible: true, videoUri: isVideo ? asset.uri : null, imageUri: !isVideo ? asset.uri : null, overlayText: '', caption: '', posting: false });
-        }
-      }},
+      { text: 'Photo / vidéo (galerie)', onPress: () => pickStoryMediaFromGallery(onStoryMediaPicked, showToast) },
       { text: 'Annuler', style: 'cancel' },
     ]);
   };
@@ -300,49 +287,14 @@ export default function AccueilScreen({ navigation }) {
     if (storyPreview.posting) return;
     setStoryPreview(prev => ({ ...prev, posting: true }));
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error('Session expirée. Reconnecte-toi.');
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Non authentifié');
-
-      const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
-      let storyData = { user_id: user.id, expires_at: expiresAt, overlay_text: storyPreview.overlayText.trim() || null, caption: storyPreview.caption.trim() || null };
-
-      if (videoUri) {
-        const fileName = `${user.id}/${Date.now()}.mp4`;
-        if (Platform.OS === 'web') {
-          const resp = await fetch(videoUri);
-          const blob = await resp.blob();
-          const { error: upErr } = await supabase.storage.from('stories').upload(fileName, blob, { contentType: blob.type || 'video/mp4', upsert: false });
-          if (upErr) throw upErr;
-        } else {
-          await new Promise((resolve, reject) => {
-            const form = new FormData();
-            form.append('', { uri: videoUri, name: `${Date.now()}.mp4`, type: 'video/mp4' });
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', `${ENV.supabaseUrl}/storage/v1/object/stories/${fileName}`);
-            xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
-            xhr.setRequestHeader('x-upsert', 'false');
-            xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload ${xhr.status}`)));
-            xhr.onerror = () => reject(new Error('Erreur réseau'));
-            xhr.send(form);
-          });
-        }
-        const { data: urlData } = supabase.storage.from('stories').getPublicUrl(fileName);
-        storyData.video_url = urlData.publicUrl;
-      } else if (imageUri) {
-        const fileName = `${user.id}/${Date.now()}.jpg`;
-        const resp = await fetch(imageUri);
-        const blob = await resp.blob();
-        const { error: upErr } = await supabase.storage.from('stories').upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
-        if (upErr) throw upErr;
-        const { data: urlData } = supabase.storage.from('stories').getPublicUrl(fileName);
-        storyData.image_url = urlData.publicUrl;
-      }
-
-      const { error: insErr } = await supabase.from('stories').insert(storyData);
-      if (insErr) throw insErr;
-      setStoryPreview({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', posting: false });
+      await uploadAndPublishStory({
+        userId: user.id, videoUri, imageUri,
+        overlayText: storyPreview.overlayText, caption: storyPreview.caption,
+        mediaScale: storyPreview.mediaScale, mediaOffsetX: storyPreview.mediaOffsetX, mediaOffsetY: storyPreview.mediaOffsetY,
+      });
+      setStoryPreview({ visible: false, videoUri: null, imageUri: null, overlayText: '', caption: '', mediaScale: 1, mediaOffsetX: 0, mediaOffsetY: 0, posting: false });
       showToast('Story publiée ! Elle disparaît dans 24h ✨', { type: 'success' });
       fetchMyStory();
     } catch (e) {
@@ -485,6 +437,9 @@ export default function AccueilScreen({ navigation }) {
   // Web : capture via <input type=file>. `capture="environment"` ouvre l'appareil
   // photo (arrière) sur mobile. On compresse via canvas et on renvoie le base64
   // BRUT (analyzeOutfit reconstruit la data-URL `data:image/jpeg;base64,...`).
+  // Le redimensionnement + double encodage (JPEG analyse / WebP stockage) sont
+  // maintenant faits par MediaCropEditor (bakeCropWeb) au moment de valider le
+  // recadrage — ici on se contente de récupérer le fichier brut et d'ouvrir l'éditeur.
   const pickImageWeb = (useCamera) => {
     if (typeof document === 'undefined') return;
     const input = document.createElement('input');
@@ -494,36 +449,7 @@ export default function AccueilScreen({ navigation }) {
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return;
-      const objectUrl = URL.createObjectURL(file);
-      const img = new window.Image();
-      img.onload = () => {
-        URL.revokeObjectURL(objectUrl);
-        const maxDim = 1280;
-        let { width, height } = img;
-        if (width >= height && width > maxDim) { height = Math.round((height * maxDim) / width); width = maxDim; }
-        else if (height > width && height > maxDim) { width = Math.round((width * maxDim) / height); height = maxDim; }
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        // Deux encodages :
-        //  • JPEG → envoyé à l'IA d'analyse (format le plus sûr/compatible).
-        //  • WebP → STOCKÉ dans le feed (≈25-35% plus léger, rendu par tous les
-        //    navigateurs modernes + expo-image). Repli JPEG si WebP non supporté
-        //    (toDataURL renvoie alors du PNG → on détecte et on retombe sur JPEG).
-        const jpegUrl = canvas.toDataURL('image/jpeg', 0.78);
-        let uploadMime = 'image/webp';
-        let uploadUrl = canvas.toDataURL(uploadMime, 0.72);
-        if (!uploadUrl.startsWith('data:image/webp')) { uploadMime = 'image/jpeg'; uploadUrl = jpegUrl; }
-        applyPickedImage({
-          uri: uploadUrl,                                  // aperçu = exactement ce qui sera stocké
-          base64: jpegUrl.split(',')[1] || null,           // analyse IA (JPEG)
-          uploadBase64: uploadUrl.split(',')[1] || null,   // stockage feed (WebP/JPEG)
-          uploadMime,
-          width, height,
-        });
-      };
-      img.onerror = () => { URL.revokeObjectURL(objectUrl); showToast('Image illisible, réessaie', { type: 'error' }); };
-      img.src = objectUrl;
+      setOutfitCrop({ visible: true, uri: URL.createObjectURL(file) });
     };
     input.click();
   };
@@ -542,8 +468,13 @@ export default function AccueilScreen({ navigation }) {
       base64: true,
     });
     if (!result.canceled) {
-      applyPickedImage(result.assets[0]);
+      setOutfitCrop({ visible: true, uri: result.assets[0].uri });
     }
+  };
+
+  const onOutfitCropConfirm = (result) => {
+    setOutfitCrop({ visible: false, uri: null });
+    if (result.mode === 'baked') applyPickedImage(result.asset);
   };
 
   const takePicture = () => {
@@ -715,7 +646,7 @@ export default function AccueilScreen({ navigation }) {
       showToast(`Ta tenue est dans le feed. +${pointsGagnes} points.`, { type: 'success' });
       // Ferme la personnalisation et redirige vers le feed
       setShowCustomization(false);
-      try { navigation.navigate('Accueil'); } catch (_) {}
+      try { navigation.navigate('Feed'); } catch (_) {}
     } catch (e) {
       showToast(e?.message || 'Erreur inconnue', { type: 'error' });
     }
@@ -949,7 +880,7 @@ export default function AccueilScreen({ navigation }) {
                 </Text>
                 <TouchableOpacity
                   style={s.noCreditsBtn}
-                  onPress={() => navigation.navigate('Shop')}
+                  onPress={() => navigation.navigate('Récap', { screen: 'Shop' })}
                   activeOpacity={0.85}
                 >
                   <Text style={s.noCreditsBtnText}>Obtenir plus de crédits →</Text>
@@ -966,7 +897,7 @@ export default function AccueilScreen({ navigation }) {
                 </Text>
                 <TouchableOpacity
                   style={s.noCreditsBtn}
-                  onPress={() => navigation.navigate('Shop')}
+                  onPress={() => navigation.navigate('Récap', { screen: 'Shop' })}
                   activeOpacity={0.85}
                 >
                   <Text style={s.noCreditsBtnText}>Découvrir Plus →</Text>
@@ -1205,7 +1136,7 @@ export default function AccueilScreen({ navigation }) {
                 </Text>
                 <TouchableOpacity
                   style={s.noCreditsBtn}
-                  onPress={() => navigation.navigate('Shop')}
+                  onPress={() => navigation.navigate('Récap', { screen: 'Shop' })}
                   activeOpacity={0.85}
                 >
                   <Text style={s.noCreditsBtnText}>Voir les offres →</Text>
@@ -1291,13 +1222,12 @@ export default function AccueilScreen({ navigation }) {
                 <Feather name="x" size={26} color="#fff" />
               </TouchableOpacity>
             </View>
-            {storyViewer.story?.video_url ? (
-              <Video source={{ uri: storyViewer.story.video_url }} style={s.viewerMedia} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay isLooping={false} />
-            ) : storyViewer.story?.image_url ? (
-              <ExpoImage source={{ uri: storyViewer.story.image_url }} style={s.viewerMedia} contentFit="contain" />
-            ) : null}
+            <StoryMedia story={storyViewer.story} style={s.viewerMedia} videoProps={{ useNativeControls: true, shouldPlay: true }} />
             {storyViewer.story?.overlay_text ? (
               <View style={s.viewerTextWrap}><Text style={s.viewerText}>{storyViewer.story.overlay_text}</Text></View>
+            ) : null}
+            {storyViewer.story?.caption ? (
+              <View style={s.viewerCaptionWrap}><Text style={s.viewerCaptionText}>{storyViewer.story.caption}</Text></View>
             ) : null}
             <TouchableOpacity style={s.replaceStoryBtn} onPress={() => { setStoryViewer({ visible: false, story: null }); openStoryPicker(); }}>
               <Text style={s.replaceStoryBtnText}>Remplacer la story</Text>
@@ -1317,10 +1247,18 @@ export default function AccueilScreen({ navigation }) {
               <View style={[s.storyModalHandle, { backgroundColor: theme.border }]} />
               <Text style={[s.storyModalTitle, { color: theme.textPri }]}>Publier une story</Text>
               <View style={s.storyVideoWrap}>
-                {storyPreview.videoUri ? (
-                  <Video source={{ uri: storyPreview.videoUri }} style={s.storyVideoPreview} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay={false} isLooping={false} />
-                ) : storyPreview.imageUri ? (
-                  <ExpoImage source={{ uri: storyPreview.imageUri }} style={s.storyVideoPreview} contentFit="contain" />
+                {storyPreview.videoUri || storyPreview.imageUri ? (
+                  <StoryMedia
+                    story={{
+                      video_url: storyPreview.videoUri,
+                      image_url: storyPreview.imageUri,
+                      media_scale: storyPreview.mediaScale,
+                      media_offset_x: storyPreview.mediaOffsetX,
+                      media_offset_y: storyPreview.mediaOffsetY,
+                    }}
+                    style={s.storyVideoPreview}
+                    videoProps={{ useNativeControls: true, shouldPlay: false }}
+                  />
                 ) : (
                   <Feather name="image" size={36} color={TEXT_SEC} />
                 )}
@@ -1368,14 +1306,28 @@ export default function AccueilScreen({ navigation }) {
         onCapture={(asset) => {
           setInAppCamera(prev => ({ ...prev, visible: false }));
           if (inAppCamera.mode === 'video') {
-            if (asset?.uri) {
-              setStoryPreview({ visible: true, videoUri: asset.uri, imageUri: null, overlayText: '', caption: '', posting: false });
-            }
-          } else {
-            // Photo tenue : l'IA attend image.base64 (JPEG brut)
-            applyPickedImage(asset);
+            if (asset?.uri) onStoryMediaPicked({ uri: asset.uri, isVideo: true });
+          } else if (asset?.uri) {
+            setOutfitCrop({ visible: true, uri: asset.uri });
           }
         }}
+      />
+
+      <MediaCropEditor
+        visible={storyCrop.visible}
+        uri={storyCrop.uri}
+        mediaType={storyCrop.mediaType}
+        aspect={STORY_ASPECT}
+        onCancel={() => setStoryCrop({ visible: false, uri: null, mediaType: 'image' })}
+        onConfirm={onStoryCropConfirm}
+      />
+      <MediaCropEditor
+        visible={outfitCrop.visible}
+        uri={outfitCrop.uri}
+        mediaType="image"
+        aspect={STORY_ASPECT}
+        onCancel={() => setOutfitCrop({ visible: false, uri: null })}
+        onConfirm={onOutfitCropConfirm}
       />
 
       {/* Écran de personnalisation (modal plein écran) */}
@@ -1715,9 +1667,11 @@ function createStyles(theme) {
   viewerOverlay:  { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
   viewerHeader:   { position: 'absolute', top: 56, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 10 },
   viewerUsername: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  viewerMedia:    { width: '100%', height: '70%' },
+  viewerMedia:    { width: '90%', aspectRatio: STORY_ASPECT },
   viewerTextWrap: { position: 'absolute', bottom: 140, left: 20, right: 20, alignItems: 'center' },
   viewerText:     { color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'center' },
+  viewerCaptionWrap: { position: 'absolute', bottom: 108, left: 20, right: 20, alignItems: 'center' },
+  viewerCaptionText: { color: 'rgba(255,255,255,0.85)', fontSize: 14, textAlign: 'center' },
   replaceStoryBtn:    { position: 'absolute', bottom: 60, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 22, backgroundColor: ACC_T },
   replaceStoryBtnText:{ color: '#3a0d1e', fontWeight: '800', fontSize: 14 },
 
@@ -1726,7 +1680,7 @@ function createStyles(theme) {
   storyModalSheet:      { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 36 },
   storyModalHandle:     { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
   storyModalTitle:      { fontSize: 17, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
-  storyVideoWrap:       { borderRadius: 16, overflow: 'hidden', height: 200, marginBottom: 20, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  storyVideoWrap:       { borderRadius: 16, overflow: 'hidden', width: '100%', aspectRatio: STORY_ASPECT, marginBottom: 20, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   storyVideoPreview:    { width: '100%', height: '100%' },
   storyFieldLabel:      { fontSize: 12, fontWeight: '600', marginBottom: 6 },
   storyFieldInput:      { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginBottom: 14, borderWidth: 1 },

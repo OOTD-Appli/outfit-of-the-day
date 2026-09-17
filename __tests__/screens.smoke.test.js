@@ -3,6 +3,7 @@
 // Ne rend rien (pas de renderer RN dans ce projet) — vérifie juste que le module
 // se charge (imports valides, JSX transpile, pas de référence non définie au niveau module).
 const screens = [
+  '../App',
   '../screens/AccueilScreen',
   '../screens/AuthScreen',
   '../screens/CustomizationScreen',

@@ -1,18 +1,19 @@
 import { registerForPushNotifications, savePushToken, scheduleFlammeReminder } from './lib/notifications';
 import { registerWebPush } from './lib/webPush';
 import { useState, useEffect } from 'react';
-import { View, StyleSheet, ActivityIndicator, Text, Platform } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { useSafeAreaInsets, SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { supabase } from './lib/supabase';
 import { ensureUserProfile } from './lib/ensureProfile';
 import { ToastProvider } from './lib/toastContext';
 import { ThemeProvider, useTheme } from './lib/themeContext';
-import InAppBanner from './components/InAppBanner';
 import AppHeader from './components/AppHeader';
 
 const navigationRef = createNavigationContainerRef();
@@ -28,11 +29,6 @@ function isRecoveryHref(href) {
 // Extrait les paramètres d'auth présents dans le hash ET la query string.
 // iOS Safari/PWA tronque parfois le hash ou ne déclenche pas detectSessionInUrl :
 // on parse nous-mêmes et on établira la session explicitement.
-// Deep link messagerie : extrait l'id de conversation de ?chat=<id>
-function chatIdFromUrl(href) {
-  try { return new URL(href).searchParams.get('chat'); } catch (_) { return null; }
-}
-
 function parseAuthParams(href) {
   const out = { access_token: null, refresh_token: null, type: null, token_hash: null, code: null };
   try {
@@ -51,11 +47,34 @@ import AuthScreen from './screens/AuthScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import AccueilScreen from './screens/AccueilScreen';
 import FeedScreen from './screens/FeedScreen';
-import FlammesScreen from './screens/FlammesScreen';
 import ProfilScreen from './screens/ProfilScreen';
 import ShopScreen from './screens/ShopScreen';
 
 const Tab = createBottomTabNavigator();
+const AccueilStackNav = createNativeStackNavigator();
+const RecapStackNav = createNativeStackNavigator();
+
+function AccueilStack() {
+  return (
+    <AccueilStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <AccueilStackNav.Screen name="AccueilHome" component={AccueilScreen} />
+      {/* CompetitionScreen / ShareToCompetitionScreen / CreateCompetitionScreen
+          rejoignent cette stack en Phase 1-2 de la refonte Compétitions. */}
+    </AccueilStackNav.Navigator>
+  );
+}
+
+// Temporaire (pré-Phase 3) : contenu de l'ancien ProfilScreen, juste remonté
+// sous l'onglet Récap. RecapScreen (stats + réglages + abonnement +
+// classements) remplacera "RecapHome" en Phase 3.
+function RecapStack() {
+  return (
+    <RecapStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <RecapStackNav.Screen name="RecapHome" component={ProfilScreen} />
+      <RecapStackNav.Screen name="Shop" component={ShopScreen} />
+    </RecapStackNav.Navigator>
+  );
+}
 
 function TabIconPill({ name, focused, color, accent }) {
   if (focused) {
@@ -68,43 +87,9 @@ function TabIconPill({ name, focused, color, accent }) {
   return <Ionicons name={name} size={22} color={color} />;
 }
 
-function ChatTabIcon({ focused, color, accent, unreadCount }) {
-  return (
-    <View>
-      {focused ? (
-        <View style={[styles.iconPill, { backgroundColor: accent }]}>
-          <Ionicons name="chatbubble-ellipses-outline" size={22} color="#fff" />
-        </View>
-      ) : (
-        <Ionicons name="chatbubble-ellipses-outline" size={22} color={color} />
-      )}
-      {!focused && unreadCount > 0 && (
-        <View style={styles.unreadDot}>
-          <Text style={styles.unreadDotText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
 function ThemedNavigator({ userId }) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  useEffect(() => {
-    if (!userId) return;
-    const channel = supabase
-      .channel('app-unread-msgs')
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `receiver_id=eq.${userId}`,
-      }, () => setUnreadCount(prev => prev + 1))
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [userId]);
 
   // Glassmorphism sur web : fond semi-transparent + blur
   const isWeb = Platform.OS === 'web';
@@ -124,13 +109,7 @@ function ThemedNavigator({ userId }) {
     ...(isWeb ? { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } : {}),
   };
 
-  const openConversation = (friendId) => {
-    setUnreadCount(0);
-    if (navigationRef.isReady()) navigationRef.navigate('Chat', { openFriendId: friendId });
-  };
-
   return (
-    <>
     <NavigationContainer ref={navigationRef}>
       <Tab.Navigator
         screenOptions={{
@@ -146,6 +125,16 @@ function ThemedNavigator({ userId }) {
       >
         <Tab.Screen
           name="Accueil"
+          component={AccueilStack}
+          options={{
+            headerShown: false,
+            tabBarIcon: ({ color, focused }) => (
+              <TabIconPill name="sparkles-outline" focused={focused} color={color} accent={theme.accent} />
+            ),
+          }}
+        />
+        <Tab.Screen
+          name="Feed"
           component={FeedScreen}
           options={{
             headerShown: false,
@@ -155,46 +144,17 @@ function ThemedNavigator({ userId }) {
           }}
         />
         <Tab.Screen
-          name="Chat"
-          component={FlammesScreen}
+          name="Récap"
+          component={RecapStack}
           options={{
-            tabBarIcon: ({ color, focused }) => (
-              <ChatTabIcon focused={focused} color={color} accent={theme.accent} unreadCount={unreadCount} />
-            ),
-          }}
-          listeners={{ tabPress: () => setUnreadCount(0) }}
-        />
-        <Tab.Screen
-          name="Analyse"
-          component={AccueilScreen}
-          options={{
-            tabBarIcon: ({ color, focused }) => (
-              <TabIconPill name="sparkles-outline" focused={focused} color={color} accent={theme.accent} />
-            ),
-          }}
-        />
-        <Tab.Screen
-          name="Profil"
-          component={ProfilScreen}
-          options={{
+            headerShown: false,
             tabBarIcon: ({ color, focused }) => (
               <TabIconPill name="person-outline" focused={focused} color={color} accent={theme.accent} />
             ),
           }}
         />
-        <Tab.Screen
-          name="Shop"
-          component={ShopScreen}
-          options={{
-            tabBarIcon: ({ color, focused }) => (
-              <TabIconPill name="bag-outline" focused={focused} color={color} accent={theme.accent} />
-            ),
-          }}
-        />
       </Tab.Navigator>
     </NavigationContainer>
-    <InAppBanner userId={userId} onPress={openConversation} />
-    </>
   );
 }
 
@@ -287,29 +247,9 @@ export default function App() {
     };
   }, []);
 
-  // Deep link messagerie depuis une notif cliquée APP FERMÉE (?chat=<id> dans l'URL)
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !session || recovery) return;
-    const id = chatIdFromUrl(INITIAL_HREF);
-    if (!id) return;
-    const t = setTimeout(() => {
-      if (navigationRef.isReady()) navigationRef.navigate('Chat', { openFriendId: id });
-      if (typeof window !== 'undefined' && window.history) window.history.replaceState({}, '', '/');
-    }, 400);
-    return () => clearTimeout(t);
-  }, [session, recovery]);
-
-  // Deep link depuis une notif cliquée APP DÉJÀ OUVERTE (message du service worker)
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof navigator === 'undefined' || !navigator.serviceWorker) return;
-    const handler = (event) => {
-      if (event.data?.type !== 'deep-link') return;
-      const id = chatIdFromUrl(event.data.url || '');
-      if (id && navigationRef.isReady()) navigationRef.navigate('Chat', { openFriendId: id });
-    };
-    navigator.serviceWorker.addEventListener('message', handler);
-    return () => navigator.serviceWorker.removeEventListener('message', handler);
-  }, []);
+  // Deep link Compétitions (?join_competition=<token>) : arrive en Phase 4 de
+  // la refonte, sur le même modèle que l'ancien ?chat=<id> (retiré ici avec le
+  // chat 1-à-1 — plus de route 'Chat' à cibler).
 
   // Clic sur une notification native (Expo) → routage deep link
   useEffect(() => {
@@ -318,10 +258,7 @@ export default function App() {
       const url = resp?.notification?.request?.content?.data?.url || '';
       if (!navigationRef.isReady()) return;
       if (/analyse/i.test(url)) {
-        navigationRef.navigate('Analyse'); // rappel flamme → écran d'analyse/caméra
-      } else {
-        const id = chatIdFromUrl(url);
-        if (id) navigationRef.navigate('Chat', { openFriendId: id });
+        navigationRef.navigate('Accueil'); // rappel quotidien → écran de capture
       }
     });
     return () => sub.remove();
@@ -336,24 +273,26 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <ThemeProvider>
-        <ToastProvider>
-          {recovery ? (
-            <ResetPasswordScreen onDone={() => {
-              setRecovery(false);
-              if (Platform.OS === 'web' && typeof window !== 'undefined' && window.history) {
-                window.history.replaceState({}, '', '/');
-              }
-            }} />
-          ) : !session ? (
-            <AuthScreen />
-          ) : (
-            <ThemedNavigator userId={session?.user?.id} />
-          )}
-        </ToastProvider>
-      </ThemeProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <ToastProvider>
+            {recovery ? (
+              <ResetPasswordScreen onDone={() => {
+                setRecovery(false);
+                if (Platform.OS === 'web' && typeof window !== 'undefined' && window.history) {
+                  window.history.replaceState({}, '', '/');
+                }
+              }} />
+            ) : !session ? (
+              <AuthScreen />
+            ) : (
+              <ThemedNavigator userId={session?.user?.id} />
+            )}
+          </ToastProvider>
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -365,19 +304,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  unreadDot: {
-    position: 'absolute',
-    top: -4,
-    right: -6,
-    backgroundColor: '#ED93B1',
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-    borderWidth: 1.5,
-    borderColor: '#FAF7F5',
-  },
-  unreadDotText: { color: '#fff', fontSize: 9, fontWeight: '800' },
 });
