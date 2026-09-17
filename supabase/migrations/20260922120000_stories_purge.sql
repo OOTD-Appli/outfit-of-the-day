@@ -16,9 +16,11 @@ DROP TRIGGER IF EXISTS trg_delete_story_files ON public.stories;
 DROP FUNCTION IF EXISTS public.delete_story_files();
 DROP FUNCTION IF EXISTS public.cleanup_expired_stories();
 
--- 3. Fichiers puis bucket
-DELETE FROM storage.objects WHERE bucket_id = 'stories';
-DELETE FROM storage.buckets WHERE id = 'stories';
+-- 3. Fichiers + bucket : NE PAS faire ça en SQL brut — cette instance refuse
+--    DELETE FROM storage.objects (ERROR 42501, "Direct deletion from storage
+--    tables is not allowed. Use the Storage API instead."). Fait séparément
+--    via l'API Storage (15 fichiers orphelins retrouvés et supprimés, puis
+--    DELETE /storage/v1/bucket/stories) avant d'exécuter cette migration.
 
 -- 4. Table (cascade automatiquement policies/index restants)
 DROP TABLE IF EXISTS public.stories;
