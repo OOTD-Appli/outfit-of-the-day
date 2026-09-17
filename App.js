@@ -47,8 +47,9 @@ import AuthScreen from './screens/AuthScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import AccueilScreen from './screens/AccueilScreen';
 import FeedScreen from './screens/FeedScreen';
-import ProfilScreen from './screens/ProfilScreen';
+import RecapScreen from './screens/RecapScreen';
 import ShopScreen from './screens/ShopScreen';
+import FriendsScreen from './screens/FriendsScreen';
 import CreateCompetitionScreen from './screens/CreateCompetitionScreen';
 import CompetitionScreen from './screens/CompetitionScreen';
 import ShareToCompetitionScreen from './screens/ShareToCompetitionScreen';
@@ -68,14 +69,12 @@ function AccueilStack() {
   );
 }
 
-// Temporaire (pré-Phase 3) : contenu de l'ancien ProfilScreen, juste remonté
-// sous l'onglet Récap. RecapScreen (stats + réglages + abonnement +
-// classements) remplacera "RecapHome" en Phase 3.
 function RecapStack() {
   return (
     <RecapStackNav.Navigator screenOptions={{ headerShown: false }}>
-      <RecapStackNav.Screen name="RecapHome" component={ProfilScreen} />
+      <RecapStackNav.Screen name="RecapHome" component={RecapScreen} />
       <RecapStackNav.Screen name="Shop" component={ShopScreen} />
+      <RecapStackNav.Screen name="Friends" component={FriendsScreen} />
     </RecapStackNav.Navigator>
   );
 }

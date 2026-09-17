@@ -119,11 +119,13 @@ const GridItem = memo(function GridItem({ item, index, onPress }) {
   );
 });
 
-export default function ProfilScreen() {
+export default function RecapScreen() {
   const navigation = useNavigation();
   const [profile, setProfile] = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [ootds, setOotds] = useState([]);
+  const [top3App, setTop3App] = useState([]);
+  const [top3Friends, setTop3Friends] = useState([]);
   const [loading, setLoading] = useState(true);
   const { width: ww, height: wh } = useWindowDimensions();
   const avatarSize = Math.min(Math.round(ww * 0.22), 90);
@@ -244,10 +246,20 @@ export default function ProfilScreen() {
     setLoadingMoreOotds(false);
   }, [loadingMoreOotds, profile?.id]);
 
+  const fetchTop3 = useCallback(async () => {
+    const [{ data: app }, { data: friends }] = await Promise.all([
+      supabase.rpc('get_top3_app'),
+      supabase.rpc('get_top3_friends'),
+    ]);
+    setTop3App(app || []);
+    setTop3Friends(friends || []);
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       fetchProfil();
-    }, [fetchProfil])
+      fetchTop3();
+    }, [fetchProfil, fetchTop3])
   );
 
   const handleLogout = async () => {
@@ -503,15 +515,33 @@ export default function ProfilScreen() {
           <View>
             <View style={styles.header}>
               <View>
-                <Text style={[styles.title, { color: theme.textPri }]}>Profil</Text>
-                <TouchableOpacity
-                  style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                  onPress={openSettings}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="settings-outline" size={16} color={theme.accent} />
-                  <Text style={[styles.logoutText, { color: theme.accent }]}>Paramètres</Text>
-                </TouchableOpacity>
+                <Text style={[styles.title, { color: theme.textPri }]}>Récap</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                  <TouchableOpacity
+                    style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                    onPress={openSettings}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="settings-outline" size={16} color={theme.accent} />
+                    <Text style={[styles.logoutText, { color: theme.accent }]}>Réglages</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                    onPress={() => navigation.navigate('Shop')}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="star-outline" size={16} color={theme.accent} />
+                    <Text style={[styles.logoutText, { color: theme.accent }]}>Abonnement</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
+                    onPress={() => navigation.navigate('Friends')}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="people-outline" size={16} color={theme.accent} />
+                    <Text style={[styles.logoutText, { color: theme.accent }]}>Mes amis</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
               <View style={styles.headerActions}>
                 <TouchableOpacity
@@ -610,6 +640,49 @@ export default function ProfilScreen() {
               </View>
               <Text style={[styles.niveauSub, { color: theme.textSub }]}>{levelInfo.progressInLevel} / {levelInfo.threshold} points pour le prochain niveau</Text>
             </View>
+
+            {(top3App.length > 0 || top3Friends.length > 0) && (
+              <View style={styles.top3Section}>
+                {top3App.length > 0 && (
+                  <View style={styles.top3Block}>
+                    <Text style={[styles.top3Title, { color: theme.textPri }]}>🏆 Top 3 de la semaine</Text>
+                    {top3App.map((row, i) => (
+                      <View key={row.user_id} style={[styles.top3Row, { backgroundColor: theme.card }]}>
+                        <Text style={[styles.top3Rank, { color: theme.accent }]}>{i + 1}</Text>
+                        {row.avatar_url ? (
+                          <ExpoImage source={{ uri: row.avatar_url }} style={styles.top3Avatar} contentFit="cover" />
+                        ) : (
+                          <View style={[styles.top3Avatar, { backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center' }]}>
+                            <Text style={{ color: '#fff', fontWeight: '700' }}>{row.username?.[0]?.toUpperCase() || '?'}</Text>
+                          </View>
+                        )}
+                        <Text style={[styles.top3Name, { color: theme.textPri }]} numberOfLines={1}>{row.username}</Text>
+                        <Text style={[styles.top3Score, { color: theme.accent }]}>{fmtNote(row.best_score)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {top3Friends.length > 0 && (
+                  <View style={styles.top3Block}>
+                    <Text style={[styles.top3Title, { color: theme.textPri }]}>👯 Top 3 entre amis</Text>
+                    {top3Friends.map((row, i) => (
+                      <View key={row.user_id} style={[styles.top3Row, { backgroundColor: theme.card }]}>
+                        <Text style={[styles.top3Rank, { color: theme.accent }]}>{i + 1}</Text>
+                        {row.avatar_url ? (
+                          <ExpoImage source={{ uri: row.avatar_url }} style={styles.top3Avatar} contentFit="cover" />
+                        ) : (
+                          <View style={[styles.top3Avatar, { backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center' }]}>
+                            <Text style={{ color: '#fff', fontWeight: '700' }}>{row.username?.[0]?.toUpperCase() || '?'}</Text>
+                          </View>
+                        )}
+                        <Text style={[styles.top3Name, { color: theme.textPri }]} numberOfLines={1}>{row.username}</Text>
+                        <Text style={[styles.top3Score, { color: theme.accent }]}>{fmtNote(row.best_score)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
 
             <Text style={[styles.galerieTitle, { color: theme.textPri }]}>Mes tenues</Text>
           </View>
@@ -985,6 +1058,15 @@ const styles = StyleSheet.create({
   niveauSub:      { fontSize: 11 },
 
   galerieTitle:   { fontWeight: '700', fontSize: 16, padding: 16, paddingBottom: 8 },
+
+  top3Section:    { paddingHorizontal: 16, gap: 16, marginTop: 4 },
+  top3Block:      { gap: 8 },
+  top3Title:      { fontWeight: '800', fontSize: 15, marginBottom: 2 },
+  top3Row:        { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, padding: 10 },
+  top3Rank:       { fontWeight: '900', fontSize: 15, width: 18, textAlign: 'center' },
+  top3Avatar:     { width: 32, height: 32, borderRadius: 16 },
+  top3Name:       { flex: 1, fontWeight: '600', fontSize: 14 },
+  top3Score:      { fontWeight: '800', fontSize: 14 },
   privacyRow:     { flexDirection: 'row', alignItems: 'center', margin: 16, marginTop: 0, borderRadius: 16, padding: 16, borderWidth: 1 },
   privacyLeft:    { flex: 1, marginRight: 12 },
   privacyLabel:   { fontWeight: '700', fontSize: 14, marginBottom: 3 },
