@@ -1,9 +1,4 @@
 import { supabase } from '../lib/supabase';
-import {
-  flammeOrderedIds,
-  fetchAcceptedFriendIds,
-  hasSnapUsedTodayForPair,
-} from '../lib/flammesUtils';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -21,9 +16,9 @@ import { Video, ResizeMode } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
-import { dismissDeliveredFlammeReminder } from '../lib/notifications';
 import { ENV } from '../lib/env';
 import { resolveTier } from '../lib/tier';
+import { setPendingOutfit } from '../lib/pendingOutfit';
 import { pickStoryMediaWeb, pickStoryMediaFromGallery, uploadAndPublishStory, fetchMyActiveStory } from '../lib/storyActions';
 import MediaCropEditor from '../components/MediaCropEditor';
 import StoryMedia, { STORY_ASPECT } from '../components/StoryMedia';
@@ -190,14 +185,9 @@ export default function AccueilScreen({ navigation }) {
   const [image, setImage] = useState(null);
   const [score, setScore] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [publishedToFeed, setPublishedToFeed] = useState(false);
-  const [sentFlammesToAll, setSentFlammesToAll] = useState(false);
-  const [postingFeed, setPostingFeed] = useState(false);
-  const [sendingFlammesAll, setSendingFlammesAll] = useState(false);
-  const [flammesPicker, setFlammesPicker] = useState({ visible: false, friends: [], loading: false });
+  const [continuingToShare, setContinuingToShare] = useState(false);
   const [selectedMusic, setSelectedMusic] = useState(null); // { title, artist, previewUrl, coverUrl }
   const [showCustomization, setShowCustomization] = useState(false);
-  const [savingForSelf, setSavingForSelf] = useState(false);
   const [showStyleHashtag, setShowStyleHashtag] = useState(true);
   const [visibleScores, setVisibleScores] = useState([]); // clés de notes affichées sur le post
   const [showContextPanel, setShowContextPanel] = useState(false);
@@ -451,8 +441,6 @@ export default function AccueilScreen({ navigation }) {
     setScore(null);
     setHighScoreReminder(null);
     cachedPublicUrlRef.current = null;
-    setPublishedToFeed(false);
-    setSentFlammesToAll(false);
     setShowContextPanel(false);
     setContextText('');
     setContextResult(null);
@@ -569,8 +557,6 @@ export default function AccueilScreen({ navigation }) {
         if (typeof parsed.max_credits === "number") setMaxCredits(parsed.max_credits);
       }
       cachedPublicUrlRef.current = null;
-      setPublishedToFeed(false);
-      setSentFlammesToAll(false);
       lastAnalyzedRef.current = { uri: image.uri, ts: Date.now() };
       setScore(parsed);
       maybeShowHighScoreReminder(parsed.global);
@@ -638,202 +624,30 @@ export default function AccueilScreen({ navigation }) {
     return url;
   }, [image]);
 
-  const publishToFeed = async () => {
-    if (!score || publishedToFeed || postingFeed) return;
-    setPostingFeed(true);
+  // Upload l'image puis stocke la tenue en attente pour ShareToCompetitionScreen
+  // (multi-sélection compétitions + toggle "rendre publique"). Remplace les
+  // anciens publishToFeed/saveForSelf/sendOutfitToSelectedFlammes : un seul
+  // point d'entrée, l'insert réel se fait via submit_ootd_to_competitions
+  // dans ShareToCompetitionScreen.
+  const goToShareToCompetition = async () => {
+    if (!score || continuingToShare) return;
+    setContinuingToShare(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Session expirée. Reconnecte-toi.');
       const publicUrl = await uploadAnalyzedImageIfNeeded();
-      const { data: insertData, error: insertError } = await supabase.from('ootds').insert({
-        user_id: user.id,
-        image_url: publicUrl,
-        score_global: score.global,
-        score_couleurs: score.harmonie,
-        score_coupe: score.fit,
-        score_tendance: score.detail,
-        conseil: score.conseil,
-        caption: caption.trim() || null,
-        is_public: true,
-        styles: score.styles || [],
-        show_style_hashtag: showStyleHashtag,
-        visible_scores: visibleScores,
-        audio_title: selectedMusic?.title || null,
-        audio_artist: selectedMusic?.artist || null,
-        audio_preview_url: selectedMusic?.previewUrl || null,
-        audio_cover_url: selectedMusic?.coverUrl || null,
-      }).select('id').single();
-      if (insertError) throw new Error(`Publication impossible: ${insertError.message}`);
-      const { data: awardResult, error: awardError } = await supabase.rpc('award_points_for_ootd', { p_ootd_id: insertData.id });
-      if (awardError) throw new Error(`Points: ${awardError.message}`);
-      if (!awardResult?.ok) throw new Error(awardResult?.error || 'Erreur attribution points');
-      const pointsGagnes = awardResult.points_earned;
-      if ((score.styles || []).length > 0) {
-        try { await supabase.rpc('increment_style_stats', { p_styles: score.styles }); } catch (_) {}
-      }
-      setPublishedToFeed(true);
-      setCaption('');
-      setSelectedMusic(null);
-      setVisibleScores([]);
-      showToast(`Ta tenue est dans le feed. +${pointsGagnes} points.`, { type: 'success' });
-      // Ferme la personnalisation et redirige vers le feed
-      setShowCustomization(false);
-      try { navigation.navigate('Feed'); } catch (_) {}
-    } catch (e) {
-      showToast(e?.message || 'Erreur inconnue', { type: 'error' });
-    }
-    setPostingFeed(false);
-  };
-
-  // 💾 Enregistrer pour soi : stocke l'outfit dans la galerie perso uniquement
-  // (is_public:false → absent du feed). Pas de publication ni d'envoi.
-  const saveForSelf = async () => {
-    if (!score || savingForSelf) return;
-    setSavingForSelf(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Session expirée. Reconnecte-toi.');
-      const publicUrl = await uploadAnalyzedImageIfNeeded();
-      const { data: ins, error } = await supabase.from('ootds').insert({
-        user_id: user.id,
-        image_url: publicUrl,
-        score_global: score.global,
-        score_couleurs: score.harmonie,
-        score_coupe: score.fit,
-        score_tendance: score.detail,
-        conseil: score.conseil,
-        caption: caption.trim() || null,
-        is_public: false,
-        styles: score.styles || [],
-        audio_title: selectedMusic?.title || null,
-        audio_artist: selectedMusic?.artist || null,
-        audio_preview_url: selectedMusic?.previewUrl || null,
-        audio_cover_url: selectedMusic?.coverUrl || null,
-      }).select('id').single();
-      if (error) throw new Error(error.message);
-      try { await supabase.rpc('award_points_for_ootd', { p_ootd_id: ins.id }); } catch (_) {}
-      setCaption('');
-      setSelectedMusic(null);
-      setShowCustomization(false);
-      showToast('Enregistré dans ta galerie 💾', { type: 'success' });
-    } catch (e) {
-      showToast(e?.message || 'Erreur inconnue', { type: 'error' });
-    }
-    setSavingForSelf(false);
-  };
-
-  // Ouvre le sélecteur d'amis avant d'envoyer
-  const openFlammesPicker = async () => {
-    if (!score || sentFlammesToAll || sendingFlammesAll) return;
-    // Ouvre la modale immédiatement avec un indicateur de chargement
-    setFlammesPicker({ visible: true, friends: [], loading: true });
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setFlammesPicker({ visible: false, friends: [], loading: false }); return; }
-      const friendIds = await fetchAcceptedFriendIds(supabase, user.id);
-      if (!friendIds?.length) {
-        setFlammesPicker({ visible: false, friends: [], loading: false });
-        Alert.alert('Aucun ami', "Accepte des amis dans l'onglet Chat pour leur envoyer ton outfit.");
-        return;
-      }
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, username, avatar_url')
-        .in('id', friendIds);
-      setFlammesPicker({
-        visible: true,
-        loading: false,
-        friends: (profiles || []).map(p => ({ ...p, selected: false })),
+      setPendingOutfit({
+        imageUrl: publicUrl,
+        score,
+        caption: caption.trim(),
+        showStyleHashtag,
+        visibleScores,
+        music: selectedMusic,
       });
-    } catch (e) {
-      setFlammesPicker({ visible: false, friends: [], loading: false });
-      showToast('Impossible de charger tes contacts. Réessaie.', { type: 'error' });
-    }
-  };
-
-  const toggleFlammesFriend = (id) => {
-    setFlammesPicker(prev => ({
-      ...prev,
-      friends: prev.friends.map(f => f.id === id ? { ...f, selected: !f.selected } : f),
-    }));
-  };
-
-  const sendOutfitToSelectedFlammes = async () => {
-    const selectedIds = (flammesPicker.friends || []).filter(f => f.selected).map(f => f.id);
-    if (!selectedIds.length) {
-      showToast('Sélectionne au moins un ami', { type: 'warning' });
-      return;
-    }
-    setFlammesPicker(prev => ({ ...prev, visible: false }));
-    setSendingFlammesAll(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Session expirée. Reconnecte-toi.');
-      const publicUrl = await uploadAnalyzedImageIfNeeded();
-      // Notes de la tenue, portées par le snap + le message pour affichage dans le chat
-      const scoreFields = {
-        score_global: score.global,
-        score_couleurs: score.harmonie,
-        score_coupe: score.fit,
-        score_tendance: score.detail,
-        conseil: score.conseil || null,
-      };
-      const { data: myFlammes } = await supabase
-        .from('flammes')
-        .select('*')
-        .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`);
-      const flammesLocal = [...(myFlammes || [])];
-      let sent = 0;
-      let skipped = 0;
-      for (const friendId of selectedIds) {
-        try {
-          if (await hasSnapUsedTodayForPair(supabase, user.id, friendId)) { skipped += 1; continue; }
-          const { error: snapErr } = await supabase.from('snaps').insert({ sender_id: user.id, receiver_id: friendId, image_url: publicUrl, ...scoreFields });
-          if (snapErr) { console.error('snap insert failed:', snapErr); continue; }
-          await supabase.from('messages').insert({ sender_id: user.id, receiver_id: friendId, image_url: publicUrl, ...scoreFields });
-          sent += 1;
-          const flamme = flammesLocal.find(f =>
-            (f.user1_id === user.id && f.user2_id === friendId) ||
-            (f.user1_id === friendId && f.user2_id === user.id),
-          );
-          const now = new Date();
-          if (flamme) {
-            const diffHours = (now - (flamme.last_snap_at ? new Date(flamme.last_snap_at) : new Date(0))) / 3600000;
-            const newStreak = diffHours < 24 ? flamme.streak + 1 : 1;
-            await supabase.from('flammes').update({ streak: newStreak, last_snap_at: now.toISOString() }).eq('id', flamme.id);
-            flamme.streak = newStreak; flamme.last_snap_at = now.toISOString();
-          } else {
-            const { data: ins, error: insErr } = await supabase
-              .from('flammes').insert({ ...flammeOrderedIds(user.id, friendId), streak: 1, last_snap_at: now.toISOString() }).select().single();
-            if (!insErr && ins) flammesLocal.push(ins);
-          }
-        } catch (loopErr) { console.warn('flamme loop', loopErr); }
-      }
-      if (sent > 0) {
-        setSentFlammesToAll(true);
-        dismissDeliveredFlammeReminder(); // photo envoyée → on retire le rappel affiché
-        // Enregistrement parallèle dans la galerie perso (hors feed)
-        try {
-          await supabase.from('ootds').insert({
-            user_id: user.id, image_url: publicUrl, is_public: false,
-            score_global: score.global, score_couleurs: score.harmonie,
-            score_coupe: score.fit, score_tendance: score.detail,
-            conseil: score.conseil, caption: caption.trim() || null,
-            styles: score.styles || [],
-            audio_title: selectedMusic?.title || null, audio_artist: selectedMusic?.artist || null,
-            audio_preview_url: selectedMusic?.previewUrl || null, audio_cover_url: selectedMusic?.coverUrl || null,
-          });
-        } catch (_) {}
-        setShowCustomization(false);
-      }
-      const msg = sent > 0
-        ? `${sent} ami(s) ont reçu ton outfit 🔥${skipped > 0 ? ` · ${skipped} ignoré(s) (déjà envoyé aujourd'hui)` : ''}`
-        : "Aucun envoi : snap déjà envoyé à ces amis aujourd'hui.";
-      showToast(msg, { type: sent > 0 ? 'success' : 'info' });
+      setShowCustomization(false);
+      navigation.navigate('ShareToCompetition');
     } catch (e) {
       showToast(e?.message || 'Erreur inconnue', { type: 'error' });
     }
-    setSendingFlammesAll(false);
+    setContinuingToShare(false);
   };
 
   return (
@@ -1191,8 +1005,6 @@ export default function AccueilScreen({ navigation }) {
                   setScore(null);
                   setHighScoreReminder(null);
                   cachedPublicUrlRef.current = null;
-                  setPublishedToFeed(false);
-                  setSentFlammesToAll(false);
                   setShowContextPanel(false);
                   setContextText('');
                   setContextResult(null);
@@ -1422,12 +1234,8 @@ export default function AccueilScreen({ navigation }) {
         setMusicPicker={setMusicPicker}
         searchMusic={searchMusic}
         selectTrack={selectTrack}
-        onPublish={publishToFeed}
-        onFlammes={() => { setShowCustomization(false); openFlammesPicker(); }}
-        onSaveForSelf={saveForSelf}
-        posting={postingFeed}
-        sendingFlammes={sendingFlammesAll}
-        saving={savingForSelf}
+        onContinue={goToShareToCompetition}
+        continuing={continuingToShare}
         showStyleHashtag={showStyleHashtag}
         setShowStyleHashtag={setShowStyleHashtag}
         visibleScores={visibleScores}
@@ -1680,27 +1488,6 @@ function createStyles(theme) {
   musicResultArtist: { fontSize: 12, color: SUB_T, marginTop: 2 },
   musicResultBadge:  { backgroundColor: ACC_T + '22', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, fontSize: 11, fontWeight: '700', color: ACC_T },
   musicNoResults:    { textAlign: 'center', color: SUB_T, marginVertical: 16, fontSize: 13 },
-
-  /* Picker flammes */
-  pickerOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
-  pickerSheet:     { backgroundColor: CARD_T, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '75%' },
-  pickerHandle:    { width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, alignSelf: 'center', marginBottom: 16 },
-  pickerTitle:     { fontWeight: '800', fontSize: 18, color: PRI_T, textAlign: 'center', marginBottom: 4 },
-  pickerSub:       { fontSize: 13, color: SUB_T, textAlign: 'center', marginBottom: 16 },
-  pickerList:      { maxHeight: 320 },
-  pickerRow:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12 },
-  pickerAvatar:    { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  pickerAvatarImg: { width: 44, height: 44, borderRadius: 22 },
-  pickerAvatarText:{ color: '#fff', fontWeight: '700', fontSize: 17 },
-  pickerName:      { flex: 1, fontWeight: '600', fontSize: 15, color: PRI_T },
-  checkbox:        { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: BRD_T, alignItems: 'center', justifyContent: 'center' },
-  checkboxOn:      { backgroundColor: ACC_T, borderColor: ACC_T },
-  checkmark:       { color: '#fff', fontWeight: '900', fontSize: 13 },
-  pickerBtns:      { flexDirection: 'row', gap: 10, marginTop: 16 },
-  pickerCancel:    { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: BRD_T},
-  pickerCancelText:{ fontWeight: '600', fontSize: 15, color: PRI_T },
-  pickerConfirm:   { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center', backgroundColor: ACC_T },
-  pickerConfirmText:{ fontWeight: '800', fontSize: 15, color: '#fff' },
 
   /* Post-analyse actions */
   postAnalysisActions: { gap: 10, marginTop: 20, marginBottom: 4 },

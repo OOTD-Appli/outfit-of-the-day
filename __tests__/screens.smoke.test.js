@@ -13,6 +13,7 @@ const screens = [
   '../screens/FlammesScreen',
   '../screens/ProfilScreen',
   '../screens/ResetPasswordScreen',
+  '../screens/ShareToCompetitionScreen',
   '../screens/ShopScreen',
 ];
 

@@ -17,8 +17,7 @@ export default function CustomizationScreen({
   caption, setCaption,
   selectedMusic, setSelectedMusic,
   musicPicker, setMusicPicker, searchMusic, selectTrack,
-  onPublish, onFlammes, onSaveForSelf,
-  posting, sendingFlammes, saving,
+  onContinue, continuing,
   showStyleHashtag, setShowStyleHashtag,
   visibleScores = [], onToggleScore,
 }) {
@@ -74,7 +73,7 @@ export default function CustomizationScreen({
   useEffect(() => () => { stopPreview(); }, []);
 
   if (!score) return null;
-  const busy = posting || sendingFlammes || saving;
+  const busy = continuing;
   // DB : score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
   const chips = [
     { k: 'Global', v: score.global, c: theme.accent, dbKey: 'score_global' },
@@ -252,14 +251,8 @@ export default function CustomizationScreen({
 
           {/* Barre d'actions fixe */}
           <View style={[styles.actions, { backgroundColor: theme.bg, borderTopColor: theme.border }]}>
-            <Bouncy style={[styles.btnPrimary, { backgroundColor: theme.accent }, busy && styles.disabled]} onPress={() => { stopPreview(); onPublish(); }} disabled={busy}>
-              {posting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.btnPrimaryText}>🚀 Publier dans le feed</Text>}
-            </Bouncy>
-            <Bouncy style={[styles.btnSecondary, { borderColor: theme.accent, backgroundColor: theme.card }, busy && styles.disabled]} onPress={() => { stopPreview(); onFlammes(); }} disabled={busy}>
-              {sendingFlammes ? <ActivityIndicator color={theme.accent} size="small" /> : <Text style={[styles.btnSecondaryText, { color: theme.accent }]}>🔥 Envoyer à mes flammes</Text>}
-            </Bouncy>
-            <Bouncy style={[styles.btnGhost, busy && styles.disabled]} onPress={() => { stopPreview(); onSaveForSelf(); }} disabled={busy}>
-              {saving ? <ActivityIndicator color={theme.textSub} size="small" /> : <Text style={[styles.btnGhostText, { color: theme.textSub }]}>💾 Enregistrer pour soi</Text>}
+            <Bouncy style={[styles.btnPrimary, { backgroundColor: theme.accent }, busy && styles.disabled]} onPress={() => { stopPreview(); onContinue(); }} disabled={busy}>
+              {continuing ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.btnPrimaryText}>Continuer</Text>}
             </Bouncy>
           </View>
         </KeyboardAvoidingView>
