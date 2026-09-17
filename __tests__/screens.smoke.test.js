@@ -12,6 +12,7 @@ const screens = [
   '../screens/FeedScreen',
   '../screens/FlammesScreen',
   '../screens/FriendsScreen',
+  '../screens/JoinCompetitionScreen',
   '../screens/RecapScreen',
   '../screens/ResetPasswordScreen',
   '../screens/ShareToCompetitionScreen',

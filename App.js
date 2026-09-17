@@ -1,5 +1,6 @@
 import { registerForPushNotifications, savePushToken, scheduleFlammeReminder } from './lib/notifications';
 import { registerWebPush } from './lib/webPush';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useState, useEffect } from 'react';
 import { View, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
@@ -25,6 +26,15 @@ const INITIAL_HREF = (typeof window !== 'undefined' && window.location) ? window
 function isRecoveryHref(href) {
   return /[#?&]type=recovery/i.test(href) || /\/reset-password/i.test(href);
 }
+
+// Deep link Compétitions : extrait le token de ?join_competition=<token>.
+// Même modèle que l'ancien ?chat=<id> — voir PENDING_JOIN_TOKEN_KEY plus bas
+// pour la partie "capturé avant que l'utilisateur ait un compte".
+function joinCompetitionTokenFromUrl(href) {
+  try { return new URL(href).searchParams.get('join_competition'); } catch (_) { return null; }
+}
+
+const PENDING_JOIN_TOKEN_KEY = '@ootd_pending_join_token';
 
 // Extrait les paramètres d'auth présents dans le hash ET la query string.
 // iOS Safari/PWA tronque parfois le hash ou ne déclenche pas detectSessionInUrl :
@@ -53,6 +63,7 @@ import FriendsScreen from './screens/FriendsScreen';
 import CreateCompetitionScreen from './screens/CreateCompetitionScreen';
 import CompetitionScreen from './screens/CompetitionScreen';
 import ShareToCompetitionScreen from './screens/ShareToCompetitionScreen';
+import JoinCompetitionScreen from './screens/JoinCompetitionScreen';
 
 const Tab = createBottomTabNavigator();
 const AccueilStackNav = createNativeStackNavigator();
@@ -65,6 +76,7 @@ function AccueilStack() {
       <AccueilStackNav.Screen name="ShareToCompetition" component={ShareToCompetitionScreen} />
       <AccueilStackNav.Screen name="CreateCompetition" component={CreateCompetitionScreen} />
       <AccueilStackNav.Screen name="Competition" component={CompetitionScreen} />
+      <AccueilStackNav.Screen name="JoinCompetition" component={JoinCompetitionScreen} />
     </AccueilStackNav.Navigator>
   );
 }
@@ -209,6 +221,23 @@ export default function App() {
         console.warn('ensureUserProfile', e?.message || e);
       }
 
+      // Lien d'invitation Compétitions cliqué avant que la session existe
+      // (nouvel utilisateur pas encore inscrit) : le token a été capturé dans
+      // AsyncStorage dès le chargement (voir plus bas), on le consomme ici dès
+      // qu'une session existe, qu'elle vienne de getSession() ou d'un signup/
+      // login qui vient juste de se produire.
+      try {
+        const pendingToken = await AsyncStorage.getItem(PENDING_JOIN_TOKEN_KEY);
+        if (pendingToken) {
+          await AsyncStorage.removeItem(PENDING_JOIN_TOKEN_KEY);
+          setTimeout(() => {
+            if (navigationRef.isReady()) {
+              navigationRef.navigate('Accueil', { screen: 'JoinCompetition', params: { token: pendingToken } });
+            }
+          }, 400);
+        }
+      } catch (_) {}
+
       try {
         if (Platform.OS === 'web') {
           await registerWebPush();
@@ -250,9 +279,32 @@ export default function App() {
     };
   }, []);
 
-  // Deep link Compétitions (?join_competition=<token>) : arrive en Phase 4 de
-  // la refonte, sur le même modèle que l'ancien ?chat=<id> (retiré ici avec le
-  // chat 1-à-1 — plus de route 'Chat' à cibler).
+  // Deep link Compétitions (?join_competition=<token>) : capturé dès le
+  // chargement, même si aucune session n'existe encore (nouvel utilisateur
+  // pas inscrit) — consommé dans syncSession dès qu'une session existe.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const token = joinCompetitionTokenFromUrl(INITIAL_HREF);
+    if (!token) return;
+    AsyncStorage.setItem(PENDING_JOIN_TOKEN_KEY, token).catch(() => {});
+    if (typeof window !== 'undefined' && window.history) window.history.replaceState({}, '', '/');
+  }, []);
+
+  // Lien cliqué alors que l'app est déjà ouverte ET une session déjà active
+  // (message du service worker) : syncSession ne se redéclenche pas dans ce
+  // cas (pas de nouvel évènement d'auth), donc on route directement ici.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof navigator === 'undefined' || !navigator.serviceWorker) return;
+    const handler = (event) => {
+      if (event.data?.type !== 'deep-link') return;
+      const token = joinCompetitionTokenFromUrl(event.data.url || '');
+      if (token && navigationRef.isReady()) {
+        navigationRef.navigate('Accueil', { screen: 'JoinCompetition', params: { token } });
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, []);
 
   // Clic sur une notification native (Expo) → routage deep link
   useEffect(() => {
