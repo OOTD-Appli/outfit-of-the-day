@@ -282,7 +282,7 @@ export default function AccueilScreen({ navigation }) {
         .from('competition_members')
         .select('last_read_at, competitions(id, name, created_at)')
         .eq('user_id', user.id)
-        .order('competitions(created_at)', { ascending: false });
+        .order('created_at', { foreignTable: 'competitions', ascending: false });
       if (error) throw error;
       const rows = (data || []).filter(r => r.competitions);
       const withUnread = await Promise.all(rows.map(async (r) => {

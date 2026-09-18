@@ -49,12 +49,14 @@ export default function CompetitionScreen({ route, navigation }) {
   const loadGallery = useCallback(async () => {
     setGalleryLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('ootd_competitions')
         .select('ootd_id, created_at, ootds(id, image_url, score_global, caption, styles, user_id, profiles(username, avatar_url))')
-        .eq('competition_id', competitionId)
-        .order(sortByScore ? 'ootds(score_global)' : 'created_at', { ascending: false })
-        .limit(GALLERY_PAGE);
+        .eq('competition_id', competitionId);
+      query = sortByScore
+        ? query.order('score_global', { foreignTable: 'ootds', ascending: false })
+        : query.order('created_at', { ascending: false });
+      const { data, error } = await query.limit(GALLERY_PAGE);
       if (error) throw error;
       setGallery((data || []).filter(r => r.ootds));
     } catch (e) {

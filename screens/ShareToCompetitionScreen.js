@@ -32,9 +32,9 @@ export default function ShareToCompetitionScreen({ navigation }) {
       if (!user) return;
       const { data, error } = await supabase
         .from('competition_members')
-        .select('competitions(id, name)')
+        .select('competitions(id, name, created_at)')
         .eq('user_id', user.id)
-        .order('competitions(created_at)', { ascending: false });
+        .order('created_at', { foreignTable: 'competitions', ascending: false });
       if (error) throw error;
       setCompetitions((data || []).map(r => r.competitions).filter(Boolean));
     } catch (e) {

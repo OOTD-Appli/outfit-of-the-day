@@ -1,70 +1,78 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ActivityIndicator, Share, Platform,
+  ActivityIndicator, FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/themeContext';
 import { useToast } from '../lib/toastContext';
+import Avatar from '../components/Avatar';
 
-// Crée une compétition puis affiche tout de suite un lien d'invitation à
-// partager (n'importe quel membre peut en générer/révoquer un — cf.
-// create_competition_invite). Pas de sélecteur de membres ici : on invite
-// uniquement par lien, cohérent avec l'absence de mécanisme d'invitation
-// préexistant dans l'app.
+// Créer une compétition : nom + sélection des membres parmi les amis déjà
+// ajoutés (Récap > Mes amis). Remplace l'ancien flow "créer puis générer un
+// lien" — la composition peut être modifiée plus tard (lien d'invitation
+// toujours disponible depuis l'écran de la compétition pour ajouter du monde
+// après coup).
 export default function CreateCompetitionScreen({ navigation }) {
   const { theme } = useTheme();
   const { showToast } = useToast();
   const [name, setName] = useState('');
+  const [friends, setFriends] = useState([]);
+  const [friendsLoading, setFriendsLoading] = useState(true);
+  const [selected, setSelected] = useState(new Set());
   const [creating, setCreating] = useState(false);
-  const [created, setCreated] = useState(null); // { competition_id, name }
-  const [invite, setInvite] = useState(null); // { token }
-  const [invitePending, setInvitePending] = useState(false);
+
+  const loadFriends = useCallback(async () => {
+    setFriendsLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const [{ data: fd1, error: e1 }, { data: fd2, error: e2 }] = await Promise.all([
+        supabase.from('friendships').select('friend_id').eq('user_id', user.id).eq('status', 'accepted'),
+        supabase.from('friendships').select('user_id').eq('friend_id', user.id).eq('status', 'accepted'),
+      ]);
+      if (e1 || e2) throw new Error((e1 || e2).message);
+      const friendIds = [...new Set([...(fd1 || []).map(r => r.friend_id), ...(fd2 || []).map(r => r.user_id)])];
+      if (!friendIds.length) { setFriends([]); return; }
+      const { data: profs, error: e3 } = await supabase
+        .from('profiles').select('id, username, avatar_url').in('id', friendIds);
+      if (e3) throw new Error(e3.message);
+      setFriends(profs || []);
+    } catch (e) {
+      showToast(e?.message || 'Erreur chargement des amis', { type: 'error' });
+    }
+    setFriendsLoading(false);
+  }, [showToast]);
+
+  useEffect(() => { loadFriends(); }, [loadFriends]);
+
+  const toggleFriend = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const createCompetition = async () => {
     const trimmed = name.trim();
     if (!trimmed || creating) return;
     setCreating(true);
     try {
-      const { data, error } = await supabase.rpc('create_competition', { p_name: trimmed });
+      const { data, error } = await supabase.rpc('create_competition_with_members', {
+        p_name: trimmed,
+        p_member_ids: Array.from(selected),
+      });
       if (error) throw new Error(error.message);
       if (!data?.ok) throw new Error(data?.error || 'Erreur inconnue');
-      setCreated({ competition_id: data.competition_id, name: data.name });
+      showToast(`"${data.name}" créée 🎉`, { type: 'success' });
+      navigation.replace('Competition', { competitionId: data.competition_id, competitionName: data.name });
     } catch (e) {
       showToast(e?.message || 'Erreur inconnue', { type: 'error' });
     }
     setCreating(false);
-  };
-
-  const generateInvite = async () => {
-    if (!created || invitePending) return;
-    setInvitePending(true);
-    try {
-      const { data, error } = await supabase.rpc('create_competition_invite', {
-        p_competition_id: created.competition_id,
-      });
-      if (error) throw new Error(error.message);
-      if (!data?.ok) throw new Error(data?.error || 'Erreur inconnue');
-      setInvite({ token: data.token });
-    } catch (e) {
-      showToast(e?.message || 'Erreur inconnue', { type: 'error' });
-    }
-    setInvitePending(false);
-  };
-
-  const shareInvite = async () => {
-    if (!invite) return;
-    const base = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : 'https://ootd-fr.vercel.app';
-    const url = `${base}/?join_competition=${invite.token}`;
-    try {
-      await Share.share({ message: `Rejoins "${created.name}" sur OOTD : ${url}` });
-    } catch (_) {}
-  };
-
-  const goToCompetition = () => {
-    navigation.replace('Competition', { competitionId: created.competition_id, competitionName: created.name });
   };
 
   return (
@@ -77,9 +85,12 @@ export default function CreateCompetitionScreen({ navigation }) {
         <View style={{ width: 24 }} />
       </View>
 
-      <View style={styles.body}>
-        {!created ? (
-          <>
+      <FlatList
+        data={friends}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.list}
+        ListHeaderComponent={
+          <View style={styles.listHeader}>
             <Text style={[styles.label, { color: theme.textSub }]}>Nom de la compétition</Text>
             <TextInput
               style={[styles.input, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textPri }]}
@@ -90,42 +101,52 @@ export default function CreateCompetitionScreen({ navigation }) {
               maxLength={60}
               autoFocus
             />
-            <TouchableOpacity
-              style={[styles.btnPrimary, { backgroundColor: theme.accent }, (!name.trim() || creating) && styles.disabled]}
-              onPress={createCompetition}
-              disabled={!name.trim() || creating}
-            >
-              {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Créer</Text>}
-            </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <Text style={[styles.successTitle, { color: theme.textPri }]}>"{created.name}" créée 🎉</Text>
-            <Text style={[styles.successSub, { color: theme.textSub }]}>
-              Invite tes proches en partageant un lien — ils rejoignent la compétition en un clic.
+
+            <Text style={[styles.label, { color: theme.textSub, marginTop: 8 }]}>
+              Qui participe ? ({selected.size} sélectionné{selected.size > 1 ? 's' : ''})
             </Text>
-
-            {!invite ? (
-              <TouchableOpacity
-                style={[styles.btnSecondary, { borderColor: theme.accent }, invitePending && styles.disabled]}
-                onPress={generateInvite}
-                disabled={invitePending}
-              >
-                {invitePending
-                  ? <ActivityIndicator color={theme.accent} />
-                  : <Text style={[styles.btnSecondaryText, { color: theme.accent }]}>🔗 Générer un lien d'invitation</Text>}
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={[styles.btnSecondary, { borderColor: theme.accent }]} onPress={shareInvite}>
-                <Text style={[styles.btnSecondaryText, { color: theme.accent }]}>📤 Partager le lien</Text>
-              </TouchableOpacity>
+            {friendsLoading && <ActivityIndicator color={theme.accent} style={{ marginVertical: 12 }} />}
+            {!friendsLoading && friends.length === 0 && (
+              <View style={[styles.emptyFriendsCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <Text style={{ color: theme.textSub, fontSize: 13, lineHeight: 19 }}>
+                  Tu n'as pas encore d'amis ajoutés. Va dans Récap → Mes amis pour en chercher et en ajouter, puis reviens ici pour créer ta compétition.
+                </Text>
+                <TouchableOpacity
+                  style={{ marginTop: 10 }}
+                  onPress={() => navigation.navigate('Récap', { screen: 'Friends' })}
+                >
+                  <Text style={{ color: theme.accent, fontWeight: '700', fontSize: 13 }}>Aller à Mes amis →</Text>
+                </TouchableOpacity>
+              </View>
             )}
-
-            <TouchableOpacity style={[styles.btnPrimary, { backgroundColor: theme.accent, marginTop: 24 }]} onPress={goToCompetition}>
-              <Text style={styles.btnPrimaryText}>Aller à la compétition</Text>
+          </View>
+        }
+        renderItem={({ item }) => {
+          const isSelected = selected.has(item.id);
+          return (
+            <TouchableOpacity
+              style={[styles.friendRow, { borderColor: theme.border, backgroundColor: theme.card }]}
+              onPress={() => toggleFriend(item.id)}
+              activeOpacity={0.85}
+            >
+              <Avatar uri={item.avatar_url} username={item.username} size={36} />
+              <Text style={[styles.friendName, { color: theme.textPri }]}>{item.username}</Text>
+              <View style={[styles.checkbox, { borderColor: theme.accent }, isSelected && { backgroundColor: theme.accent }]}>
+                {isSelected && <Ionicons name="checkmark" size={14} color="#fff" />}
+              </View>
             </TouchableOpacity>
-          </>
-        )}
+          );
+        }}
+      />
+
+      <View style={[styles.footer, { borderTopColor: theme.border, backgroundColor: theme.bg }]}>
+        <TouchableOpacity
+          style={[styles.btnPrimary, { backgroundColor: theme.accent }, (!name.trim() || creating) && styles.disabled]}
+          onPress={createCompetition}
+          disabled={!name.trim() || creating}
+        >
+          {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Créer</Text>}
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -135,14 +156,16 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   headerTitle: { fontSize: 16, fontWeight: '800' },
-  body: { padding: 20 },
+  list: { padding: 20, paddingBottom: 100 },
+  listHeader: { marginBottom: 4 },
   label: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
   input: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, marginBottom: 18 },
-  btnPrimary: { borderRadius: 14, paddingVertical: 15, alignItems: 'center' },
+  emptyFriendsCard: { borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 8 },
+  friendRow: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, borderWidth: 1, padding: 12, marginBottom: 8 },
+  friendName: { flex: 1, fontWeight: '600', fontSize: 14.5 },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  footer: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, borderTopWidth: StyleSheet.hairlineWidth },
+  btnPrimary: { borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
   btnPrimaryText: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  btnSecondary: { borderRadius: 14, paddingVertical: 15, alignItems: 'center', borderWidth: 1.5 },
-  btnSecondaryText: { fontWeight: '800', fontSize: 15 },
   disabled: { opacity: 0.55 },
-  successTitle: { fontSize: 18, fontWeight: '800', marginBottom: 8 },
-  successSub: { fontSize: 13.5, marginBottom: 24, lineHeight: 19 },
 });
