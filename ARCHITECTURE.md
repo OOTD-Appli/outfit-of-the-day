@@ -1,30 +1,35 @@
 # ARCHITECTURE.md — Référence technique OOTD
 
-> Dernière mise à jour : 2026-08-09
+> Dernière mise à jour : 2026-09-24 (refonte "Compétitions v2")
 
 ## Vue d'ensemble
 
 Application mobile React Native / Expo (iOS, Android, **Web/PWA**). Architecture simple : **pas de state manager global**, chaque écran gère son propre state local. Supabase est la source de vérité (DB + Auth + Storage + Realtime + Edge Functions). L'IA est appelée **exclusivement via des Edge Functions Supabase** — les clés API ne sont jamais dans le bundle client.
 
+**Pivot produit (2026-09) :** l'app est passée d'un modèle "amis 1-à-1 + streaks + Stories" à un modèle **"Compétitions"** — des groupes nommés où les membres partagent leurs tenues et discutent ensemble. Le chat 1-à-1, les streaks (flammes) et les Stories ont été retirés de l'UI ; `friendships` reste un concept indépendant (sert le classement "Top 3 amis" et la sélection des membres à la création d'une compétition).
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      App (Expo — iOS / Android / PWA)                    │
-│  ┌──────┐ ┌──────┐ ┌────────┐ ┌────────┐ ┌────────┐                    │
-│  │ Feed │ │ Chat │ │Analyse │ │ Profil │ │  Shop  │                    │
-│  └──┬───┘ └──┬───┘ └───┬────┘ └───┬────┘ └───┬────┘                    │
-│     └────────┴──────────┴──────────┴──────────┘                         │
+│  ┌─────────┐        ┌──────┐        ┌────────┐                          │
+│  │ Accueil │        │ Feed │        │ Récap  │                          │
+│  │(capture │        │(feed │        │(stats, │                          │
+│  │+compét.)│        │public)│       │réglages,│                         │
+│  └────┬────┘        └──┬───┘        │abonnem.,│                         │
+│       │                │            │amis,   │                          │
+│       │                │            │Top 3)  │                          │
+│       │                │            └───┬────┘                         │
+│       └────────────────┴────────────────┘                               │
 │                  Supabase Client (lib/supabase.js)                       │
 └──────────────────────────────┬────────────────────────────────────────--┘
                                │
               ┌────────────────▼──────────────────────────┐
               │               Supabase (BaaS)              │
               │  DB (Postgres + RLS)   Auth (email/pwd)    │
-              │  Storage (3 buckets)   Realtime (WS)       │
+              │  Storage (2 buckets)   Realtime (WS)       │
               │                                            │
               │  Edge Functions                            │
               │  ├─ analyze-outfit ──────► Gemini 2.5-flash│
-              │  │                  └────► Groq (fallback) │
-              │  ├─ contextual-analysis ─► Gemini 2.5-flash│
               │  │                  └────► Groq (fallback) │
               │  ├─ deezer-search ────────► Deezer API     │
               │  ├─ create-checkout-session ──► Stripe     │
@@ -35,11 +40,13 @@ Application mobile React Native / Expo (iOS, Android, **Web/PWA**). Architecture
               └────────────────────────────────────────────┘
 ```
 
+> `contextual-analysis` (analyse "cette tenue est-elle adaptée à telle situation ?") a été **retirée** (2026-09-24) — jugée inutile en usage réel. Ni le bouton, ni l'Edge Function n'existent plus.
+
 ---
 
 ## Navigation
 
-`App.js` implémente un **BottomTabNavigator à 5 onglets** dans `ThemedNavigator`. Le gardien d'auth est dans `App()`. `ThemeProvider` et `ToastProvider` enveloppent tout.
+`App.js` implémente un **BottomTabNavigator à 3 onglets**, chacun enveloppant sa propre **stack native** (`@react-navigation/native-stack`) pour supporter la profondeur nécessaire (compétition → chat, Récap → réglages/abonnement/amis). Le gardien d'auth est dans `App()`. `ThemeProvider` et `ToastProvider` enveloppent tout.
 
 ```
 App.js
@@ -48,29 +55,34 @@ App.js
  ├── session=null  → <ThemeProvider><ToastProvider><AuthScreen>
  └── session ok    → <ThemeProvider>
                        <ToastProvider>
-                         <ThemedNavigator userId={session.user.id}>
-                           ├── Accueil (🏠) → FeedScreen     (headerShown: false, plein écran)
-                           ├── Chat    (💬) → FlammesScreen  ← badge non-lu (Realtime)
-                           ├── Analyse (✨) → AccueilScreen
-                           ├── Profil  (👤) → ProfilScreen
-                           └── Shop    (🛍️) → ShopScreen
-                         + <InAppBanner userId onPress>     (monté hors NavigationContainer)
+                         <ThemedNavigator>
+                           ├── Accueil (✨) → AccueilStack
+                           │     ├── AccueilHome         → AccueilScreen (capture + liste compétitions)
+                           │     ├── ShareToCompetition   → ShareToCompetitionScreen
+                           │     ├── CreateCompetition    → CreateCompetitionScreen
+                           │     ├── Competition          → CompetitionScreen (galerie + chat groupe)
+                           │     └── JoinCompetition       → JoinCompetitionScreen (deep link invitation)
+                           ├── Feed    (🏠) → FeedScreen        (headerShown: false, plein écran)
+                           └── Récap   (👤) → RecapStack
+                                 ├── RecapHome → RecapScreen (stats, niveau, Top 3, galerie)
+                                 ├── Shop      → ShopScreen (abonnement, achats express, cosmétiques)
+                                 └── Friends   → FriendsScreen (recherche + demandes d'amis)
 ```
 
 **Header** : tous les onglets sauf Feed utilisent un header custom `<AppHeader />` (`screenOptions.header`) au lieu du header par défaut de React Navigation.
 
-**ThemedNavigator** reçoit `userId` en prop :
-- Souscrit à `supabase.channel('app-unread-msgs')` pour les INSERT sur `messages.receiver_id=userId`
-- Incrémente `unreadCount` → composant `ChatTabIcon` (dot rose avec compteur "9+", pas `tabBarBadge` natif) sur l'onglet Chat
-- Efface le compteur au tap de l'onglet (`listeners.tabPress`) et à l'ouverture d'une conversation via `InAppBanner`
-- Tab bar glassmorphism sur web (`backgroundColor + 'E8'`, `backdropFilter: blur(20px)`), coins arrondis 28px, `animation: 'shift'`
-- Couleurs depuis `useTheme()` (accent, fond, bordure)
+**Navigation cross-tab** : pour naviguer d'un onglet vers un écran d'une stack sœur, utiliser la forme `navigation.navigate('Récap', { screen: 'Shop' })` (jamais `navigation.navigate('Shop')` seul si l'appelant est dans une autre stack).
 
-**InAppBanner** (montée au niveau racine, au-dessus des tabs) : bannière qui descend en haut de l'écran quand un nouveau message Realtime arrive sur une conversation qui n'est pas déjà ouverte (`lib/activeChat.getActiveChat()`). Tap → `openConversation(friendId)` navigue vers Chat et remet `unreadCount` à 0.
+**Auth flow** : `App.useEffect` appelle `supabase.auth.getSession()`, puis écoute `onAuthStateChange`. `syncSession()` enchaîne `ensureUserProfile()`, la consommation d'un éventuel **token d'invitation en attente** (voir ci-dessous), l'enregistrement push (natif) et `registerWebPush()` (PWA). Sur web, les tokens de récupération de mot de passe sont parsés manuellement depuis le hash **et** la query string (`parseAuthParams`) pour fiabiliser Safari iOS/PWA, avec pose de session explicite (`setSession`/`verifyOtp`/`exchangeCodeForSession`).
 
-**Auth flow** : `App.useEffect` appelle `supabase.auth.getSession()`, puis écoute `onAuthStateChange`. `syncSession()` enchaîne `ensureUserProfile()`, enregistrement push (natif) et `registerWebPush()` (PWA). Sur web, les tokens de récupération de mot de passe sont parsés manuellement depuis le hash **et** la query string (`parseAuthParams`) pour fiabiliser Safari iOS/PWA, avec pose de session explicite (`setSession`/`verifyOtp`/`exchangeCodeForSession`).
+**Deep link d'invitation compétition** (`?join_competition=<token>`) :
+- Capturé dans `AsyncStorage['@ootd_pending_join_token']` **dès le chargement de la page**, même si aucune session n'existe encore (cas d'un nouvel utilisateur qui doit d'abord s'inscrire).
+- Consommé dans `syncSession()` dès qu'une session existe (que ce soit `getSession()` au démarrage ou un login/signup qui vient de se produire) → navigue vers `JoinCompetitionScreen`.
+- Cas "app déjà ouverte + session déjà active" (clic sur le lien pendant que le PWA tourne) : géré séparément via le message `postMessage` du service worker.
+- `JoinCompetitionScreen` affiche toujours un aperçu (nom + nombre de membres via `get_competition_invite_preview`, appelable sans compte) et exige un tap explicite sur "Rejoindre" — **jamais d'adhésion automatique au chargement** (un lien peut être périmé, révoqué ou transféré).
+- Clic sur une notification native (rappel quotidien) → route vers l'onglet Accueil si l'URL contient "analyse".
 
-**Deep links messagerie** (`?chat=<id>`) : gérés dans 3 cas — app fermée (lu depuis `INITIAL_HREF` au montage), app ouverte (message `postMessage` du service worker), et clic sur notification native (`Notifications.addNotificationResponseReceivedListener`, route aussi vers l'onglet Analyse si l'URL contient "analyse" — rappel flamme quotidien).
+> L'ancien deep link `?chat=<id>` (ouverture directe d'une conversation 1-à-1) a disparu avec le chat 1-à-1 lui-même.
 
 ---
 
@@ -87,7 +99,7 @@ App.js
 - **Sync cross-device** : `setColorMode()` écrit aussi `supabase.auth.updateUser({ data: { dark_mode: bool } })` (dans `user_metadata`, **pas** une colonne `profiles`). `refreshTheme()` (appelé à chaque `onAuthStateChange`) donne priorité à `user_metadata.dark_mode` s'il existe, et réécrit le stockage local en conséquence.
 - **Suivi système** : `Appearance.addChangeListener` bascule automatiquement `colorMode` si rien n'a jamais été choisi localement.
 - `activeTheme` (nom de palette cosmétique) est chargé depuis `profiles.active_theme` au changement de session ; `refreshTheme()` exporté pour `ShopScreen` (ré-applique après équipement).
-- Toggle UI : `ProfilScreen` → modal Paramètres → section "Apparence" (switch lune/soleil animé `Animated.spring`).
+- Toggle UI : `RecapScreen` → modal Réglages → section "Apparence" (switch lune/soleil animé `Animated.spring`).
 
 ### `lib/logoConfig.js` — `getLogoConfig(logoId)`
 
@@ -95,7 +107,7 @@ App.js
 - **5 logos emoji** (badge/cadre) : `default` (⭐), `diamond` (💎, bleu), `crown` (👑, or), `fire` (🔥, orange), `star` (🌟, jaune) — exposent `emoji`, `frameBorderColor`, `postIcon`, `badge`.
 - **5 logos image** (`assets/logos/*.jpg`) : `bleu_neon`, `sunset`, `vert_neon`, `rose_flashy`, `rose_pastel` — exposent `frameBorderColor` + un champ `image` (`require(...)`), pas de `badge`/`postIcon`.
 
-`getLogoConfig()` retourne la config correspondante ou `default` si `logoId` est inconnu. Consommé par `AppHeader` (logo dans le header, fallback `assets/logo.jpg` si pas de champ `image`), `Avatar`, `FeedScreen`, `FlammesScreen`, `ProfilScreen`.
+`getLogoConfig()` retourne la config correspondante ou `default` si `logoId` est inconnu. Consommé par `AppHeader` (logo dans le header, fallback `assets/logo.jpg` si pas de champ `image`), `Avatar`, `FeedScreen`, `RecapScreen`.
 
 > Le logo par défaut attribué aux nouveaux profils est `star` (migration `20260603140000`).
 
@@ -117,57 +129,55 @@ App.js
 - Validations : longueur min 6, confirmation match
 
 ### AccueilScreen (`screens/AccueilScreen.js`)
-Reçoit `{ navigation }` de React Navigation (navigue vers Shop).
+Reçoit `{ navigation }` de React Navigation. Racine de la stack `AccueilStack`.
 
 **Phase 1 — Sélection image**
 - `openImageSourcePicker()` : Alert.alert avec choix caméra/galerie
-- **Caméra** : ouvre désormais `<InAppCamera mode="photo">` (composant custom plein écran, `expo-camera`) au lieu du picker caméra système — **Galerie** : reste `expo-image-picker`
+- **Caméra** : `<InAppCamera mode="photo">` (composant custom plein écran, `expo-camera`) — **Galerie** : `expo-image-picker`
 - Compression systématique via `expo-image-manipulator` : max 1280px, JPEG 0.78 pour l'IA, WebP 0.72 pour le stockage (fallback JPEG sur web)
 - Cooldown anti-double-analyse : 5 min sur la même image (`lastAnalyzedRef`)
+- Recadrage : `CROP_ASPECT = 9/16` (constante locale, reprise de l'ancien `components/StoryMedia.js` supprimé avec les Stories)
 
 **Phase 2 — Crédits**
 - Tier Elite (Stripe) → illimité
 - Tier Plus/pass → 20/jour
 - Gratuit → 2/jour
-- Si `credits === 0` : carte `noCreditsCard` + bouton "Obtenir plus" → Shop
-- **Le crédit quotidien est partagé** entre l'analyse principale et l'analyse contextuelle (même RPC `consume_daily_credit`)
-- Tier résolu via `lib/tier.resolveTier()` (`userTier` state) — partagé avec ProfilScreen/ShopScreen
+- Si `credits === 0` : carte `noCreditsCard` + bouton "Obtenir plus" → Récap → Shop
+- Tier résolu via `lib/tier.resolveTier()` (`userTier` state) — partagé avec RecapScreen/ShopScreen
 
-**Rappels de monétisation** (Cahier des charges 2026-08-12, cartes réutilisant le style `noCreditsCard` — le composant toast de l'app n'a pas de CTA cliquable, insuffisant pour ces rappels) :
+**Rappels de monétisation** (cartes réutilisant le style `noCreditsCard`) :
 | Rappel | Condition | Fréquence | Stockage throttle |
 |---|---|---|---|
 | Dernière analyse du jour | `userTier==='free' && credits===1` | 1×/jour | `AsyncStorage['@ootd_reminder_lastcredit_date']` |
-| Note ≥ 8/10 | Résultat `global >= 8` et `userTier !== 'elite'` | 1× / 3 jours | `AsyncStorage['@ootd_reminder_highscore_ts']` |
+| Note ≥ 80/100 | Résultat `global >= 80` et `userTier !== 'elite'` | 1× / 3 jours | `AsyncStorage['@ootd_reminder_highscore_ts']` |
 
-Throttle en `AsyncStorage` (pas en DB) : purement un état d'affichage local, pas une donnée métier à synchroniser entre appareils.
-
-**Phase 3 — Analyse IA principale**
+**Phase 3 — Analyse IA**
 - `supabase.functions.invoke("analyze-outfit", { body: { base64Image, personality } })`
 - `base64Image` = `data:image/{jpeg|png|webp};base64,{raw}` (préfixe MIME obligatoire)
-- `personality` = clé fermée lue depuis `profiles.analysis_personality` (voir « Personnalité du critique IA » ci-dessous), fallback `'coach'`
-- Rate-limit : 5 requêtes/minute (`check_analyze_rate_limit` RPC, avant consommation crédit)
+- `personality` = clé fermée lue depuis `profiles.analysis_personality`, fallback `'coach'`
+- Rate-limit : 5 requêtes/minute (`check_analyze_rate_limit` RPC)
 - Timeout : 25 secondes via `withTimeout()`
-- Résultats : 3 jauges arc (Fit, Harmonie, Détails) via `components/Gauge.js` (react-native-svg), 1-2 hashtags de style
+- **Note sur 100** (v3, 2026-09) : 3 jauges arc (Fit /33, Harmonie /34, Détails /33) via `components/Gauge.js` (`max` dynamique par critère), note globale = somme directe des 3 (pas de moyenne), 1-2 hashtags de style
+- **`photo_complete: false`** : si l'IA juge la photo trop incomplète (buste seul, cadrage trop serré) pour noter équitablement, aucun score n'est calculé et **aucun crédit n'est consommé** — un bandeau "Photo incomplète" (raison + bouton "Reprendre la photo") s'affiche à la place du résultat (state `photoIncomplete`)
 - Animations : fade + rise + scale (AnimatedEntrance)
 
-**Phase 3bis — Conseil contextuel (optionnel)**
-- Bloc "Conseil contextuel" (toggle `showContextPanel`) : `TextInput` `contextText` (120 car. max, ex. "entretien d'embauche", "mariage champêtre") + bouton "Analyser le contexte"
-- `analyzeContext()` → `supabase.functions.invoke("contextual-analysis", { body: { base64Image, context } })` sur la **même photo déjà sélectionnée**, en plus de l'analyse principale (action utilisateur distincte, pas chaînée automatiquement)
-- Résultat : badge coloré (vert si cohérent, orange sinon) + `pourquoi` + `conseil` + `alternative` optionnelle
+> L'ancienne "analyse contextuelle" (bouton "Conseil contextuel", Edge Function `contextual-analysis`) a été **retirée entièrement** (2026-09-24).
+
+**Bloc conseil compact** : une seule ligne (`tipCardCompact`) sous le bouton d'analyse — remplace l'ancien bloc "Carte conseil" + 3 cartes "Comment ça marche ?", pour laisser plus de place à la liste des compétitions juste en dessous.
+
+**Section "Mes compétitions"** (toujours visible, sous le bloc conseil) : liste des compétitions dont l'utilisateur est membre (`competition_members` joint `competitions`), badge non-lu par ligne (compte les `competition_messages` postérieurs à `last_read_at`, hors ses propres messages), tap → `CompetitionScreen`. Bouton "Créer une compétition" → `CreateCompetitionScreen`.
 
 **Phase 4 — Personnalisation (CustomizationScreen modal)**
 - Ajout caption (200 chars max)
 - Sélection musique Deezer (proxy Edge Function → 10 résultats, autoplay preview 30s MP3 à la sélection)
 - Toggle "afficher mes hashtags de style" (si `score.styles.length > 0`) → `ootds.show_style_hashtag`
 - Choix des notes visibles publiquement → `ootds.visible_scores`
+- **Un seul bouton "Continuer"** (plus de choix publier/flammes/enregistrer ici) → upload de l'image puis navigation vers `ShareToCompetitionScreen` (la tenue en attente est portée par `lib/pendingOutfit.js`, un singleton hors React, pas par les route params — évite de sérialiser l'image dans la navigation)
 
-**Phase 5 — Publication**
-- `publishToFeed()` : upload Storage → insert `ootds` (avec `styles`, `show_style_hashtag`, `visible_scores`) → **RPC `award_points_for_ootd(ootd_id)`** → si styles présents, RPC `increment_style_stats(styles)` (stats de profil)
-- **Sélecteur d'amis** (`flammesPicker`/`openFlammesPicker`) : `sendOutfitToSelectedFlammes()` envoie à une **sélection multiple** d'amis choisis (plus un envoi automatique "à tous") → upload mutualisé → insert `snaps`/`messages` (avec scores + conseil) par ami sélectionné (skip si quota jour atteint) → update/insert `flammes.streak`
-- `saveForSelf()` : insert `ootds` avec `is_public=false`, pas de points
-
-**Stories** (voir aussi FlammesScreen)
-- Section "Ma story" dans l'onglet Analyse : aperçu de la story active, ou bouton "Publier une story" → `<InAppCamera mode="video">` → modal de preview (overlay_text + caption) → `publishStory()`
+**Phase 5 — Partage (ShareToCompetitionScreen, écran séparé)**
+- Multi-sélection des compétitions dont l'utilisateur est membre + toggle indépendant "Rendre publique (Feed)"
+- Un seul appel atomique `submit_ootd_to_competitions` RPC (insère `ootds`, relie chaque compétition sélectionnée via `ootd_competitions`, attribue les points, incrémente les stats de style) — remplace les anciens chemins séparés publier/flammes/enregistrer
+- 0 compétition sélectionnée + public désactivé = équivalent de l'ancien "Enregistrer pour soi"
 
 **Mapping scores IA → DB :**
 ```
@@ -176,86 +186,64 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 ```
 
 ### FeedScreen (`screens/FeedScreen.js`)
-- **UX TikTok** : `FlatList` `snapToInterval=pageH`, `snapToAlignment="start"`, `disableIntervalMomentum`, `decelerationRate="fast"`, chaque item = plein écran. **Sur web**, ces props RN ne se traduisent pas fiablement en scroll-snap réel via react-native-web (défilement libre façon "bande roulante" au lieu d'un passage photo par photo) — complété par du vrai CSS scroll-snap (`scrollSnapType`/`scrollSnapAlign`/`scrollSnapStop`, styles `feedListWeb`/`feedPageWeb`, `Platform.OS === 'web'` uniquement, sans effet sur natif)
+Inchangé dans son fonctionnement depuis la refonte Compétitions — reste le flux public de découverte (amis qui partagent publiquement + comptes publics), indépendant des compétitions (`ootds.is_public`).
+- **UX TikTok** : `FlatList` `snapToInterval=pageH`, `snapToAlignment="start"`, `disableIntervalMomentum`, `decelerationRate="fast"`, chaque item = plein écran. **Sur web**, complété par du vrai CSS scroll-snap (`scrollSnapType`/`scrollSnapAlign`/`scrollSnapStop`, styles `feedListWeb`/`feedPageWeb`, `Platform.OS === 'web'` uniquement)
 - **Fetch** : `ootds` joint `profiles(username, avatar_url, active_logo, is_private)`, `likes(id, user_id)`, `comments(count)` + colonnes `styles, show_style_hashtag, visible_scores` — pagination 10/page, chargement infini (`onEndReached`)
 - **Confidentialité** : posts `is_private` filtrés côté DB sauf auteur ou ami accepté
-- **Recherche** : bouton loupe → overlay `TextInput` `searchQuery` ("Hashtag, description, @utilisateur...") — filtrage **côté client** (`useMemo`) sur `username`, `caption`, `styles[]`, appliqué aux posts déjà chargés
-- **Toggle "œil" notes** (`showNotes`, icône `eye`/`eye-off`) : bascule l'affichage de toutes les notes en plus des `visible_scores` choisies par l'auteur à la publication
-- **Hashtags de style** : affichés sous la caption si `item.show_style_hashtag && item.styles.length`
-- **Flux "Pour toi" spécialisé** : si `profiles.specialized_feed` actif, interleave ~70/30% posts matchant le top 3 de `profiles.style_stats` (`userTopStyles`) vs contenu global — actif uniquement onglet "POUR TOI" sans recherche en cours
-- **Musique** : auto-play preview Deezer 30s à 80% de visibilité (`onViewableItemsChanged`), mute global (bouton top-right), cleanup complet `Audio.Sound` au blur de l'onglet
-- **Double-tap** : like animé (composant `HeartOverlay`, `ref.play()`) + haptic feedback
-- **Like optimiste** : update local immédiat → DB → rollback en cas d'erreur
-- **Partage** : modale sélection ami → insert `messages` (RLS exige amitié acceptée)
-- **Commentaires** : délégués à `FeedCommentsModal`
-- **Logo** : `getLogoConfig(item.profiles.active_logo)` → cadre avatar coloré, badge pseudo, icône overlay
-- **Skeleton** : composant `components/Skeleton.js` (placeholder shimmer) pendant le chargement
+- **Recherche** : bouton loupe → overlay `TextInput` — filtrage côté client sur `username`, `caption`, `styles[]`
+- **Toggle "œil" notes**, **hashtags de style**, **flux "Pour toi" spécialisé** (`profiles.specialized_feed`), **musique** auto-play, **double-tap like**, **partage** (vers une compétition ou en message direct — voir CompetitionScreen), **commentaires** (`FeedCommentsModal`) : comportement inchangé, voir le code pour le détail.
 
-### FlammesScreen (`screens/FlammesScreen.js`)
-3 vues gérées par le state `view` : `'list'` | `'chat'`
+### CompetitionScreen (`screens/CompetitionScreen.js`) — nouveau
+Reçoit `{ route: { params: { competitionId, competitionName } }, navigation }`. Deux onglets internes (`tab` state) :
 
-**Vue list (défaut)**
-- Liste amis acceptés avec streak 🔥, logos sur tous les avatars
-- Cercles stories en haut (viewer vidéo/photo modal plein écran) ; publication via `<InAppCamera mode="video">` (`postStory()` → preview → `publishStory()`)
-- Section "Demandes" si demandes entrantes
-- Recherche pseudo normalisée (accents/emoji/casse, 3 patterns combinés, dès 2 chars) — actions contextuelles selon état relation
+**Galerie**
+- `ootd_competitions` joint `ootds(id, image_url, score_global, caption, styles, user_id, profiles(username, avatar_url))`, filtré `competition_id`
+- Tri par date (défaut) ou par score (`sortByScore`) — **`.order('score_global', { foreignTable: 'ootds', ascending: false })`**, jamais `.order('ootds(score_global)', ...)` : cette dernière syntaxe n'est pas supportée par supabase-js et échoue silencieusement (bug réel rencontré et corrigé le 2026-09-24, voir Post-mortems)
+- Grille 3 colonnes, badge score par vignette
 
-**Vue chat**
-- Header : avatar (cadre logo), pseudo (badge logo), streak
-- Messages bulles gauche/droite selon `sender_id`, **style Instagram** : bulles "content-hugging" (`styles.msgRow` en `maxWidth: '75%'`, pas de largeur fixe) — un message court reste compact/arrondi, un message long wrappe dans la limite de 75%. Forme et couleurs OOTD conservées (`bubbleSent`/`bubbleRecv`, `theme.accent`/`theme.card`). *(Historique : plusieurs itérations sur une largeur fixe (50% puis 100%) avant de revenir à ce `maxWidth` content-hugging, sur demande explicite avec captures d'écran de référence Instagram.)*
-- **Saisie** : `onChangeMessageText` détecte un `\n` en fin de texte (touche Entrée) et appelle `sendTextMessage()` au lieu de l'insérer — pas besoin de taper sur le bouton d'envoi. Le `TextInput` reste contrôlé (`value={messageText}`), donc le saut de ligne ne s'affiche jamais.
-- **Photo — 2 sources** : caméra (`sendPhotoMessage` → `<InAppCamera mode="photo">` sur natif ; `pickChatPhotoWeb(true)` avec `capture="environment"` sur web) **et** galerie (nouveau bouton dédié dans la barre de saisie, icône `image` — `pickChatPhotoFromGallery` → `ImagePicker.launchImageLibraryAsync` sur natif, `pickChatPhotoWeb(false)` sans `capture` sur web). Les deux passent par le même `MediaCropEditor` (`chatPhotoCrop`) avant upload.
-- **Photo dans la bulle** : taille calculée indépendamment du cap de largeur de la bulle — `photoSize = Math.min(Math.round(ww * 0.55), 260)` — puis appliquée en `width`/`height` explicites sur `styles.msgImage`. Volontairement découplé de `msgRow.maxWidth` (une formule couplant les deux a déjà causé 2 régressions de débordement) : la bulle (content-hugging) s'adapte à la photo, pas l'inverse.
-- **Messages vocaux** : bouton micro dans la barre de saisie.
-  - `startRecording()` : `Audio.Recording.createAsync(HIGH_QUALITY)`, timer `recordingDuration`
-  - `stopAndSendRecording()` : annule si < 1s ; sinon upload Storage `ootds/audio/<uid>/<ts>.<ext>` (`webm` web / `m4a` natif) → insert `messages.audio_url`, affichage optimiste immédiat
-  - `playAudioMsg()` : lecture/pause via `Audio.Sound`, un seul son actif à la fois
-  - Composant `AudioMessage` : bulle avec cercle play/pause + waveform 12 barres animées + durée `mm:ss`
-- **Partage de profil** : `sendProfileShare()` insère un message JSON `{ _type: 'profile', ... }` → tap → modal profil (`profileModal`/`openUserProfile`)
-- **Typing indicator** : channel broadcast `typing-{pairKey}`, throttle 1.5s, timeout 4s, 3 points rebondissants
-- **Likes messages** : double-tap message reçu → `toggle_message_like` RPC → badge ❤️ (optimistic)
-- **Suppression** : appui long message envoyé → `delete_message` RPC (soft delete + nettoyage Storage)
-- **Accusés de lecture** : `read_at` mis à jour par `mark_messages_read` RPC, coches WhatsApp-style (gris = livré, accent = lu)
-- **Swipe-to-reply** : `SwipeableMessageBubble` (`PanResponder`, swipe droite ≥48px + haptic) → barre de reply au-dessus du `TextInput` → `reply_to_id` sur l'insert → quote affichée dans la bulle
-- **Cards profil / scores** : messages/snaps portent aussi `score_global/couleurs/coupe/tendance` + `conseil` quand une tenue analysée est partagée — affichage en badges sous l'image si le toggle "œil" (`showNotes`) est actif
-- **Notifications** : `dismissChatNotifications(friendId)` à l'ouverture d'une conversation (ferme les notifs SW/natives déjà affichées pour ce fil)
+**Chat de groupe**
+- Table `competition_messages` (remplace `messages` pour ce contexte) — texte ou photo, pas de messages vocaux/swipe-to-reply en V1 (ajoutables plus tard sans changer le modèle de données)
+- Realtime : **un channel par compétition ouverte** (`competition-chat-<id>`, filtré `competition_id=eq.<id>`) — pas de channel global unique possible, les filtres `postgres_changes` de Supabase ne supportent que l'égalité simple, pas une liste de compétitions
+- Soft-delete par appui long (RPC `delete_competition_message`, expéditeur uniquement)
+- Pas d'accusé de lecture par message — juste un curseur `competition_members.last_read_at` mis à jour par `mark_competition_read` à l'ouverture, utilisé pour le badge non-lu d'`AccueilScreen`
+- Bouton "inviter" dans le header → génère un lien via `create_competition_invite` et l'envoie via `Share.share()`
 
-**Flammes — 3 états (calculés côté client depuis `last_snap_at`)**
-| État | Condition | Affichage |
-|------|-----------|-----------|
-| Active 🔥 | ≤ 24h depuis dernier snap | streak coloré |
-| Expirée 🩶 | 24–72h (restaurable) | grisée + bouton ranimer |
-| Morte | > 72h | streak = 0 |
+`lib/activeChat.js` (`setActiveCompetition`/`getActiveCompetition`) retient la compétition dont le chat est ouvert.
 
-- **Restauration** : `restore_flamme(flamme_id)` RPC (fenêtre 48h, consomme 1 gel)
-- Si 0 gel → redirection Shop
+### CreateCompetitionScreen (`screens/CreateCompetitionScreen.js`) — nouveau
+- Nom (1-60 caractères) **et** sélection multiple des membres en une fois, parmi les amis déjà acceptés (`friendships`, mêmes requêtes que `FriendsScreen`) — pas de lien à générer pour démarrer
+- RPC `create_competition_with_members(p_name, p_member_ids[])` : vérifie que chaque membre proposé est un ami accepté avant de l'ajouter, crée la compétition + tous les membres en une transaction
+- Si l'utilisateur n'a pas encore d'amis : message + lien direct vers Récap → Mes amis
+- La composition peut être modifiée plus tard via le lien d'invitation de `CompetitionScreen` (ajout après coup)
 
-**Streak flammes** : comparaison par jours calendaires ISO (`daysDiff = Math.round(...)`) — si ≤ 1 : incrément, sinon reset à 1.
+### ShareToCompetitionScreen (`screens/ShareToCompetitionScreen.js`) — nouveau
+Voir "AccueilScreen — Phase 5" ci-dessus. Lit la tenue en attente via `getPendingOutfit()` (`lib/pendingOutfit.js`) ; si absente (retour arrière après coup), affiche un état vide avec bouton retour.
 
-**Realtime channels actifs (FlammesScreen)**
-| Canal | Type | Événement |
-|-------|------|-----------|
-| `list-msgs-{userId}` | postgres_changes | INSERT messages receiver_id=moi |
-| `chat-{userId}-{friendId}` | postgres_changes | INSERT/UPDATE/DELETE messages |
-| `typing-{pairKey}` | broadcast | typing indicator |
+### JoinCompetitionScreen (`screens/JoinCompetitionScreen.js`) — nouveau
+Voir "Navigation — Deep link d'invitation" ci-dessus. États : `loading` → `preview` (aperçu + bouton Rejoindre) → `joining` → `error` (lien invalide/expiré, bouton retour Accueil). Si l'utilisateur est déjà membre, `redeem_competition_invite` renvoie `already_member: true` sans dupliquer.
 
-> `InAppCamera` est partagée avec `AccueilScreen` (même composant, props `mode`/`onCapture`/`onClose`).
+### RecapScreen (`screens/RecapScreen.js`) — nouveau, remplace ProfilScreen
+Reprend le contenu de l'ancien `ProfilScreen` quasiment tel quel (modal Réglages, galerie paginée + lightbox, carte Niveau — lift-and-shift, pas une réécriture), réorganisé :
 
-### ProfilScreen (`screens/ProfilScreen.js`)
-- Fetch `profiles.*` + `subscriptions.*` + `ootds.*` au focus
-- Avatar upload : `fetch(uri).blob()` → `avatars/<uid>/avatar.jpg` (cache-buster `?t=<ts>`)
-- Stats : nb tenues, score moyen, points, badge abonnement (💎 Elite / ⭐ Plus)
-- **Niveau** : `computeLevelInfo(pts)` → `{ threshold, progressInLevel, percent }` — formule exponentielle ×1.8
-- **Top styles** : chips calculées depuis `profiles.style_stats` (top 3 triés par compteur) affichées sous les stats
-- Galerie 3 colonnes avec pagination (21/page), lightbox horizontal swipe enrichie : badge note globale + date, 3 badges colorés (Fit/Harmonie/Détails), chips de style, section Description (`caption`), section Conseils IA structurée (points forts / à améliorer)
-- **Téléchargement d'image** : bouton (avec spinner) dans la lightbox → `lib/downloadImage.downloadImageToDevice()`
-- **Suppression de tenue** : `doDeleteOotd()`/`deleteOotd()` — nettoyage Storage inclus
-- Modal paramètres : username, bio (160 chars), is_private toggle, **toggle "contenu spécialisé"** (`profiles.specialized_feed`), **toggle apparence dark/light** (`colorMode`), **sélecteur "Personnalité du critique IA"** (5 options, `profiles.analysis_personality`, constante client `PERSONALITIES` — labels/emoji uniquement, le texte de ton réel reste côté serveur) : options hors du tier de l'utilisateur affichées grisées avec 🔒 + tier requis (`lib/tier.isPersonaUnlocked`), tap → `navigation.navigate('Shop')` au lieu de sélectionner, email (RO), déconnexion
-- **Historique de la galerie** (perk Plus/Elite) : tier Gratuit plafonné à la 1ère page (21 tenues les plus récentes) — `ootdsHasMoreRef` forcé à `false` dès `fetchProfil` pour ce tier, pas d'appel réseau `loadMoreOotds` inutile. Bannière `🔒 Débloque l'historique complet...` en fin de liste (`showHistoryLock`), tap → Shop. Plus/Elite : pagination infinie normale.
-- **PWA** : bouton "Télécharger l'app" si `!isPwaStandalone()` et web (`lib/pwa.web.js`)
+1. En-tête : titre "Récap" + bouton déconnexion + bouton "Télécharger l'app" (PWA)
+2. Carte profil : avatar, pseudo, badge abonnement, stats (tenues / score moyen / points), top 3 styles
+3. Carte "Niveau" (`computeLevelInfo`)
+4. **Boutons Réglages / Abonnement / Mes amis** (juste sous la carte Niveau)
+5. **Top 3 de la semaine** (app entière) et **Top 3 entre amis** — deux blocs, `get_top3_app()`/`get_top3_friends()` RPCs, reset hebdomadaire
+6. Galerie "Mes tenues" — grille 3 colonnes **avec bordure et espacement entre chaque photo** (`gridCell` padding 3 + `gridPhoto` bordure `rgba(128,128,128,0.28)`), pagination 21/page (tier Gratuit plafonné à la 1ère page), lightbox horizontal swipe enrichie (badge note globale **dénominateur dynamique** `/{score_scale}` — voir "Note sur 100" plus bas —, 3 badges colorés, chips de style, description, conseils IA structurés)
+
+Modal Réglages : username, bio (160 chars), `is_private` toggle, toggle "contenu spécialisé", toggle apparence dark/light, sélecteur "Personnalité du critique IA" (grisé + 🔒 hors tier), email (RO), changement d'avatar.
+
+Bouton "Abonnement" → `navigation.navigate('Shop')` (même stack, `RecapStack`). Bouton "Mes amis" → `navigation.navigate('Friends')`.
+
+### FriendsScreen (`screens/FriendsScreen.js`) — nouveau, sous-écran de Récap
+Repris de l'ancien `FlammesScreen.js` (demande/acceptation d'ami), **sans** chat ni streak — `friendships` reste un concept indépendant des compétitions (sert `get_top3_friends` et le sélecteur de membres de `CreateCompetitionScreen`, décision produit explicite plutôt que déduire "ami" de l'appartenance à une compétition commune).
+- Barre de recherche pseudo (normalisation accents/emoji/casse) toujours visible en haut
+- Liste "Demandes reçues" (si non vide) puis liste des amis acceptés
+- Actions contextuelles par ligne : Ajouter / Accepter+Refuser / Demandée (annulable) / Amis ✓
 
 ### ShopScreen (`screens/ShopScreen.js`)
-3 sections distinctes :
+Inchangé fonctionnellement — self-contained (zéro props, propre `fetchData`), monté comme sous-écran de `RecapStack` au lieu d'un onglet dédié. 3 sections :
 
 **1. Premium (Stripe — abonnements récurrents)**
 | Plan | Prix | Avantages |
@@ -263,151 +251,128 @@ DB:  score_global   score_coupe   score_couleurs  score_tendance  styles (text[]
 | OOTD Plus | 2,99€/mois | 20 analyses/jour, badge ⭐, historique complet, personnalité "Styliste bienveillant" |
 | OOTD Elite | 4,99€/mois | Analyses illimitées, tous cosmétiques, badge 💎, toutes les personnalités IA |
 
-Détection de tier via `lib/tier.js` (`getSubActive`/`getActivePlan`, partagé avec ProfilScreen/AccueilScreen — ne pas dupliquer `['active','trialing'].includes(status)` localement).
-
-- Bouton → `create-checkout-session` Edge Function → `Linking.openURL(url)`
-- Gérer / résilier → `create-portal-session` → Customer Portal Stripe
-- Retour deep link : `ootd://shop`
+Détection de tier via `lib/tier.js` (`getSubActive`/`getActivePlan`, partagé avec RecapScreen/AccueilScreen).
 
 **2. Achats Express (Stripe — one-time, 0,99€)**
-- Gel de Flamme → `create-payment-session` (product='flame_freeze')
+- Gel de Flamme → `create-payment-session` (product='flame_freeze') — la mécanique de streak individuel a disparu, mais le produit shop reste (protège désormais la régularité de participation à une compétition, décision produit distincte de ce ticket technique)
 - Pack 2 000 points → `create-payment-session` (product='points_2000')
 - Crédit posé par webhook `stripe-webhook`, jamais ici
 
 **3. Boutique Points**
 - Thèmes : Midnight/Émeraude `1 000 pts`, Or Prestige/Sakura `1 500 pts`
-- Icônes (badges emoji) : Flamme `150 pts`, Diamond/Étoile Pro/Couronne `200 pts`
-- **Logos App** (nouvelle sous-catégorie, images réelles `assets/logos/*.jpg`) : Bleu Néon `500 pts`, Vert Néon `500 pts`, Sunset `600 pts`, Rose Flashy `650 pts`, Rose Pastel `750 pts` — partagent le même `item_type:'logo'`/colonnes `unlocked_logos`/`active_logo` que les icônes emoji ; équiper un logo-image met aussi à jour le favicon web
+- Icônes (badges emoji) : Flamme/Défaut `150 pts`, Diamond/Étoile/Couronne `200 pts`
+- Logos App (images réelles) : Bleu Néon/Vert Néon `500 pts`, Sunset `600 pts`, Rose Flashy `650 pts`, Rose Pastel `750 pts`
 - Flux : `buy_cosmetic` RPC → `equip_cosmetic` RPC → `refreshTheme()`
 - Elite : tout gratuit (Équiper direct)
-- **Points insuffisants** : bouton "Acheter" visuellement grisé mais jamais `disabled` — le tap reste actif et affiche un toast `Il te manque N pts pour débloquer « X »` au lieu de bloquer silencieusement l'interaction.
 
-**Gels mensuels** : `claim_monthly_freezes()` RPC (Free=1, Elite=2, idempotente par mois). Compteur ❄️ en haut du Shop.
+> **Bug corrigé (2026-09-17)** : une migration antérieure avait accidentellement réécrasé cette grille de prix par une version bien moins chère (250-500 pts) en se basant sur la mauvaise révision. La grille ci-dessus (1000/1500 thèmes, 150-750 logos) est la valeur active corrigée.
+
+**Gels mensuels** : `claim_monthly_freezes()` RPC (Free=1, Elite=2, idempotente par mois).
 
 ### CustomizationScreen (`screens/CustomizationScreen.js`)
-Modal plein écran post-analyse, appelé depuis AccueilScreen. Props : `visible`, `onClose`, `theme`, `score`, `imageUri`, `caption`, `setCaption`, `selectedMusic`, `setSelectedMusic`, `onPublish`, `onFlammes`, `onSaveForSelf`.
-- Résumé scores (chips global / fit / harmonie / détails)
+Modal plein écran post-analyse, appelé depuis AccueilScreen. Props : `visible`, `onClose`, `theme`, `score`, `imageUri`, `caption`, `setCaption`, `selectedMusic`, `setSelectedMusic`, `showStyleHashtag`, `setShowStyleHashtag`, `visibleScores`, `onToggleScore`, **`onContinue`, `continuing`** (remplacent les anciens `onPublish`/`onFlammes`/`onSaveForSelf`/`posting`/`sendingFlammes`/`saving`).
+- Résumé scores (chips global /100, fit /33, harmonie /34, détails /33 — dénominateurs dynamiques par `ch.max`)
 - TextInput caption (200 chars max)
-- Recherche musique Deezer inline (proxy Edge Function) : tap sur un résultat → **autoplay immédiat** de l'extrait (`loadAndPlayPreview` + `selectTrack` dans le même `onPress`), bouton play/pause sur la puce sélectionnée (`togglePreviewPlayback`), cleanup (`stopPreview`) au démontage/avant chaque action
-- Toggle "afficher mes hashtags de style" (si tags disponibles) → `show_style_hashtag`
-- Sélection des notes visibles publiquement → `visible_scores`
-- 3 boutons d'action (feed / flammes / privé)
+- Recherche musique Deezer inline, autoplay preview au tap
+- Toggle hashtags de style, sélection notes visibles
+- **1 seul bouton "Continuer"** → `onContinue()` (voir AccueilScreen Phase 4/5)
 
 ---
 
 ## Composants réutilisables
 
 ### `AppHeader` (`components/AppHeader.js`)
-Header custom de l'app (remplace le header par défaut de React Navigation). Props : `{ title }` (défaut `'OOTD'`). Affiche le logo actif équipé (`getLogoConfig(activeLogo).image`, fallback `assets/logo.jpg`) via `useTheme()`.
+Header custom de l'app. Props : `{ title }` (défaut `'OOTD'`). Affiche le logo actif équipé via `useTheme()`.
 
 ### `Bouncy` / `Bouncy.web.js` (`components/Bouncy.js`)
-Wrapper de pression tactile réutilisable (remplace `TouchableOpacity`) avec effet d'enfoncement élastique au press. Props : `onPress`, `onLongPress`, `disabled`, `style`, `children`, `scaleTo` (défaut 0.93), `hitSlop`, `accessibilityLabel`. Variante native (`react-native-reanimated`, thread UI) et variante web (`Animated` classique RN, plus stable sur react-native-web). Utilisé de façon transverse dans tous les écrans.
+Wrapper de pression tactile réutilisable avec effet d'enfoncement élastique. Variante native (Reanimated) / web (`Animated` classique).
 
 ### `HeartOverlay` / `HeartOverlay.web.js` (`components/HeartOverlay.js`)
-Cœur overlay animé sur double-tap (Feed). API impérative via `forwardRef` + `useImperativeHandle` : `ref.play()` déclenche scale spring + légère rotation + fade-out (~280ms). Pas de props d'entrée. Variante native (Reanimated) / web (`Animated`).
-
-### `InAppBanner` (`components/InAppBanner.js`)
-Bannière flottante de notification in-app (nouveau message reçu hors de la conversation ouverte). Props : `{ userId, onPress(senderId) }`. S'abonne au channel Realtime `inapp-banner` (INSERT `messages` filtré `receiver_id`), ignore ses propres messages et ceux de la conversation déjà ouverte (`lib/activeChat.getActiveChat()`). Auto-dismiss ~3.2s. Montée une fois au niveau racine (`App.js`), au-dessus des tabs.
+Cœur overlay animé sur double-tap (Feed). API impérative `ref.play()`.
 
 ### `InAppCamera` (`components/InAppCamera.js`)
-Modale caméra plein écran custom basée sur `expo-camera` (`CameraView`, `useCameraPermissions`, import protégé try/catch). Props : `visible`, `mode` (`'photo'|'video'`), `onCapture(asset)`, `onClose`. Gère bascule caméra avant/arrière, écran de permission dédié, capture photo (`takePictureAsync`) ou enregistrement vidéo (`recordAsync`, indicateur REC). Remplace le picker caméra système sur natif pour : photo de tenue et story vidéo (`AccueilScreen`), photo de chat et story vidéo (`FlammesScreen`). La galerie reste `expo-image-picker`.
+Modale caméra plein écran custom basée sur `expo-camera`. Props : `visible`, `mode` (`'photo'|'video'`), `onCapture(asset)`, `onClose`. Consommée par `AccueilScreen` (photo de tenue).
+
+### `MediaCropEditor` (`components/MediaCropEditor.js`)
+Éditeur de recadrage (photo/vidéo) réutilisable. Consommé par `AccueilScreen` (recadrage de la photo de tenue avant analyse).
 
 ### `Skeleton` (`components/Skeleton.js`)
-Placeholder de chargement générique (shimmer, boucle opacity 0.35↔0.7). Props : `width`, `height`, `borderRadius` (défaut 8), `style`, `color`. Utilisé dans `FeedScreen` et `ProfilScreen`.
+Placeholder de chargement générique (shimmer). Utilisé dans `FeedScreen` et `RecapScreen`.
 
 ### `Button` (`components/Button.js`)
 Props : `title`, `variant` (primary/secondary/outline), `loading`, `disabled`, `leftIcon`, `rightIcon`, `onPress`
 
 ### `Avatar` (`components/Avatar.js`)
-Props : `uri`, `size` (défaut 80), `username` (initiale fallback), `loading`, `onPress`, `borderWidth`, `borderColor`
-- State `hasError` + `onError` → fallback initiale colorée
+Props : `uri`, `size` (défaut 80), `username` (initiale fallback), `loading`, `onPress`, `borderWidth`, `borderColor`. Réutilisé par `FriendsScreen`, `CreateCompetitionScreen`, `CompetitionScreen`.
 
 ### `FeedCommentsModal` (`components/FeedCommentsModal.js`)
-Props : `visible`, `ootdId`, `userId`, `onClose`, `onThreadCount(ootdId, count)`
-- Modal `presentationStyle="pageSheet"`, toutes couleurs via `useTheme()`
-- Load `comments` joint `profiles(username, avatar_url)`
-- Suppression long-press (uniquement ses propres commentaires)
-- `timeAgo` importé depuis `lib/utils`
+Props : `visible`, `ootdId`, `userId`, `onClose`, `onThreadCount(ootdId, count)`. Charge `comments` joint `profiles(username, avatar_url)`.
 
 ### Composants inline (dans les écrans)
-- **Gauge** : arc SVG partiel coloré (react-native-svg) — 3 critères Analyse
+- **Gauge** (`components/Gauge.js`) : arc SVG partiel coloré, prop `max` dynamique (label `/max` affiché, plus de `/10` figé) — 3 critères Analyse
 - **AnimatedEntrance** : fade + rise + scale à l'apparition
-- **AudioMessage** (FlammesScreen) : bulle message vocal (waveform + play/pause + durée)
-- **TypingDots** : 3 points rebondissants pour indicateur typing Chat
-- **LikeBadge** : animation élastique du badge ❤️ sur like message
-- **DarkLightToggle** (ProfilScreen) : switch animé lune/soleil pour le mode dark/light
-- **SwipeableMessageBubble** (FlammesScreen) : bulle avec swipe-to-reply (`PanResponder`)
+- **AudioMessage**, **TypingDots**, **LikeBadge**, **SwipeableMessageBubble** : composants de bulle de message développés pour l'ancien chat 1-à-1 — le fichier qui les hébergeait (`FlammesScreen.js`) a été supprimé avec la refonte ; `CompetitionScreen.js` réimplémente une bulle de message plus simple en V1 (pas d'audio/swipe-to-reply/typing pour le chat de groupe, ajoutables plus tard)
+- **DarkLightToggle** (RecapScreen) : switch animé lune/soleil
+
+> **Supprimés (2026-09) avec la refonte Compétitions** : `screens/FlammesScreen.js`, `screens/ProfilScreen.js` (contenu déplacé dans `RecapScreen.js`), `components/StoryMedia.js`, `components/InAppBanner.js` (orphelin depuis le passage à 3 onglets, jamais rebranché sur `competition_messages` — le badge non-lu par compétition sur Accueil couvre le besoin), `lib/storyActions.js`, `lib/flammesUtils.js` (seule `getLocalDayIsoRange` a survécu, déplacée dans `lib/competitionUtils.js`).
 
 ---
 
 ## Bibliothèques partagées (`lib/`)
 
 ### `lib/tier.js` — détection de tier (Gratuit/Plus/Elite), partagée
-- `getSubActive(subscription)` / `getActivePlan(subscription)` : dédoublonne `['active','trialing'].includes(status)`, dupliqué historiquement dans ShopScreen/ProfilScreen/AccueilScreen
-- `resolveTier({ subscription, hasPlus, hasAnalysis })` → `'free'|'plus'|'elite'` (passes legacy `has_ootd_plus_pass`/`has_analysis_pass` = équivalent Plus, jamais Elite — nuance différente de `isThemeOwned`/`isLogoOwned` dans ShopScreen qui traitent `hasPlus` comme Elite pour les cosmétiques, gardée locale à cet écran)
-- `PERSONA_TIER`, `DEFAULT_PERSONA` ('coach'), `isPersonaUnlocked(key, tier)`, `tierLabel(tier)` — **DOIT rester synchronisé** avec la copie TS dans `supabase/functions/analyze-outfit/index.ts` (pas de module partagé entre l'app Expo et les Edge Functions Deno)
+- `getSubActive(subscription)` / `getActivePlan(subscription)`
+- `resolveTier({ subscription, hasPlus, hasAnalysis })` → `'free'|'plus'|'elite'`
+- `PERSONA_TIER`, `DEFAULT_PERSONA` ('coach'), `isPersonaUnlocked(key, tier)`, `tierLabel(tier)` — **DOIT rester synchronisé** avec la copie TS dans `supabase/functions/analyze-outfit/index.ts`
 
 ### `lib/supabase.js`
-Client unique exporté comme `supabase`. `AsyncStorage` pour persister la session. `detectSessionInUrl` conditionné à `Platform.OS === 'web'` pour parser les deep links web (récupération password).
+Client unique exporté comme `supabase`. `AsyncStorage` pour persister la session.
 
 ### `lib/utils.js`
-- `computeNiveau(pts)` → niveau entier (formule exponentielle ×1.8)
-- `computeLevelInfo(pts)` → `{ threshold, progressInLevel, percent }` pour la barre de progression
-- `timeAgo(date)` → chaîne relative en français ("à l'instant", "5 min", "2 h", "3 j")
+- `computeNiveau(pts)`, `computeLevelInfo(pts)`, `timeAgo(date)`
 
-> La logique `computeNiveau` est répliquée côté serveur en PL/pgSQL (`compute_niveau(p_pts)`). **Toute modification du barème doit être appliquée aux deux endroits simultanément.**
+> `computeNiveau` est répliquée côté serveur en PL/pgSQL (`compute_niveau(p_pts)`). Toute modification du barème doit être appliquée aux deux endroits.
+
+### `lib/competitionUtils.js` — nouveau (remplace `lib/flammesUtils.js`)
+- `getLocalDayIsoRange()` → fenêtre minuit-minuit fuseau local (reprise telle quelle de l'ancien `flammesUtils.js`)
+- `hasSubmittedTodayForCompetition(supabase, competitionId, userId)` → équivalent "régularité de participation" qui remplace le streak 1-à-1. `ootd_competitions.user_id`/`created_at` sont dénormalisés depuis `ootds` à l'insert (RPC `submit_ootd_to_competitions`), donc aucune jointure n'est nécessaire ici.
+
+### `lib/pendingOutfit.js` — nouveau
+Singleton hors React (même pattern que `lib/activeChat.js`) : porte la tenue déjà uploadée entre `AccueilScreen` et `ShareToCompetitionScreen` (`setPendingOutfit`/`getPendingOutfit`/`clearPendingOutfit`) — évite de sérialiser l'image dans les route params de navigation.
+
+### `lib/activeChat.js`
+`setActiveCompetition(competitionId)` / `getActiveCompetition()`. L'équivalent 1-à-1 (`setActiveChat`/`getActiveChat`) a disparu avec `FlammesScreen.js`.
 
 ### `lib/themeContext.js` / `lib/logoConfig.js`
 Voir section « Thème et cosmétiques » ci-dessus.
 
 ### `lib/downloadImage.js` — `downloadImageToDevice(imageUrl, fileBaseName = 'ootd_outfit')`
-Télécharge une image distante vers l'appareil. Retourne `{ ok, reason? }` (`reason: 'permission' | 'error'`). Web : `fetch` + `Blob` + lien `<a download>` synthétique. Natif : `expo-media-library` (permission galerie) + `expo-file-system/legacy` (`downloadAsync` puis nettoyage temp). Utilisé dans `ProfilScreen` (lightbox galerie).
+Télécharge une image distante vers l'appareil. Utilisé dans `RecapScreen` (lightbox galerie).
 
 ### `lib/env.js`
-Lit `process.env.EXPO_PUBLIC_*`. `requireEnv(name, value)` lève une erreur si `value` est falsy. Les clés Gemini/Groq et VAPID privée ne sont PAS ici — secrets Supabase côté serveur uniquement.
+Lit `process.env.EXPO_PUBLIC_*`. `requireEnv(name, value)` lève une erreur si `value` est falsy.
 
 ### `lib/ensureProfile.js` — `ensureUserProfile()`
 1. `getUser()` → si non authentifié, retourne `{ok:true, skipped:true}`
 2. SELECT depuis `profiles` — si absent : INSERT avec username depuis `user_metadata`, `active_logo: 'star'`
 3. Retry sur conflit 23505 : `<base>_<uid8>` puis `user_<uid8>`
 
-### `lib/flammesUtils.js`
-- `flammeOrderedIds(a, b)` → `{user1_id, user2_id}` avec user1 < user2 (**invariant SQL**)
-- `getLocalDayIsoRange()` → fenêtre minuit-minuit fuseau local
-- `fetchAcceptedFriendIds(supabase, userId)` → liste dédupliquée amis acceptés (UNION les deux sens)
-- `hasSnapUsedTodayForPair(supabase, senderId, receiverId)` → `count >= 1`
-
 ### `lib/notifications.js`
-- `registerForPushNotifications()` : permission → canal Android → token Expo Push (skip web + Expo Go)
-- `savePushToken(token)` : **`UPSERT profiles_private(id, push_token)`** — jamais dans `profiles`
-- `scheduleFlammeReminder(hour, minute)` : notif locale quotidienne (19h par défaut) — natif uniquement
-- `sendPushNotification(token, title, body)` : Expo Push API (à appeler depuis Edge Function)
+- `registerForPushNotifications()`, `savePushToken(token)` (→ `profiles_private`)
+- **`scheduleDailyReminder(hour, minute)`** (renommé depuis `scheduleFlammeReminder` le 2026-09-24, copie reformulée pour les compétitions : "C'est l'heure de prendre ta photo du jour pour tes compétitions ! 🏆") : notif locale quotidienne (19h par défaut), natif uniquement
+- `sendPushNotification(token, title, body)` : Expo Push API
 
 ### `lib/toastContext.js` — `ToastProvider` + `useToast()`
-- `useToast()` retourne `{ showToast, dismissToast, toasts }` — **toujours destructurer**
-- Types : `info` (noir), `success` (vert), `warning` (jaune), `error` (rouge)
-- Auto-dismiss après `duration` ms (défaut 3000)
-
-> `lib/toast.js` est un event bus alternatif non-React, confirmé **non importé nulle part** dans le code actuel. À supprimer.
+`useToast()` retourne `{ showToast, dismissToast, toasts }` — **toujours destructurer**. Types : `info`/`success`/`warning`/`error`.
 
 ### `lib/haptics.js`
-- `triggerHaptic(duration)` : vibration via `Vibration` (natif) ou `navigator.vibrate` (PWA)
+`triggerHaptic(duration)` : `Vibration` (natif) ou `navigator.vibrate` (PWA)
 
-### `lib/pwa.js` (natif — stub no-op) / `lib/pwa.web.js` (implémentation réelle)
-La logique PWA réelle vit désormais dans `pwa.web.js` (le fichier `pwa.js` importé sur natif ne fait rien) :
-- `setupPwa()` : injection manifest + apple-touch-icon + meta theme-color + enregistrement service worker `/sw.js`, écoute `beforeinstallprompt`/`appinstalled`, bannière DOM custom d'installation (Chrome/Edge/Android) ou astuce iOS Safari (Partager → écran d'accueil)
-- `isPwaStandalone()` : détecte `display: standalone`
-- `canInstallPwa()` / `promptInstall()` : gèrent `deferredPrompt`
-- `requestWebNotificationPermission()`
-> Les fonctions `registerWebPush`, `dismissChatNotifications` et `sendMessageToSW` ne vivent plus ici — voir `lib/webPush.js` (et `sendMessageToSW` a disparu du code, ne plus la référencer).
+### `lib/pwa.js` (natif — stub) / `lib/pwa.web.js` (implémentation réelle)
+`setupPwa()`, `isPwaStandalone()`, `canInstallPwa()`/`promptInstall()`, `requestWebNotificationPermission()`
 
-### `lib/webPush.js` (natif — stub no-op) / `lib/webPush.web.js` (implémentation réelle)
-- `registerWebPush()` : vérifie le support navigateur, demande permission, `pushManager.subscribe()` avec `applicationServerKey` dérivée de `EXPO_PUBLIC_VAPID_PUBLIC_KEY`, upsert dans `web_push_subscriptions` (onConflict `endpoint`)
-- `unsubscribeWebPush()` : désabonne + delete DB
-- `dismissChatNotifications(friendId)` : ferme les notifications SW taguées `chat-<friendId>` à l'ouverture d'une conversation
-
-### `lib/activeChat.js`
-- `setActiveChat(friendId)` / `getActiveChat()` via `localStorage` — indique au service worker et à `InAppBanner` quelle conversation est ouverte (évite les notifications en doublon)
+### `lib/webPush.js` (natif — stub) / `lib/webPush.web.js` (implémentation réelle)
+`registerWebPush()`, `unsubscribeWebPush()`, `dismissChatNotifications()`
 
 ---
 
@@ -418,293 +383,168 @@ La logique PWA réelle vit désormais dans `pwa.web.js` (le fichier `pwa.js` imp
 |-----|--------|
 | Méthode | POST |
 | Auth | JWT obligatoire |
-| Rate-limit | 5 req/min (`check_analyze_rate_limit` RPC avant consommation crédit) |
-| Entrée | `{ base64Image: "data:image/jpeg;base64,...", personality?: "fashion_week"\|"bienveillant"\|"pote_hype"\|"coach"\|"streetwear" }` (image max ~7,5 Mo, JPEG/PNG/WebP) |
-| Sortie | `{ global, fit, harmonie, detail, explications: {fit, harmonie, detail}, conseil, styles: string[] (1-2 tags, whitelist fermée de 20), credits_remaining, max_credits, provider }` |
+| Rate-limit | 5 req/min (`check_analyze_rate_limit` RPC) |
+| Entrée | `{ base64Image: "data:image/jpeg;base64,...", personality?: "fashion_week"\|"bienveillant"\|"pote_hype"\|"coach"\|"streetwear" }` |
+| Sortie (photo complète) | `{ global, fit, harmonie, detail, explications: {fit, harmonie, detail}, conseil, styles: string[], credits_remaining, max_credits, provider }` |
+| Sortie (photo incomplète) | `{ photo_complete: false, raison_incomplete: string, provider }` — aucun crédit consommé |
+
+**Note sur 100 (v3, 2026-09-24)** — remplace l'ancienne note sur 10 :
+- Trois sous-critères qui **s'additionnent** directement (plus de moyenne) : `couleurs_note` (harmonie, 0-34), `coupe_note` (fit, 0-33), `style_note` (detail, 0-33) → `global = harmonie + fit + detail`, 0-100.
+- **Vérification préalable "photo complète"** : si la photo ne montre pas la tenue des épaules aux genoux minimum, `photo_complete: false` et aucune note n'est calculée — condition d'équité pour comparer les scores entre utilisateurs dans un classement. Dans ce cas, **`consume_daily_credit` n'est PAS appelé** (le crédit n'est consommé qu'après confirmation que la photo est notable) — changement d'ordre du flux par rapport à avant (auth → persona → rate-limit → **appel IA → parsing → branche photo_complete** → crédit → réponse), qui a aussi pour effet positif secondaire qu'un JSON malformé ne brûle plus de crédit non plus.
+- **Calibrage explicite dans le prompt** : chaque critère part d'un **point de départ représentant une tenue neutre et correcte** (24/34, 23/33, 20/33 = 67/100 de base), ajusté à la hausse/baisse selon ce qui est réellement observé — pas un départ à 0 ou au max avec seulement des additions/soustractions. Un paragraphe de calibrage explicite indique à l'IA qu'une tenue correcte doit obtenir ~65-70/100. **Historique** : la première version du prompt v3 faisait partir 2 des 3 critères de 0 en ne faisant qu'additionner des points — un modèle vision-langage est structurellement conservateur sur ce type d'ajout ouvert, ce qui écrasait systématiquement la note globale (retours réels : jamais au-dessus de 17/100 sur des tenues pourtant correctes). Corrigé le 2026-09-24.
+- `award_points_for_ootd` recalibré en conséquence (`points_earned = ROUND(score_global * 0.3)`, plafond de points par publication inchangé : 100×0.3 = 30, identique à l'ancien 10×3).
+- `ootds.score_scale` (smallint, défaut 100) marque l'échelle de chaque ligne — les lignes antérieures à cette migration sont à `10`, ce qui permet à l'UI (lightbox `RecapScreen`) d'afficher le bon dénominateur et à un futur écran de progression "tout temps" de normaliser avant de moyenner (`RecapScreen.moyenneScore` le fait déjà : `(score_global / score_scale) * 100`).
 
 **Providers** (avec fallback automatique) :
 1. Google Gemini 2.5-flash (THINKING_BUDGET=0, max 1500 tokens, `responseMimeType: 'application/json'`)
 2. Groq Llama 4 Scout 17B vision (fallback si Gemini KO)
 
-Note globale calculée côté serveur (moyenne clampée 0–10), pas par l'IA. `styles` filtré contre une whitelist fixe côté serveur avant retour/stockage.
-
-**Personnalité du critique IA** (`personality`) : clé fermée uniquement — le client n'envoie jamais de texte libre, seulement une des 5 clés ci-dessus (mappées à un texte de ton côté serveur dans `PERSONALITIES`, non exposé au client). Clé invalide/absente → fallback `coach`. **N'affecte que le ton** des textes générés (`*_analyse`, `points_forts`, `axes_amelioration`) — le barème de notation (Critères 1-3) est appliqué à l'identique quelle que soit la personnalité, pour que les notes/points restent comparables entre utilisateurs. Choisie par l'utilisateur dans `ProfilScreen` → Paramètres → « Personnalité du critique IA », persistée dans `profiles.analysis_personality` (migration `20260811120000`).
-
-**Gating par tier** (Cahier des charges Monétisation, migration `20260812120000`) — vérifié côté serveur, jamais sur la seule foi du client :
-| Personnalité | Tier requis |
-|---|---|
-| `coach` (Coach mode motivant) | Gratuit |
-| `bienveillant` (Styliste bienveillant) | Plus |
-| `pote_hype`, `fashion_week`, `streetwear` | Elite |
-
-La fonction reçoit `personality`, résout le tier réel de l'utilisateur (`profiles.has_ootd_plus_pass/has_analysis_pass` + `subscriptions.status/plan_type`, via une résolution dupliquée en TS — DOIT rester synchronisée avec `lib/tier.js`), et retombe sur `coach` si la clé demandée dépasse le tier réel. `coach` est le seul choix garanti accessible à tous — c'est le défaut de la colonne (`DEFAULT 'coach'`) depuis cette migration.
+**Personnalité du critique IA** (`personality`) : clé fermée uniquement, n'affecte que le ton (jamais le barème). Gating par tier (`coach`=Gratuit, `bienveillant`=Plus, `pote_hype`/`fashion_week`/`streetwear`=Elite), vérifié côté serveur.
 
 **Secrets** : `GEMINI_API_KEY`, `GROQ_API_KEY`, `APP_ORIGIN`
 
-### `contextual-analysis`
-| Clé | Valeur |
-|-----|--------|
-| Méthode | POST |
-| Auth | JWT obligatoire |
-| Rate-limit | 5 req/min (même RPC `check_analyze_rate_limit` qu'`analyze-outfit`) |
-| Crédit | Consomme le **même** crédit quotidien qu'`analyze-outfit` (`consume_daily_credit`) |
-| Entrée | `{ base64Image: "data:image/jpeg;base64,...", context: "entretien d'embauche" }` |
-| Sortie | `{ coherent: boolean, badge, verdict: "Oui"|"Non", pourquoi, conseil, alternative, credits_remaining }` |
-
-Action utilisateur **distincte et optionnelle** (bouton "Analyser le contexte" dans `AccueilScreen`, après l'analyse principale) — juge si la tenue déjà photographiée/analysée est adaptée à une situation décrite en texte libre. Prompt "Styliste/Personal Shopper" (pas de notation par critère).
-
-**Providers** : Gemini 2.5-flash en priorité, fallback Groq Llama 4 Scout — même mécanisme qu'`analyze-outfit`.
-
-**Secrets** : `GEMINI_API_KEY`, `GROQ_API_KEY`, `APP_ORIGIN`
+> ⚠️ **Déploiement self-host** : sur `supabase.myback.fr`, les Edge Functions ne se redéploient PAS automatiquement au `git push` — le code doit être retéléchargé manuellement depuis GitHub (`raw.githubusercontent.com/OOTD-Appli/outfit-of-the-day/main/supabase/functions/<nom>/index.ts`) dans le volume bind-mounté du serveur, puis `docker compose up -d functions`. Toujours vérifier que cette synchro a bien eu lieu après une modification de prompt/logique serveur avant de conclure à un bug de code.
 
 ### `deezer-search`
-| Clé | Valeur |
-|-----|--------|
-| Méthode | POST |
-| Auth | Optionnelle (`--no-verify-jwt`) |
-| Entrée | `{ q: "query" }` (min 2 chars) |
-| Sortie | `{ results: [{id, title, artist, previewUrl, coverUrl}] }` (max 10, preview obligatoire) |
-
-Proxy CORS-safe vers `api.deezer.com/search`. **Secrets** : `APP_ORIGIN`
+Proxy CORS-safe vers `api.deezer.com/search`. Auth optionnelle (`--no-verify-jwt`). **Secrets** : `APP_ORIGIN`
 
 ### `create-checkout-session`
-| Clé | Valeur |
-|-----|--------|
-| Méthode | POST |
-| Auth | JWT obligatoire |
-| Entrée | `{ plan_type: 'plus'|'elite' }` |
-| Sortie | `{ url: "https://checkout.stripe.com/..." }` |
-
-Crée ou réutilise un Stripe Customer. Mode `subscription`. **Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_PRICE_PLUS`, `STRIPE_PRICE_ELITE`, `APP_REDIRECT_URL`, `APP_ORIGIN`
+Mode `subscription`, `{ plan_type: 'plus'|'elite' }` → `{ url }`. **Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_PRICE_PLUS`, `STRIPE_PRICE_ELITE`, `APP_REDIRECT_URL`, `APP_ORIGIN`
 
 ### `create-payment-session`
-| Clé | Valeur |
-|-----|--------|
-| Méthode | POST |
-| Auth | JWT obligatoire |
-| Entrée | `{ product: 'flame_freeze'|'points_2000' }` |
-| Sortie | `{ url: "https://checkout.stripe.com/..." }` |
-
-Mode `payment` (one-time). Le crédit est posé par `stripe-webhook`, jamais ici. **Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_PRICE_FLAME_FREEZE`, `STRIPE_PRICE_POINTS_2000`, `APP_REDIRECT_URL`, `APP_ORIGIN`
+Mode `payment` (one-time), `{ product: 'flame_freeze'|'points_2000' }` → `{ url }`. Crédit posé par `stripe-webhook`. **Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_PRICE_FLAME_FREEZE`, `STRIPE_PRICE_POINTS_2000`, `APP_REDIRECT_URL`, `APP_ORIGIN`
 
 ### `create-portal-session`
-| Clé | Valeur |
-|-----|--------|
-| Méthode | POST |
-| Auth | JWT obligatoire |
-| Entrée | `{}` |
-| Sortie | `{ url: "https://billing.stripe.com/..." }` |
-
-Ouvre le Customer Portal Stripe (gestion/résiliation abonnement). **Secrets** : `STRIPE_SECRET_KEY`, `APP_REDIRECT_URL`, `APP_ORIGIN`
+Ouvre le Customer Portal Stripe. **Secrets** : `STRIPE_SECRET_KEY`, `APP_REDIRECT_URL`, `APP_ORIGIN`
 
 ### `stripe-webhook`
-| Clé | Valeur |
-|-----|--------|
-| Méthode | POST |
-| Auth | Signature Stripe (`whsec_...`) — déployer `--no-verify-jwt` |
-| Entrée | Payload Stripe signé |
-
-**Événements traités** :
-- `checkout.session.completed` (mode=payment) → `apply_one_time_purchase` RPC (idempotent sur `session_id`)
-- `customer.subscription.created/updated` → `apply_subscription_change` RPC
-- `customer.subscription.deleted` → `apply_subscription_change` (status=canceled)
-
-**Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+Signature Stripe (`whsec_...`) — déployer `--no-verify-jwt`. Événements : `checkout.session.completed` (mode=payment) → `apply_one_time_purchase` ; `customer.subscription.created/updated/deleted` → `apply_subscription_change`. **Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 
 ### `send-web-push`
-| Clé | Valeur |
-|-----|--------|
-| Méthode | POST |
-| Auth | JWT obligatoire |
-| Entrée | `{ recipient_id, title, body, url, tag? }` |
-| Sortie | `{ sent: N, removed: N_dead }` |
+`{ recipient_id, title, body, url, tag? }` → `{ sent, removed }`. Vérifie amitié acceptée. **Secrets** : `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `APP_ORIGIN`
 
-Vérifie amitié acceptée. Envoie à tous les abonnements Web Push du destinataire. Purge automatique des abonnements expirés (404/410). **Secrets** : `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `APP_ORIGIN`
-
-> **CORS** : toutes les Edge Functions lisent `APP_ORIGIN` (`Deno.env.get('APP_ORIGIN') ?? '*'`). Définir ce secret dans Supabase Dashboard pour restreindre à l'URL Vercel en production.
+> **CORS** : toutes les Edge Functions lisent `APP_ORIGIN` (`Deno.env.get('APP_ORIGIN') ?? '*'`).
 
 ---
 
 ## Fonctions PostgreSQL (RPCs)
 
 ### Trigger `profiles_guard_sensitive_trigger`
-`BEFORE UPDATE` sur `profiles`. UPDATE directe depuis le client sur les colonnes sensibles → silencieusement annulée. RPCs SECURITY DEFINER contournent via `set_config('app.bypass_profile_guard', 'on', true)`.
-
-**Colonnes protégées** : `points`, `niveau`, `has_analysis_pass`, `has_ootd_plus_pass`, `daily_credits`, `credits_reset_date`, `unlocked_themes`, `unlocked_logos`, `active_theme`, `active_logo`, `flame_freezes`, `last_freeze_grant`.
+`BEFORE UPDATE` sur `profiles`. Colonnes protégées : `points`, `niveau`, `has_analysis_pass`, `has_ootd_plus_pass`, `daily_credits`, `credits_reset_date`, `unlocked_themes`, `unlocked_logos`, `active_theme`, `active_logo`, `flame_freezes`, `last_freeze_grant`. RPCs SECURITY DEFINER contournent via `set_config('app.bypass_profile_guard', 'on', true)`.
 
 ### `compute_niveau(p_pts integer)` — IMMUTABLE
-Miroir JS de `lib/utils.js#computeNiveau`. Retourne le niveau entier (seuil ×1.8). **Doit rester synchronisé avec le JS.**
+Miroir JS de `lib/utils.js#computeNiveau`.
 
-### `consume_daily_credit(p_user_id)` — SECURITY DEFINER
-Appelée par `analyze-outfit` **et** `contextual-analysis` (même quota partagé). Vérifie `auth.uid() = p_user_id`, reset si nouveau jour, décrémente `daily_credits`. Gère le tier Elite (illimité). Retourne `jsonb {ok, credits, max_credits}`.
-
-### `check_analyze_rate_limit(p_max_per_minute)` — SECURITY DEFINER
-Appelée par `analyze-outfit` et `contextual-analysis` **avant** `consume_daily_credit`. Fenêtre glissante 1 min. Atomic (FOR UPDATE). Retourne `boolean`.
+### `consume_daily_credit(p_user_id)` / `check_analyze_rate_limit(p_max_per_minute)` — SECURITY DEFINER
+Appelées par `analyze-outfit` uniquement désormais (`contextual-analysis` a disparu). Ordre : rate-limit avant crédit, et crédit consommé seulement après confirmation `photo_complete !== false` (voir Edge Function ci-dessus).
 
 ### `award_points_for_ootd(p_ootd_id)` — SECURITY DEFINER
-Appelée par `AccueilScreen.publishToFeed`. Lit `score_global` depuis la DB (clampe 1–10), calcule `points_earned = ROUND(score * 3)`, met à jour `points` et `niveau`. Retourne `jsonb {ok, points_earned, new_points, new_niveau}`.
+Lit `score_global` (clampe 0–100 depuis 2026-09-24, `points_earned = ROUND(score * 0.3)`), met à jour `points`/`niveau`. Appelée par `submit_ootd_to_competitions`.
 
 ### `increment_style_stats(p_styles text[])` — SECURITY DEFINER
-Appelée par `AccueilScreen.publishToFeed` si le post a des tags de style. Incrémente, pour `auth.uid()`, un compteur par style dans `profiles.style_stats` (jsonb, via `jsonb_set`).
-
-### `buy_pass(pass_type)` — SECURITY DEFINER
-Valide points (400 ou 500), déduit, active flag, crédite 20 analyses/j. Si `ootdplus` : déverrouille tous thèmes et logos.
+Incrémente `profiles.style_stats` (jsonb). Appelée par `submit_ootd_to_competitions`.
 
 ### `buy_cosmetic(item_type, item_id)` / `equip_cosmetic(item_type, item_id)` — SECURITY DEFINER
-`buy_cosmetic` valide l'item contre des listes autorisées côté serveur et vérifie les points (400–1500 selon rareté), ajoute à `unlocked_*`. Whitelist `logo` étendue (migration `20260614120000`) avec les 5 logos-image : `bleu_neon` (500 pts), `sunset` (600 pts), `vert_neon` (500 pts), `rose_flashy` (650 pts), `rose_pastel` (750 pts) — mêmes colonnes `unlocked_logos`/`active_logo` que les logos emoji. `equip_cosmetic` vérifie ownership (`unlocked_*` ou Elite), met à jour `active_theme`/`active_logo`.
+Voir ShopScreen ci-dessus pour la grille de prix corrigée (2026-09-17).
 
-### `restore_flamme(p_flamme_id)` — SECURITY DEFINER
-Fenêtre 48h post-expiration. Consomme 1 gel (`flame_freezes -= 1`), ranime `last_snap_at = now()`.
+### `restore_flamme(p_flamme_id)` / `claim_monthly_freezes()` — SECURITY DEFINER
+Inchangées. `flammes`/`snaps` restent en base (non purgées) mais plus aucun code client n'écrit dedans depuis la refonte Compétitions.
 
-### `claim_monthly_freezes()` — SECURITY DEFINER
-Idempotente par mois (`last_freeze_grant`). Free → +1 gel, Elite → +2 gels. Appelée au focus Shop et FlammesScreen.
+### `apply_one_time_purchase(...)` / `apply_subscription_change(...)` — SECURITY DEFINER / `service_role`
+Inchangées, voir `stripe-webhook`.
 
-### `toggle_message_like(p_id, p_liked)` — SECURITY DEFINER
-Destinataire uniquement. Toggle `is_liked` sur le message. Retourne `boolean`.
+### Compétitions — nouvelles RPCs (2026-09)
 
-### `delete_message(p_id)` — SECURITY DEFINER
-Expéditeur uniquement. Soft delete (`is_deleted = true`). Retourne `image_url` pour nettoyage Storage côté client.
-
-### `mark_messages_read(p_friend_id)` — SECURITY DEFINER
-Met `read_at = now()` sur tous les messages reçus non lus dans la conversation. Retourne count mis à jour.
-
-### `apply_one_time_purchase(p_user_id, p_product, p_session_id)` — SECURITY DEFINER
-Appelée par `stripe-webhook`. Idempotente sur `session_id`. Crédite `flame_freezes` ou `points` selon `p_product`.
-
-### `apply_subscription_change(p_user_id, p_status, p_plan_type, p_subscription_id, ...)` — EXECUTE réservé `service_role`
-Met à jour la table `subscriptions`. Seul le webhook Stripe peut appeler cette fonction.
+| RPC | Rôle |
+|---|---|
+| `create_competition(p_name)` | Crée une compétition + y ajoute son créateur. Supersedée en pratique par `create_competition_with_members` (créée après, voir ci-dessous) mais toujours présente/fonctionnelle. |
+| `create_competition_with_members(p_name, p_member_ids[])` | Crée une compétition + ajoute le créateur + chaque membre proposé, **après avoir vérifié que chacun est un ami accepté** (`friendships`). Utilisée par `CreateCompetitionScreen`. |
+| `create_competition_invite(p_competition_id, p_max_uses?, p_expires_in_days=7)` | N'importe quel membre peut générer un lien (token aléatoire 16 octets hex). |
+| `get_competition_invite_preview(p_token)` | Lecture seule, **accessible sans compte** (`GRANT ... TO anon, authenticated`) — aperçu nom + nombre de membres avant de rejoindre. |
+| `redeem_competition_invite(p_token)` | Authentification requise. Idempotent (`already_member: true` si déjà membre). Toujours précédé d'un écran de confirmation côté client — jamais d'adhésion automatique au clic. |
+| `revoke_competition_invite(p_token)` | N'importe quel membre peut révoquer un lien. |
+| `submit_ootd_to_competitions(...)` | RPC atomique de publication (voir AccueilScreen Phase 5). Vérifie l'appartenance à **toutes** les compétitions ciblées avant d'insérer quoi que ce soit. `p_score_global` est un paramètre explicite passé par le client (pas recalculé en somme/moyenne dans la RPC) — le calcul du score reste la responsabilité de `analyze-outfit`. |
+| `delete_competition_message(p_id)` | Soft-delete, expéditeur uniquement, même pattern que l'ancien `delete_message`. |
+| `mark_competition_read(p_competition_id)` | Met à jour `competition_members.last_read_at` pour le membre courant. |
+| `get_top3_app()` | Classement hebdomadaire (reset chaque semaine, `date_trunc('week', ...)` fuseau Europe/Paris) groupé par utilisateur (`MAX(score_global)`), filtré `is_public=true` et `profiles.is_private=false`. |
+| `get_top3_friends()` | Même requête, filtrée sur les amis acceptés (`friendships`) de l'appelant — **indépendant de l'appartenance à une compétition commune** (décision produit explicite). |
+| `is_competition_member(p_competition_id)` — STABLE SECURITY DEFINER | Helper interne qui casse la récursion RLS (voir Post-mortems) — utilisé par toutes les policies "membre de cette compétition", pas destiné à être appelé directement par le client. |
 
 ---
 
 ## Schéma de base de données
 
 ### `profiles`
+Inchangé depuis la dernière version (voir colonnes ci-dessous), pas de nouvelle colonne liée aux compétitions — l'appartenance vit dans `competition_members`.
+
 | Colonne | Type | Notes |
 |---------|------|-------|
 | id | uuid PK | = auth.users.id |
 | username | text UNIQUE NOT NULL | |
 | avatar_url | text | URL publique bucket `avatars` |
-| points | integer DEFAULT 0 | Via RPC uniquement |
-| niveau | integer DEFAULT 1 | Via RPC uniquement |
-| daily_credits | integer DEFAULT 2 | Via RPC uniquement |
-| credits_reset_date | date | Via RPC uniquement |
-| has_analysis_pass | boolean DEFAULT false | Pass legacy |
-| has_ootd_plus_pass | boolean DEFAULT false | Pass legacy |
-| flame_freezes | integer DEFAULT 0 | Gels flamme (via RPC) |
-| last_freeze_grant | date | Idempotence claim mensuel |
-| unlocked_themes | text[] DEFAULT ['default'] | |
-| unlocked_logos | text[] DEFAULT ['default'] | Inclut logos emoji + logos image |
-| active_theme | text DEFAULT 'default' | |
-| active_logo | text DEFAULT 'star' | |
+| points, niveau, daily_credits, credits_reset_date | | Via RPC uniquement |
+| has_analysis_pass, has_ootd_plus_pass | boolean | Pass legacy |
+| flame_freezes, last_freeze_grant | | Via RPC uniquement |
+| unlocked_themes, unlocked_logos, active_theme, active_logo | | |
 | is_private | boolean DEFAULT false | |
 | bio | text | max 160 chars |
-| style_stats | jsonb DEFAULT '{}' | Compteur par style, via RPC `increment_style_stats` |
-| specialized_feed | boolean DEFAULT false | Toggle flux "Pour toi" personnalisé par style |
-| analysis_personality | text DEFAULT 'fashion_week' | Ton du critique IA (`analyze-outfit`) — CHECK sur 5 clés fermées |
+| style_stats | jsonb DEFAULT '{}' | |
+| specialized_feed | boolean DEFAULT false | |
+| analysis_personality | text DEFAULT 'coach' | |
 | created_at | timestamptz | |
 
-> `user_metadata.dark_mode` (Supabase Auth, hors table `profiles`) stocke la préférence dark/light cross-device — voir `lib/themeContext.js`.
->
-> **Colonnes protégées par trigger** : `points`, `niveau`, `has_*_pass`, `daily_credits`, `credits_reset_date`, `unlocked_*`, `active_theme`, `active_logo`, `flame_freezes`, `last_freeze_grant`.
+> `user_metadata.dark_mode` (Supabase Auth, hors table) stocke dark/light cross-device.
 
 ### `profiles_private`
-| Colonne | Type | Notes |
-|---------|------|-------|
-| id | uuid PK | = auth.users.id |
-| push_token | text | Token Expo Push |
-
-RLS owner-only (SELECT/INSERT/UPDATE). Invisible pour les autres utilisateurs.
+`id` (=auth.users.id), `push_token`. RLS owner-only.
 
 ### `ootds`
 | Colonne | Type | Notes |
 |---------|------|-------|
 | id | uuid PK | |
 | user_id | uuid | → auth.users |
-| image_url | text NOT NULL | CHECK NOT VALID `^https://[a-z0-9-]+\.supabase\.co/storage/` |
-| score_global | numeric | IA: `global` |
-| score_couleurs | numeric | IA: `harmonie` |
-| score_coupe | numeric | IA: `fit` |
-| score_tendance | numeric | IA: `detail` |
-| conseil | text | Feedback IA |
-| caption | text | Légende user (max 200 chars) |
-| audio_title | text | Titre Deezer sélectionné |
-| audio_artist | text | Artiste Deezer |
-| audio_preview_url | text | URL preview MP3 30s |
-| audio_cover_url | text | URL cover album |
-| is_public | boolean DEFAULT true | false = galerie privée |
-| styles | text[] DEFAULT '{}' | Tags de style IA (1-2, whitelist 20) |
-| show_style_hashtag | boolean DEFAULT true | Choix de l'auteur, affichage public |
-| visible_scores | text[] DEFAULT '{}' | Noms de colonnes scores affichées publiquement |
+| image_url | text NOT NULL | |
+| score_global / score_couleurs / score_coupe / score_tendance | numeric | Voir mapping IA plus haut |
+| **score_scale** | smallint DEFAULT 100 | **Nouveau (2026-09-24)** : 100 pour les lignes notées avec le prompt v3, 10 pour les lignes antérieures (backfillées). |
+| conseil, caption | text | |
+| audio_title/artist/preview_url/cover_url | text | Musique Deezer |
+| is_public | boolean DEFAULT true | Indépendant de l'appartenance à une compétition — gère uniquement l'apparition dans le Feed |
+| styles | text[] DEFAULT '{}' | |
+| show_style_hashtag | boolean DEFAULT true | |
+| visible_scores | text[] DEFAULT '{}' | |
 | created_at | timestamptz | |
 
-### `likes`
-UNIQUE(user_id, ootd_id). Append-only (pas d'UPDATE).
+Une tenue est reliée à 0, 1 ou plusieurs compétitions via `ootd_competitions` (many-to-many), en plus/indépendamment de `is_public`.
 
-### `comments`
-`body` : CHECK len > 0 AND <= 1000. `user_id` → `profiles.id`.
+### `competitions` — nouveau
+`id` PK, `name` (1-60 car.), `created_by` → auth.users, `created_at`. RLS : visible aux membres uniquement (via `is_competition_member`). Pas de policy INSERT directe — création via `create_competition`/`create_competition_with_members` uniquement.
 
-### `friendships`
-PK(user_id, friend_id). `status` : `pending` | `accepted` | `declined`. CHECK user_id <> friend_id. Direction : `user_id` = demandeur, `friend_id` = destinataire.
+### `competition_members` — nouveau
+PK composite `(competition_id, user_id)`, `joined_at`, `last_read_at` (curseur non-lu). RLS SELECT membres uniquement, DELETE self (quitter une compétition). **Pas de policy INSERT** — rejoindre uniquement via les RPCs (sinon n'importe qui pourrait s'auto-ajouter à n'importe quelle compétition).
 
-> `declineRequest` utilise DELETE (pas UPDATE vers 'declined').
+### `ootd_competitions` — nouveau
+Table d'association `ootd_id` × `competition_id`, PK composite. **Dénormalise `user_id` et `created_at`** depuis `ootds` (posés à l'insert) pour que `hasSubmittedTodayForCompetition` n'ait besoin d'aucune jointure. RLS : SELECT membres, INSERT si propriétaire de l'ootd ET membre de la compétition ciblée (policy directe, pas de RPC nécessaire), DELETE self (unshare).
 
-### `flammes`
-`user1_id < user2_id` (**invariant SQL** — utiliser `flammeOrderedIds()`). Streak calculé par jours calendaires ISO, pas fenêtre 24h glissante.
+### `competition_invites` — nouveau
+`token` PK (hex 16 octets), `competition_id`, `created_by`, `expires_at` (défaut +7j), `max_uses` (NULL=illimité), `use_count`, `revoked_at`. RLS SELECT membres uniquement — la lecture "publique" (aperçu avant adhésion) passe par la RPC `get_competition_invite_preview`, pas par une policy SELECT directe.
 
-### `messages`
+### `competition_messages` — nouveau (remplace `messages` pour le contexte compétition)
 | Colonne | Type | Notes |
 |---------|------|-------|
 | id | uuid PK | |
-| sender_id | uuid | → auth.users |
-| receiver_id | uuid | → auth.users |
-| content | text | nullable |
-| image_url | text | CHECK NOT VALID `^https://[a-z0-9-]+\.supabase\.co/storage/` |
-| audio_url | text | Message vocal (nullable) |
-| score_global / score_couleurs / score_coupe / score_tendance | numeric | Notes IA si tenue analysée partagée (nullable) |
-| conseil | text | Conseil IA (nullable) |
-| is_liked | boolean DEFAULT false | Toggle par destinataire (RPC) |
-| is_deleted | boolean DEFAULT false | Soft delete (RPC) |
-| read_at | timestamptz | Accusé de lecture (RPC) |
-| reply_to_id | uuid FK messages(id) ON DELETE SET NULL | Swipe-to-reply |
+| competition_id | uuid → competitions | |
+| sender_id | uuid → **profiles(id)** | ⚠️ pas `auth.users` — nécessaire pour l'embed PostgREST `profiles(...)`, voir Post-mortems |
+| content, image_url | text | nullable, au moins un des deux (ou `is_deleted`) |
 | created_at | timestamptz | |
-| expires_at | timestamptz | now() + 24h |
+| is_deleted | boolean DEFAULT false | Soft delete |
 
-CHECK `messages_has_content` : `is_deleted = true OR content IS NOT NULL OR image_url IS NOT NULL OR audio_url IS NOT NULL`
+RLS : SELECT/INSERT membres uniquement (`is_competition_member`). Realtime activé (`REPLICA IDENTITY FULL` + publication `supabase_realtime`).
 
-### `stories`
-| Colonne | Type | Notes |
-|---------|------|-------|
-| id | uuid PK | |
-| user_id | uuid | → auth.users |
-| image_url | text | nullable si video_url présent |
-| video_url | text | nullable si image_url présent |
-| overlay_text | text | max 60 chars |
-| caption | text | max 200 chars |
-| expires_at | timestamptz | now() + 24h |
+### `likes`, `comments`, `friendships`, `flammes`, `snaps`, `subscriptions`, `web_push_subscriptions`, `analyze_rate_limit`
+Inchangées structurellement. `friendships` reste actif (Top 3 amis, sélection de membres). `flammes`/`snaps` restent en base (non purgées) mais plus aucun code client n'écrit dedans.
 
-CHECK `stories_has_media` : `image_url IS NOT NULL OR video_url IS NOT NULL`
-
-### `subscriptions`
-| Colonne | Type | Notes |
-|---------|------|-------|
-| user_id | uuid PK | → auth.users |
-| stripe_customer_id | text | |
-| stripe_subscription_id | text | |
-| status | text | inactive / active / trialing / canceled |
-| plan_type | text | plus / elite |
-| current_period_end | timestamptz | |
-| cancel_at_period_end | boolean | |
-
-RLS lecture seule pour le propriétaire. Mutations via `service_role` uniquement (webhook).
-
-### `web_push_subscriptions`
-Subscription Web Push par device : `user_id`, `endpoint`, `p256dh`, `auth`. RLS owner-only.
-
-### `analyze_rate_limit`
-`user_id` PK, `window_start` timestamptz, `req_count` integer. Aucune policy RLS — accès via SECURITY DEFINER uniquement. Partagée par `analyze-outfit` et `contextual-analysis`.
-
-### `snaps` (legacy)
-Insert par `AccueilScreen.sendOutfitToSelectedFlammes`. Limité à 1/jour/paire (`hasSnapUsedTodayForPair`). Contrainte amitié acceptée (RLS). Porte aussi `score_global/couleurs/coupe/tendance` + `conseil` (nullable) depuis migration `20260621120000`.
+### `stories` — **supprimée** (2026-09-22)
+Table, bucket Storage, trigger de nettoyage et job pg_cron `cleanup-expired-stories` tous purgés. 15 fichiers orphelins (jamais nettoyés car les lignes DB avaient déjà expiré/disparu avant la purge) supprimés via l'API Storage avant le `DROP TABLE` — voir Post-mortems pour pourquoi ça n'a pas pu se faire en SQL direct.
 
 ---
 
@@ -715,16 +555,18 @@ Insert par `AccueilScreen.sendOutfitToSelectedFlammes`. Limité à 1/jour/paire 
 | profiles | tous auth | soi (trigger annule colonnes sensibles) | soi (trigger) | — |
 | profiles_private | soi | soi | soi | — |
 | ootds | auth + is_private/ami | soi | — | soi |
-| likes | tous auth | soi | — | soi |
-| comments | tous auth | soi | — | soi |
-| friendships | impliqué | demandeur (`status=pending`) | destinataire (`pending→accepted/declined`) | les deux |
-| flammes | impliqué | impliqué | impliqué | — |
+| likes / comments | tous auth | soi | — | soi |
+| friendships | impliqué | demandeur (`pending`) | destinataire (`pending→accepted/declined`) | les deux |
+| flammes / snaps | impliqué | — (plus écrit) | — | — |
 | messages | impliqué | sender + amitié acceptée | — | sender |
-| snaps | impliqué | sender + amitié acceptée | — | — |
-| stories | auteur ou ami + non expiré | user_id=uid | — | user_id=uid |
 | subscriptions | soi | — | — | — |
 | web_push_subscriptions | soi | soi | — | soi |
 | analyze_rate_limit | (aucune) | (aucune) | (aucune) | (aucune) |
+| **competitions** | membre (`is_competition_member`) | — (RPC uniquement) | — | — |
+| **competition_members** | membre | — (RPC uniquement) | — | soi (quitter) |
+| **ootd_competitions** | membre | propriétaire ootd + membre | — | soi |
+| **competition_invites** | membre | — (RPC uniquement) | — | — (révocation via RPC) |
+| **competition_messages** | membre | sender + membre | — (RPC pour soft-delete) | — |
 
 ---
 
@@ -734,9 +576,8 @@ Insert par `AccueilScreen.sendOutfitToSelectedFlammes`. Limité à 1/jour/paire 
 |--------|-----------|-----------------|---------|
 | `avatars` | Public | `<uid>/…` uniquement | `<uid>/avatar.jpg` |
 | `ootds` | Public | `<uid>/…` ou `ootds/messages/<uid>/…` ou `ootds/audio/<uid>/…` | `<uid>/outfit_<ts>.{jpg,webp}` · `messages/<uid>/<ts>.jpg` · `audio/<uid>/<ts>.{webm,m4a}` |
-| `stories` | Public | `<uid>/…` uniquement | `<uid>/<ts>.mp4` |
 
-Toutes les policies INSERT vérifient `split_part(name,'/',1) = uid`. Le bucket `ootds` autorise désormais les MIME audio (`audio/mp4`, `audio/webm`, `audio/ogg`, `audio/mpeg`, `audio/x-m4a`) en plus des images (migration `20260617150000`).
+> Le bucket `stories` a été supprimé (2026-09-22) avec la table du même nom.
 
 ---
 
@@ -749,7 +590,7 @@ Toutes les policies INSERT vérifient `split_part(name,'/',1) = uid`. Le bucket 
 | Elite | Stripe sub `elite` | ∞ | 2 |
 | Pass legacy | `has_analysis_pass` ou `has_ootd_plus_pass` | 20 | 1 |
 
-Rate-limit indépendant : 5 req/min par user (table `analyze_rate_limit`), **partagé** entre `analyze-outfit` et `contextual-analysis` (le crédit quotidien aussi).
+Rate-limit indépendant : 5 req/min par user (table `analyze_rate_limit`), désormais utilisé uniquement par `analyze-outfit`.
 
 ---
 
@@ -759,8 +600,8 @@ Rate-limit indépendant : 5 req/min par user (table `analyze_rate_limit`), **par
 |---------|---------|
 | Score ring (Accueil) | `Math.min(Math.round(screenWidth × 0.22), 96)` |
 | Logo (Auth) | `Math.min(Math.round(screenHeight × 0.17), 140)` |
-| Avatar (Profil) | `Math.min(Math.round(screenWidth × 0.22), 90)` |
-| Bulles photo (chat) | `Math.round(screenWidth × 0.55)` |
+| Avatar (Récap) | `Math.min(Math.round(screenWidth × 0.22), 90)` |
+| Photo galerie (Récap) | `padding: 3` par cellule + bordure `1.5px` sur la photo |
 
 ---
 
@@ -772,25 +613,30 @@ Rate-limit indépendant : 5 req/min par user (table `analyze_rate_limit`), **par
 - `scheme: "ootd"` (deep links Stripe : `ootd://shop`)
 - Permission Android : `POST_NOTIFICATIONS`, iOS background modes : `remote-notification`
 - Plugin expo-notifications : couleur `#ED93B1`, canal `default`
-- Plugin expo-media-library : message de permission FR (`downloadImageToDevice`)
-- **Pas de plugin `expo-camera` déclaré** malgré l'usage de `InAppCamera` — les messages de permission caméra/micro iOS (`NSCameraUsageDescription`, `NSMicrophoneUsageDescription`) seront donc les textes par défaut du module, pas de texte FR custom
+- Plugin expo-media-library : message de permission FR
+- **Pas de plugin `expo-camera` déclaré** malgré l'usage de `InAppCamera` — messages de permission caméra/micro iOS par défaut en anglais, pas de texte FR custom (point d'attention non résolu, voir plus bas)
 
 ### `eas.json`
-- `preview` : Android APK (test)
-- `production` : Android AAB + iOS (stores)
-- `appVersionSource: "remote"` (versioning géré sur expo.dev)
+- `preview` : Android APK (test) · `production` : Android AAB + iOS (stores)
+- `appVersionSource: "remote"`
 
 ---
 
-## Points d'attention pour évolution future
+## Infrastructure de production
 
-- **Score insert non validé** : `ootds_insert_own` n'empêche pas un client d'insérer `score_global=10`. `award_points_for_ootd` clampe mais le score affiché reste celui inséré. Résoudre en déléguant l'insert à une RPC.
-- **`compute_niveau` dupliquée** : JS (`lib/utils.js`) + PL/pgSQL (`compute_niveau()`). Toute modification du barème doit être appliquée aux deux.
-- **Notifications push serveur-side** : `sendPushNotification()` existe mais devrait être déclenché depuis une Edge Function (pas côté client) à l'insert d'un message ou like. Tokens dans `profiles_private` → via clé service uniquement.
-- **Messages expirés état local** : `expires_at` filtre en DB mais les messages expirés peuvent rester dans le state local. Re-fetch au focus recommandé.
-- **`lib/toast.js` orphelin** : event bus non utilisé, confirmé non importé nulle part. À supprimer.
-- **Permission caméra/micro non personnalisée** : `InAppCamera` (photo tenue, chat, stories vidéo) utilise `expo-camera` sans plugin `expo-camera` déclaré dans `app.json` — messages de permission iOS en anglais par défaut au lieu du FR utilisé partout ailleurs. Ajouter le plugin avec des messages FR avant un prochain build EAS iOS/Android.
-- **Variables `EXPO_PUBLIC_RC_APPLE_KEY`/`EXPO_PUBLIC_RC_GOOGLE_KEY`** (`.env.example`) : placeholders RevenueCat non consommés par le code actuel (aucun import `react-native-purchases`) — à ignorer ou retirer tant que l'intégration n'est pas commencée.
-- **Stripe live** : actuellement en mode TEST (`sk_test_...`). Passer en `sk_live_...` = recréer produits + price IDs + webhook endpoint + mettre à jour secrets Supabase.
-- **SEC-09 NOT VALID** : les contraintes `image_url` sont créées `NOT VALID`. Exécuter `VALIDATE CONSTRAINT ootds_image_url_valid` et `messages_image_url_valid` après nettoyage des éventuelles anciennes URLs.
-- **SEC-10** : Limites taille/MIME sur buckets Storage à configurer dans Supabase Dashboard (avatars 5 Mo, ootds 10 Mo, stories 100 Mo).
+- **Backend** : Supabase **self-hosted** sur `supabase.myback.fr` (stack officielle `supabase/supabase` docker-compose) — migré depuis Supabase Cloud le 2026-08-12 (voir `docs/MIGRATION_SUPABASE_SELFHOST.md`). Migrations appliquées via `supabase db push --db-url ... --yes` (`PGSSLMODE=disable`, le port 5432 exposé route vers Supavisor, utilisateur `postgres.your-tenant-id`).
+- **Edge Functions** : déployées via bind-mount + téléchargement manuel depuis GitHub (pas de `supabase functions deploy` classique sur ce self-host) — **ne se resynchronisent jamais automatiquement au `git push`**, voir avertissement dans la section Edge Functions.
+- **Web/PWA** : Vercel, projet `outfit-of-the-day` (⚠️ pas `ootd-fr` malgré le nom de domaine `ootd-fr.vercel.app`), déployé via `vercel --prod`.
+- **Paiements** : Stripe en mode **Live** depuis 2026-08-19.
+
+---
+
+## Post-mortems (bugs réels rencontrés et corrigés)
+
+Section volontairement conservée : ces pièges sont faciles à reproduire en ajoutant une nouvelle table/écran sur le même modèle.
+
+- **Récursion RLS infinie** (2026-09-24) : une policy sur `competition_members` vérifiait l'appartenance en réinterrogeant `competition_members` elle-même dans un `EXISTS` — chaque lecture de la table redéclenche sa propre policy à l'infini (`infinite recursion detected in policy for relation "competition_members"`). **Toujours** déporter ce genre de vérification dans une fonction `STABLE SECURITY DEFINER` (son propriétaire, `postgres`, n'est pas soumis au RLS de ses propres tables) plutôt qu'un `EXISTS` direct sur la même table que celle portant la policy.
+- **FK vers `auth.users` au lieu de `profiles`** : `competition_messages.sender_id` référençait `auth.users(id)`, un schéma que PostgREST ne peut pas utiliser pour résoudre un embed `profiles(...)` dans un `.select()` (`Could not find a relationship between 'competition_messages' and 'profiles'`). **Toute colonne destinée à être embed-jointe avec `profiles` dans une requête client doit référencer `profiles(id)`, jamais `auth.users(id)`** — même piège déjà rencontré sur `ootds`/`likes`/`friendships`/`flammes`/`snaps` lors de la migration self-host (corrigé alors en direct sur le Cloud d'origine ; raté sur les tables Compétitions car nouvelles).
+- **Mauvaise syntaxe de tri sur une ressource imbriquée** : `.order('competitions(created_at)', { ascending: false })` n'est *pas* la syntaxe supabase-js pour trier par une colonne d'une table jointe — elle échoue silencieusement (ou en toast d'erreur visible selon l'écran). La bonne syntaxe : `.order('created_at', { foreignTable: 'competitions', ascending: false })`.
+- **`DELETE FROM storage.objects` refusé en SQL brut** sur le self-host (`ERROR 42501: Direct deletion from storage tables is not allowed. Use the Storage API instead.`) — la suppression de fichiers Storage doit passer par l'API HTTP (`storage/v1/object/list` puis `.remove()`/`DELETE /storage/v1/bucket/<name>`), jamais par une migration SQL.
+- **Prompt de notation IA qui écrase les scores vers le bas** : faire partir un critère à 0 en ne prévoyant que des additions produit des notes anormalement basses (un modèle vision-langage est conservateur sur ce type d'ajout ouvert). Toujours donner un **point de départ réaliste** (~65-70% du barème) représentant le cas "correct et neutre", ajustable dans les deux sens.

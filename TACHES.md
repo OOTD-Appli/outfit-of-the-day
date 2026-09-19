@@ -1,6 +1,33 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-08-15 — Chat façon Instagram : bulles content-hugging, envoi photo galerie ajouté.
+> Dernière mise à jour : 2026-09-24 — Refonte "Compétitions v2" (remplace amis 1-à-1/streaks/Stories) + corrections post-lancement.
+
+---
+
+## Refonte "Compétitions v2" — 2026-09-17 → 2026-09-24
+
+Pivot produit complet, d'après le cahier des charges (`Output/2026-09-16_cahier-des-charges-ootd-v2-competitions.md` + `Output/2026-09-15_prompt-analyse-ia-v3-note-sur-100.md`) : remplace le modèle "amis 1-à-1 + streaks + Stories" par des groupes nommés ("compétitions") où les membres partagent leurs tenues et discutent ensemble. Détail complet dans `ARCHITECTURE.md`/`WORKFLOW.md` (mis à jour en profondeur le 2026-09-24) — résumé chronologique ici.
+
+**Backend (11 migrations, toutes appliquées en prod sur le self-host)**
+- [x] Correctif indépendant : grille de prix `buy_cosmetic` restaurée (écrasée par erreur par une migration antérieure, thèmes 1000/1500, logos 150-750).
+- [x] Schéma complet : `competitions`, `competition_members`, `ootd_competitions` (association many-to-many tenue↔compétition, indépendante de `ootds.is_public`), `competition_invites` (liens d'invitation, tout membre peut créer/révoquer), `competition_messages` (chat de groupe, remplace `messages` pour ce contexte).
+- [x] RPCs : `create_competition`/`create_competition_with_members`, `create_competition_invite`/`get_competition_invite_preview`/`redeem_competition_invite`/`revoke_competition_invite`, `submit_ootd_to_competitions` (publication atomique), `delete_competition_message`/`mark_competition_read`, `get_top3_app`/`get_top3_friends` (classement hebdomadaire).
+- [x] Prompt IA v3 : note sur 100 (somme de 3 sous-critères 34+33+33, plus de moyenne/10) + vérification "photo complète" préalable (aucune note calculée ni crédit consommé si la photo ne montre pas la tenue en entier). `ootds.score_scale` marque l'échelle de chaque ligne (100 nouvelles, 10 historiques) pour ne pas fausser les moyennes.
+- [x] Purge complète des Stories (table, bucket, cron, trigger) — 15 fichiers orphelins nettoyés via l'API Storage au passage (le `DELETE` SQL direct est refusé par cette instance self-host).
+- [x] **2 bugs bloquants trouvés en test réel et corrigés** (2026-09-24) : récursion RLS infinie sur `competition_members` (policy qui se réinterrogeait elle-même → fonction `is_competition_member()` SECURITY DEFINER) ; FK `competition_messages.sender_id` qui pointait vers `auth.users` au lieu de `profiles`, empêchant PostgREST de résoudre l'embed `profiles(...)` dans le chat.
+- [x] **Recalibrage du prompt de notation** (2026-09-24) : les critères Coupe/Style partaient de 0 en n'additionnant que des points — un modèle vision-langage est structurellement conservateur sur ce type d'ajout, ce qui écrasait la note globale (retours réels : jamais au-dessus de 17/100 sur des tenues correctes). Passage à un point de départ réaliste par critère (24/34, 23/33, 20/33 = 67/100 de base) + paragraphe de calibrage explicite dans le prompt.
+
+**Frontend**
+- [x] Navigation : 5 onglets → 3 (Accueil/Feed/Récap), chacun avec sa propre stack native (`@react-navigation/native-stack`) pour la profondeur nécessaire.
+- [x] `AccueilScreen` : section "Mes compétitions" (liste + badge non-lu + créer), flow de publication entièrement revu (analyse → `ShareToCompetitionScreen` : multi-sélection compétitions + toggle public, un seul appel RPC atomique au lieu de 3 chemins séparés publier/flammes/enregistrer). Analyse contextuelle retirée entièrement (bouton, state, Edge Function). Bloc "Conseil + Comment ça marche" compacté en une ligne pour laisser la place aux compétitions. Gestion de `photo_complete:false` (bandeau dédié, pas un toast d'erreur).
+- [x] Nouveaux écrans : `CreateCompetitionScreen` (nom + sélection des membres parmi les amis, refait une 2e fois le 2026-09-24 pour remplacer le flow "créer puis lien" jugé trop source d'erreurs), `CompetitionScreen` (galerie triable + chat de groupe temps réel, V1 sans audio/swipe-to-reply), `ShareToCompetitionScreen`, `JoinCompetitionScreen` (deep link `?join_competition=`, toujours un écran de confirmation avant d'adhérer).
+- [x] `RecapScreen` (nouveau, remplace `ProfilScreen` par lift-and-shift) : boutons Réglages/Abonnement/Mes amis déplacés sous la carte Niveau, 2 blocs Top 3 (app + amis) entre la carte Niveau et la galerie, galerie avec bordures/espacement entre les photos.
+- [x] `FriendsScreen` (nouveau, sous-écran de Récap) : demande/acceptation d'ami repris de l'ancien `FlammesScreen`, sans chat ni streak — `friendships` reste un concept indépendant des compétitions (décision produit explicite, sert le Top 3 amis).
+- [x] Suppression définitive du code mort : `FlammesScreen.js`, `ProfilScreen.js`, `components/StoryMedia.js`, `components/InAppBanner.js`, `lib/storyActions.js`, `lib/flammesUtils.js` (seule `getLocalDayIsoRange` a survécu dans `lib/competitionUtils.js`). `flammes`/`snaps` restent en base mais plus aucun code n'y écrit.
+- [x] Vérifications à chaque étape : `npm test` (smoke test 14 écrans + tests unitaires, 56/56 au final), migrations vérifiées directement en base après application.
+- [x] Déployé en production (Vercel `outfit-of-the-day` + migrations self-host) à plusieurs reprises au fil des correctifs.
+- [x] `ARCHITECTURE.md`/`WORKFLOW.md` réécrits en profondeur (2026-09-24) pour refléter la nouvelle architecture — section "Post-mortems" ajoutée dans `ARCHITECTURE.md` pour les 4 pièges réels rencontrés (récursion RLS, FK vers le mauvais schéma, syntaxe `.order()` sur ressource imbriquée, `DELETE` Storage refusé en SQL).
+- [ ] **Reste à faire / non demandé pour l'instant** : messages vocaux et swipe-to-reply dans le chat de groupe (V1 volontairement plus simple que l'ancien chat 1-à-1) ; décision produit sur la mécanique "Gel de Flamme" en contexte compétition (protège la régularité de participation — le produit shop existe, le branchement fonctionnel reste à faire) ; tester la matrice complète du nouveau flow de création sur plusieurs comptes réels.
 
 ---
 
