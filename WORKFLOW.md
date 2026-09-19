@@ -1,6 +1,6 @@
 # WORKFLOW.md — Développement et déploiement OOTD
 
-> Dernière mise à jour : 2026-09-24 (refonte "Compétitions v2")
+> Dernière mise à jour : 2026-09-25 (Compétitions v2 — décisions D1-D6)
 
 ## Prérequis
 
@@ -80,6 +80,8 @@ npx supabase db push --db-url "postgres://postgres.your-tenant-id:<pwd>@192.168.
 | `20260922120000_stories_purge.sql` | Purge complète Stories (table, cron, trigger) — **le bucket/les fichiers Storage ont dû être supprimés séparément via l'API Storage, pas en SQL**, voir Post-mortems dans ARCHITECTURE.md |
 | `20260923120000_create_competition_with_members.sql` | RPC `create_competition_with_members` (création + sélection des membres en une fois) |
 | `20260924120000_fix_competition_rls_and_fk.sql` | Corrige la récursion RLS infinie (`is_competition_member` helper) + FK `competition_messages.sender_id` → `profiles(id)` |
+| `20260925120000_competition_streak.sql` | `competition_members.streak_count`/`last_submission_date` + logique de streak dans `submit_ootd_to_competitions` + RPC `restore_competition_streak` (décision D4) |
+| `20260925130000_competition_leaderboard_and_palmares.sql` | RPC `get_competition_leaderboard` (classement par compétition + blocs Régularité/Progression/Coup de cœur) + `get_top3_app`/`get_top3_friends` paramétrées par période (décisions D1/D3/D5) — dépend de la migration précédente (colonnes de streak) |
 
 **Nouveau projet self-host vierge** : rejouer toutes les migrations dans l'ordre depuis `20260510120000_initial_schema.sql`. **Sur l'instance de prod existante** : n'appliquer que les migrations pas encore poussées — `supabase db push` détecte automatiquement lesquelles via sa table de suivi interne, il suffit de lancer la commande, elle est idempotente.
 
@@ -268,7 +270,7 @@ Chaque agent qui prend un ticket doit :
 | Auth & profil | `AuthScreen.js`, `ResetPasswordScreen.js`, `lib/ensureProfile.js`, `lib/notifications.js`, `lib/pwa.js`/`lib/pwa.web.js`, `lib/downloadImage.js` |
 | Feed & social | `FeedScreen.js`, `components/FeedCommentsModal.js`, `components/HeartOverlay.js`/`.web.js`, `components/Skeleton.js` |
 | Analyse IA | `AccueilScreen.js` (capture + analyse), `CustomizationScreen.js`, `supabase/functions/analyze-outfit/`, `supabase/functions/deezer-search/` |
-| Compétitions | `AccueilScreen.js` (liste + capture), `CreateCompetitionScreen.js`, `ShareToCompetitionScreen.js`, `CompetitionScreen.js`, `JoinCompetitionScreen.js`, `lib/pendingOutfit.js`, `lib/activeChat.js`, `lib/competitionUtils.js`, migrations `2026091*`/`2026092*` liées aux compétitions |
+| Compétitions | `AccueilScreen.js` (capture + bandeau), `CompetitionsListScreen.js`, `CreateCompetitionScreen.js`, `ShareToCompetitionScreen.js`, `CompetitionScreen.js` (classement + galerie + chat), `JoinCompetitionScreen.js`, `PalmaresScreen.js`, `lib/pendingOutfit.js`, `lib/activeChat.js`, `lib/competitionUtils.js`, migrations `2026091*`/`2026092*`/`20260925*` liées aux compétitions |
 | Amis (indépendant des compétitions) | `FriendsScreen.js`, table `friendships` |
 | Récap & cosmétiques | `RecapScreen.js`, `ShopScreen.js`, `lib/themeContext.js`, `lib/logoConfig.js`, `supabase/functions/create-*`, `supabase/functions/stripe-webhook/` |
 | Notifications | `lib/notifications.js`, `lib/pwa.js`/`lib/pwa.web.js`, `lib/webPush.js`/`lib/webPush.web.js`, `supabase/functions/send-web-push/` |

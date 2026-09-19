@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Référence technique OOTD
 
-> Dernière mise à jour : 2026-09-24 (refonte "Compétitions v2")
+> Dernière mise à jour : 2026-09-25 (Compétitions v2 — décisions D1-D6 : classement par ligue, Palmarès, streak par compétition, navigation 4 onglets)
 
 ## Vue d'ensemble
 
@@ -11,15 +11,15 @@ Application mobile React Native / Expo (iOS, Android, **Web/PWA**). Architecture
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      App (Expo — iOS / Android / PWA)                    │
-│  ┌─────────┐        ┌──────┐        ┌────────┐                          │
-│  │ Accueil │        │ Feed │        │ Récap  │                          │
-│  │(capture │        │(feed │        │(stats, │                          │
-│  │+compét.)│        │public)│       │réglages,│                         │
-│  └────┬────┘        └──┬───┘        │abonnem.,│                         │
-│       │                │            │amis,   │                          │
-│       │                │            │Top 3)  │                          │
-│       │                │            └───┬────┘                         │
-│       └────────────────┴────────────────┘                               │
+│  ┌─────────┐   ┌─────────────┐   ┌───────────┐   ┌────────┐             │
+│  │ Analyse │   │ Compétitions│   │ Découvrir │   │ Récap  │             │
+│  │(capture │   │(liste, créer│   │(feed      │   │(stats, │             │
+│  │+ bandeau│   │ classement, │   │ public +  │   │réglages,│            │
+│  │compét.) │   │ galerie,chat│   │ Palmarès) │   │abonnem.,│            │
+│  └────┬────┘   └──────┬──────┘   └─────┬─────┘   │amis,   │            │
+│       │               │                │         │graphe) │            │
+│       │               │                │         └───┬────┘           │
+│       └───────────────┴────────────────┴─────────────┘                  │
 │                  Supabase Client (lib/supabase.js)                       │
 └──────────────────────────────┬────────────────────────────────────────--┘
                                │
@@ -46,7 +46,7 @@ Application mobile React Native / Expo (iOS, Android, **Web/PWA**). Architecture
 
 ## Navigation
 
-`App.js` implémente un **BottomTabNavigator à 3 onglets**, chacun enveloppant sa propre **stack native** (`@react-navigation/native-stack`) pour supporter la profondeur nécessaire (compétition → chat, Récap → réglages/abonnement/amis). Le gardien d'auth est dans `App()`. `ThemeProvider` et `ToastProvider` enveloppent tout.
+`App.js` implémente un **BottomTabNavigator à 4 onglets** (décision D2, 2026-09-25 — auparavant 3), chacun enveloppant sa propre **stack native** (`@react-navigation/native-stack`) pour supporter la profondeur nécessaire. Le gardien d'auth est dans `App()`. `ThemeProvider` et `ToastProvider` enveloppent tout.
 
 ```
 App.js
@@ -56,29 +56,38 @@ App.js
  └── session ok    → <ThemeProvider>
                        <ToastProvider>
                          <ThemedNavigator>
-                           ├── Accueil (✨) → AccueilStack
-                           │     ├── AccueilHome         → AccueilScreen (capture + liste compétitions)
-                           │     ├── ShareToCompetition   → ShareToCompetitionScreen
-                           │     ├── CreateCompetition    → CreateCompetitionScreen
-                           │     ├── Competition          → CompetitionScreen (galerie + chat groupe)
-                           │     └── JoinCompetition       → JoinCompetitionScreen (deep link invitation)
-                           ├── Feed    (🏠) → FeedScreen        (headerShown: false, plein écran)
+                           ├── Accueil (✨ "Analyse")     → AccueilStack
+                           │     ├── AccueilHome          → AccueilScreen (capture + bandeau compact compétitions)
+                           │     ├── ShareToCompetition    → ShareToCompetitionScreen
+                           │     └── Competition           → CompetitionScreen (voir plus bas — présent aussi ici pour le replace() post-partage)
+                           ├── Compétitions (🏆, nouveau) → CompetitionsStack
+                           │     ├── CompetitionsHome     → CompetitionsListScreen (liste "Mes compétitions", ex-section d'AccueilScreen)
+                           │     ├── CreateCompetition     → CreateCompetitionScreen
+                           │     ├── Competition            → CompetitionScreen (classement + galerie + chat)
+                           │     └── JoinCompetition         → JoinCompetitionScreen (deep link invitation, retargeté ici)
+                           ├── Feed (🧭 "Découvrir")      → DecouvrirStack
+                           │     ├── Feed                 → FeedScreen (headerShown: false, plein écran, inchangé)
+                           │     └── Palmares              → PalmaresScreen (podium + graphique, décision D3)
                            └── Récap   (👤) → RecapStack
-                                 ├── RecapHome → RecapScreen (stats, niveau, Top 3, galerie)
+                                 ├── RecapHome → RecapScreen (stats, niveau, graphe perso, galerie)
                                  ├── Shop      → ShopScreen (abonnement, achats express, cosmétiques)
                                  └── Friends   → FriendsScreen (recherche + demandes d'amis)
 ```
 
-**Header** : tous les onglets sauf Feed utilisent un header custom `<AppHeader />` (`screenOptions.header`) au lieu du header par défaut de React Navigation.
+> **Noms de route internes volontairement inchangés** (`Accueil`, `Feed`, `Récap`) malgré le renommage des libellés affichés (`tabBarLabel: 'Analyse'`/`'Découvrir'`) — plusieurs écrans font des `navigate()` cross-tab par nom brut (`ShareToCompetitionScreen.navigate('Feed')`, `CreateCompetitionScreen.navigate('Récap', {screen:'Friends'})`) qui auraient cassé silencieusement si le `name` du `Tab.Screen` avait changé en même temps que son libellé. Seul l'onglet réellement nouveau porte un nom de route qui matche son libellé (`Compétitions`).
+>
+> `Competition` (détail d'une compétition) est enregistré **dans deux stacks** (`AccueilStack` et `CompetitionsStack`) : `ShareToCompetitionScreen.navigation.replace('Competition', ...)` ne peut cibler qu'un écran du **même** stack (`replace()`, contrairement à `navigate()`, ne fait pas de recherche cross-navigateur) — dupliquer l'enregistrement du composant est le moyen le plus simple de satisfaire ce besoin sans changer la sémantique `replace` (qui évite de revenir sur l'écran de partage via le bouton retour).
 
-**Navigation cross-tab** : pour naviguer d'un onglet vers un écran d'une stack sœur, utiliser la forme `navigation.navigate('Récap', { screen: 'Shop' })` (jamais `navigation.navigate('Shop')` seul si l'appelant est dans une autre stack).
+**Header** : tous les onglets utilisent `headerShown: false` au niveau de leur propre `Tab.Screen`/stack (chaque écran gère son propre header, ou n'en affiche pas — `CompetitionScreen`/`PalmaresScreen` ont leur propre barre custom avec chevron retour).
+
+**Navigation cross-tab** : pour naviguer d'un onglet vers un écran d'une stack sœur, utiliser la forme `navigation.navigate('Récap', { screen: 'Shop' })` (jamais `navigation.navigate('Shop')` seul si l'appelant est dans une autre stack) — **sauf** pour un écran qui est le **premier/racine** d'une stack elle-même nommée comme une route de niveau tab (ex. `navigate('Feed')` cible directement l'onglet Découvrir et affiche son écran initial `Feed` à l'intérieur de `DecouvrirStack`, sans syntaxe imbriquée).
 
 **Auth flow** : `App.useEffect` appelle `supabase.auth.getSession()`, puis écoute `onAuthStateChange`. `syncSession()` enchaîne `ensureUserProfile()`, la consommation d'un éventuel **token d'invitation en attente** (voir ci-dessous), l'enregistrement push (natif) et `registerWebPush()` (PWA). Sur web, les tokens de récupération de mot de passe sont parsés manuellement depuis le hash **et** la query string (`parseAuthParams`) pour fiabiliser Safari iOS/PWA, avec pose de session explicite (`setSession`/`verifyOtp`/`exchangeCodeForSession`).
 
 **Deep link d'invitation compétition** (`?join_competition=<token>`) :
 - Capturé dans `AsyncStorage['@ootd_pending_join_token']` **dès le chargement de la page**, même si aucune session n'existe encore (cas d'un nouvel utilisateur qui doit d'abord s'inscrire).
-- Consommé dans `syncSession()` dès qu'une session existe (que ce soit `getSession()` au démarrage ou un login/signup qui vient de se produire) → navigue vers `JoinCompetitionScreen`.
-- Cas "app déjà ouverte + session déjà active" (clic sur le lien pendant que le PWA tourne) : géré séparément via le message `postMessage` du service worker.
+- Consommé dans `syncSession()` dès qu'une session existe (que ce soit `getSession()` au démarrage ou un login/signup qui vient de se produire) → navigue vers l'onglet **Compétitions** (`navigate('Compétitions', { screen: 'JoinCompetition', params: { token } })`, retargeté depuis `Accueil` le 2026-09-25 suite au déplacement de `JoinCompetitionScreen` dans `CompetitionsStack`).
+- Cas "app déjà ouverte + session déjà active" (clic sur le lien pendant que le PWA tourne) : géré séparément via le message `postMessage` du service worker (même retarget).
 - `JoinCompetitionScreen` affiche toujours un aperçu (nom + nombre de membres via `get_competition_invite_preview`, appelable sans compte) et exige un tap explicite sur "Rejoindre" — **jamais d'adhésion automatique au chargement** (un lien peut être périmé, révoqué ou transféré).
 - Clic sur une notification native (rappel quotidien) → route vers l'onglet Accueil si l'URL contient "analyse".
 
@@ -165,7 +174,7 @@ Reçoit `{ navigation }` de React Navigation. Racine de la stack `AccueilStack`.
 
 **Bloc conseil compact** : une seule ligne (`tipCardCompact`) sous le bouton d'analyse — remplace l'ancien bloc "Carte conseil" + 3 cartes "Comment ça marche ?", pour laisser plus de place à la liste des compétitions juste en dessous.
 
-**Section "Mes compétitions"** (toujours visible, sous le bloc conseil) : liste des compétitions dont l'utilisateur est membre (`competition_members` joint `competitions`), badge non-lu par ligne (compte les `competition_messages` postérieurs à `last_read_at`, hors ses propres messages), tap → `CompetitionScreen`. Bouton "Créer une compétition" → `CreateCompetitionScreen`.
+**Bandeau compétitions compact** (2026-09-25, décision D2 — remplace l'ancienne section "Mes compétitions" pleine liste, déplacée dans `CompetitionsListScreen`) : une seule ligne sous le bloc conseil, ex. "3 ligues actives · 2 nouveaux messages →", dérivée de 2 requêtes de comptage légères (`head: true`, pas de fetch de la liste complète) — nombre de lignes `competition_members` de l'utilisateur, et somme des `competition_messages` postérieurs à `last_read_at` par compétition. Tap → `navigation.navigate('Compétitions')` (cross-tab).
 
 **Phase 4 — Personnalisation (CustomizationScreen modal)**
 - Ajout caption (200 chars max)
@@ -192,9 +201,21 @@ Inchangé dans son fonctionnement depuis la refonte Compétitions — reste le f
 - **Confidentialité** : posts `is_private` filtrés côté DB sauf auteur ou ami accepté
 - **Recherche** : bouton loupe → overlay `TextInput` — filtrage côté client sur `username`, `caption`, `styles[]`
 - **Toggle "œil" notes**, **hashtags de style**, **flux "Pour toi" spécialisé** (`profiles.specialized_feed`), **musique** auto-play, **double-tap like**, **partage** (vers une compétition ou en message direct — voir CompetitionScreen), **commentaires** (`FeedCommentsModal`) : comportement inchangé, voir le code pour le détail.
+- **Icône Palmarès** (2026-09-25, décision D3) : bouton rond supplémentaire dans la barre d'icônes du haut (`Feather name="award"`, à côté du bouton "notes") → `navigation.navigate('Palmares')` (sibling dans `DecouvrirStack`). Ajout purement additif, aucun comportement existant du Feed modifié.
 
-### CompetitionScreen (`screens/CompetitionScreen.js`) — nouveau
-Reçoit `{ route: { params: { competitionId, competitionName } }, navigation }`. Deux onglets internes (`tab` state) :
+### CompetitionsListScreen (`screens/CompetitionsListScreen.js`) — nouveau (2026-09-25)
+Racine de l'onglet Compétitions. Reprend fidèlement l'ancien fetch d'`AccueilScreen` (liste `competition_members` joint `competitions`, badge non-lu par ligne, tap → `CompetitionScreen`, bouton "Créer une compétition" → `CreateCompetitionScreen`) — seule différence : erreurs affichées en toast plutôt qu'avalées silencieusement (c'est maintenant l'écran principal de l'onglet, plus une section secondaire), et rafraîchi via `useFocusEffect`.
+
+### PalmaresScreen (`screens/PalmaresScreen.js`) — nouveau (2026-09-25, décision D3)
+Remplace un chat public global envisagé puis écarté (risque de modération/harcèlement sur une app qui note l'apparence). Accessible depuis le Feed via l'icône trophée. Sélecteur Semaine/Mois → `get_top3_app`/`get_top3_friends` (désormais paramétrées par `p_period`). Rendu : podium simplifié (liste + médailles 🥇🥈🥉, pas d'étagères) pour Top 3 app et Top 3 amis, plus un petit graphique en barres SVG (`react-native-svg`, même bibliothèque que `components/Gauge.js`) des scores du Top 3 app, barre de l'utilisateur courant mise en évidence.
+
+### CompetitionScreen (`screens/CompetitionScreen.js`)
+Reçoit `{ route: { params: { competitionId, competitionName } }, navigation }`. **Trois onglets internes** (`tab` state, `'ranking' | 'gallery' | 'chat'`, Classement en premier — "raison d'être de l'écran", décision D1) :
+
+**Classement** (2026-09-25, décisions D1/D5)
+- `get_competition_leaderboard(p_competition_id, p_period)` RPC — sélecteur de période (Jour/Semaine/Mois/Depuis toujours, state `period`)
+- Liste classée (médailles 🥇🥈🥉 pour les 3 premiers, sinon rang numérique), score ou `—` si aucune soumission sur la période, badge 🔥`streak_count` si >0, ligne de l'utilisateur courant mise en évidence
+- 3 blocs secondaires en pied de liste (`ListFooterComponent`) — pour ne pas toujours récompenser le même meilleur score : 🎯 **Régularité** (`most_regular`, plus grand `streak_count`), 📈 **Progression** (`most_improved`, plus grand delta de moyenne vs. la période précédente de même durée), ❤️ **Coup de cœur** (`most_liked`, tenue la plus likée de la période dans cette compétition)
 
 **Galerie**
 - `ootd_competitions` joint `ootds(id, image_url, score_global, caption, styles, user_id, profiles(username, avatar_url))`, filtré `competition_id`
@@ -229,7 +250,7 @@ Reprend le contenu de l'ancien `ProfilScreen` quasiment tel quel (modal Réglage
 2. Carte profil : avatar, pseudo, badge abonnement, stats (tenues / score moyen / points), top 3 styles
 3. Carte "Niveau" (`computeLevelInfo`)
 4. **Boutons Réglages / Abonnement / Mes amis** (juste sous la carte Niveau)
-5. **Top 3 de la semaine** (app entière) et **Top 3 entre amis** — deux blocs, `get_top3_app()`/`get_top3_friends()` RPCs, reset hebdomadaire
+5. **Graphique perso "Mon évolution"** (2026-09-25, décision D6 — remplace les 2 blocs Top 3, déménagés dans `PalmaresScreen`) : toggle 7/30 jours, ligne SVG (`Polyline`+`Circle`, `react-native-svg`) tracée à partir du state `ootds` déjà chargé par `fetchProfil` (aucune requête réseau dédiée — peut donc ne pas couvrir toute la fenêtre si l'utilisateur publie plus de 21 fois sur la période, accepté pour cette V1), score normalisé via `(score_global / score_scale) * 100` (même formule que `moyenneScore`)
 6. Galerie "Mes tenues" — grille 3 colonnes **avec bordure et espacement entre chaque photo** (`gridCell` padding 3 + `gridPhoto` bordure `rgba(128,128,128,0.28)`), pagination 21/page (tier Gratuit plafonné à la 1ère page), lightbox horizontal swipe enrichie (badge note globale **dénominateur dynamique** `/{score_scale}` — voir "Note sur 100" plus bas —, 3 badges colorés, chips de style, description, conseils IA structurés)
 
 Modal Réglages : username, bio (160 chars), `is_private` toggle, toggle "contenu spécialisé", toggle apparence dark/light, sélecteur "Personnalité du critique IA" (grisé + 🔒 hors tier), email (RO), changement d'avatar.
@@ -254,7 +275,7 @@ Inchangé fonctionnellement — self-contained (zéro props, propre `fetchData`)
 Détection de tier via `lib/tier.js` (`getSubActive`/`getActivePlan`, partagé avec RecapScreen/AccueilScreen).
 
 **2. Achats Express (Stripe — one-time, 0,99€)**
-- Gel de Flamme → `create-payment-session` (product='flame_freeze') — la mécanique de streak individuel a disparu, mais le produit shop reste (protège désormais la régularité de participation à une compétition, décision produit distincte de ce ticket technique)
+- Gel de Flamme → `create-payment-session` (product='flame_freeze') — **réactivé fonctionnellement le 2026-09-25** (décision D4) : protège désormais la régularité de soumission **par compétition** (`competition_members.streak_count`/`last_submission_date`) via la RPC `restore_competition_streak`, plutôt que l'ancien streak 1-à-1 disparu avec `FlammesScreen`. Le produit shop lui-même (achat/crédit du gel) est inchangé ; seule la consommation change de cible. Pas encore de bouton UI pour déclencher `restore_competition_streak` — la RPC existe et est vérifiée, le branchement dans `CompetitionScreen` reste à faire.
 - Pack 2 000 points → `create-payment-session` (product='points_2000')
 - Crédit posé par webhook `stripe-webhook`, jamais ici
 
@@ -303,7 +324,7 @@ Placeholder de chargement générique (shimmer). Utilisé dans `FeedScreen` et `
 Props : `title`, `variant` (primary/secondary/outline), `loading`, `disabled`, `leftIcon`, `rightIcon`, `onPress`
 
 ### `Avatar` (`components/Avatar.js`)
-Props : `uri`, `size` (défaut 80), `username` (initiale fallback), `loading`, `onPress`, `borderWidth`, `borderColor`. Réutilisé par `FriendsScreen`, `CreateCompetitionScreen`, `CompetitionScreen`.
+Props : `uri`, `size` (défaut 80), `username` (initiale fallback), `loading`, `onPress`, `borderWidth`, `borderColor`. Réutilisé par `FriendsScreen`, `CreateCompetitionScreen`, `CompetitionScreen`, `PalmaresScreen`.
 
 ### `FeedCommentsModal` (`components/FeedCommentsModal.js`)
 Props : `visible`, `ootdId`, `userId`, `onClose`, `onThreadCount(ootdId, count)`. Charge `comments` joint `profiles(username, avatar_url)`.
@@ -450,6 +471,9 @@ Voir ShopScreen ci-dessus pour la grille de prix corrigée (2026-09-17).
 ### `restore_flamme(p_flamme_id)` / `claim_monthly_freezes()` — SECURITY DEFINER
 Inchangées. `flammes`/`snaps` restent en base (non purgées) mais plus aucun code client n'écrit dedans depuis la refonte Compétitions.
 
+### `restore_competition_streak(p_competition_id)` — SECURITY DEFINER (nouveau, 2026-09-25)
+Équivalent de `restore_flamme` pour le streak par compétition (décision D4). Restaure uniquement un oubli d'**exactement** 1 jour (`last_submission_date = aujourd'hui - 2`), consomme 1 `flame_freezes` (même contournement `app.bypass_profile_guard` que `restore_flamme`/`claim_monthly_freezes`), ne touche pas `streak_count` — seule la "couverture" de la veille est restaurée, le compteur reprend sa progression normale à la prochaine soumission.
+
 ### `apply_one_time_purchase(...)` / `apply_subscription_change(...)` — SECURITY DEFINER / `service_role`
 Inchangées, voir `stripe-webhook`.
 
@@ -466,8 +490,9 @@ Inchangées, voir `stripe-webhook`.
 | `submit_ootd_to_competitions(...)` | RPC atomique de publication (voir AccueilScreen Phase 5). Vérifie l'appartenance à **toutes** les compétitions ciblées avant d'insérer quoi que ce soit. `p_score_global` est un paramètre explicite passé par le client (pas recalculé en somme/moyenne dans la RPC) — le calcul du score reste la responsabilité de `analyze-outfit`. |
 | `delete_competition_message(p_id)` | Soft-delete, expéditeur uniquement, même pattern que l'ancien `delete_message`. |
 | `mark_competition_read(p_competition_id)` | Met à jour `competition_members.last_read_at` pour le membre courant. |
-| `get_top3_app()` | Classement hebdomadaire (reset chaque semaine, `date_trunc('week', ...)` fuseau Europe/Paris) groupé par utilisateur (`MAX(score_global)`), filtré `is_public=true` et `profiles.is_private=false`. |
-| `get_top3_friends()` | Même requête, filtrée sur les amis acceptés (`friendships`) de l'appelant — **indépendant de l'appartenance à une compétition commune** (décision produit explicite). |
+| `get_top3_app(p_period text DEFAULT 'week')` | Classement groupé par utilisateur (`MAX(score_global)`), filtré `is_public=true` et `profiles.is_private=false`. **Période paramétrable depuis 2026-09-25** (décision D5) : `'day'\|'week'\|'month'\|'all'`, défaut `'week'` = comportement identique à l'ancienne version 0-argument (les appelants pas encore mis à jour, ex. `RecapScreen` s'il l'appelait encore sans argument, gardent le même résultat). |
+| `get_top3_friends(p_period text DEFAULT 'week')` | Même requête/paramétrage, filtrée sur les amis acceptés (`friendships`) de l'appelant — **indépendant de l'appartenance à une compétition commune** (décision produit explicite). |
+| `get_competition_leaderboard(p_competition_id, p_period text DEFAULT 'week')` — nouveau (2026-09-25, D1/D3/D5) | Classement complet d'**une** compétition (pas seulement un Top 3 global) + 3 blocs secondaires. Revérifie elle-même l'appartenance en premier (`SECURITY DEFINER` contourne le RLS, donc `{ok:false,error:'Non membre'}` sinon — sans ça n'importe quel utilisateur authentifié pourrait lire le classement de n'importe quelle compétition en devinant son id). Retour : `{ok, ranking:[{user_id,username,avatar_url,best_score,streak_count}], most_regular, most_improved, most_liked}` (les 3 derniers `null` si personne ne qualifie). |
 | `is_competition_member(p_competition_id)` — STABLE SECURITY DEFINER | Helper interne qui casse la récursion RLS (voir Post-mortems) — utilisé par toutes les policies "membre de cette compétition", pas destiné à être appelé directement par le client. |
 
 ---
@@ -521,6 +546,8 @@ Une tenue est reliée à 0, 1 ou plusieurs compétitions via `ootd_competitions`
 
 ### `competition_members` — nouveau
 PK composite `(competition_id, user_id)`, `joined_at`, `last_read_at` (curseur non-lu). RLS SELECT membres uniquement, DELETE self (quitter une compétition). **Pas de policy INSERT** — rejoindre uniquement via les RPCs (sinon n'importe qui pourrait s'auto-ajouter à n'importe quelle compétition).
+
+**Streak par compétition** (colonnes ajoutées 2026-09-25, décision D4) : `streak_count integer DEFAULT 0`, `last_submission_date date`. Maintenues par `submit_ootd_to_competitions` (jour consécutif → `+1`, trou ≥2 jours ou jamais soumis → reset à 1, déjà soumis aujourd'hui → idempotent), restaurables via `restore_competition_streak` (voir RPCs). Remplace l'ancien streak "flammes" 1-à-1 comme cible fonctionnelle du Gel de Flamme.
 
 ### `ootd_competitions` — nouveau
 Table d'association `ootd_id` × `competition_id`, PK composite. **Dénormalise `user_id` et `created_at`** depuis `ootds` (posés à l'insert) pour que `hasSubmittedTodayForCompetition` n'ait besoin d'aucune jointure. RLS : SELECT membres, INSERT si propriétaire de l'ootd ET membre de la compétition ciblée (policy directe, pas de RPC nécessaire), DELETE self (unshare).

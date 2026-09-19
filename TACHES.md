@@ -1,6 +1,30 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-24 — Refonte "Compétitions v2" (remplace amis 1-à-1/streaks/Stories) + corrections post-lancement.
+> Dernière mise à jour : 2026-09-25 — Compétitions v2, décisions D1-D6 (classement, Palmarès, streak par ligue, navigation 4 onglets).
+
+---
+
+## Compétitions v2 — D1-D6 (classement, Palmarès, streak par ligue, navigation 4 onglets) — 2026-09-25
+
+D'après `UX_DESIGN.md` (6 décisions produit sur la refonte "Compétitions v2" livrée le 2026-09-24) : la liste des compétitions devient un onglet à part entière, `CompetitionScreen` gagne un vrai classement, le chat public global envisagé est remplacé par un Palmarès (podium), et le Gel de Flamme retrouve un usage (régularité par compétition). Implémenté via 8 agents en parallèle (2 backend SQL + 6 frontend sur des fichiers disjoints), puis câblage de la navigation fait à la main.
+
+**Backend (2 migrations, appliquées en prod)**
+- [x] **D4 — Streak par compétition** (`20260925120000_competition_streak.sql`) : `competition_members.streak_count`/`last_submission_date` ; `submit_ootd_to_competitions` met à jour le streak dans sa boucle existante (jour consécutif → +1, trou ≥2 jours ou jamais soumis → reset à 1, déjà soumis aujourd'hui → idempotent) ; nouvelle RPC `restore_competition_streak(p_competition_id)` (consomme 1 Gel de Flamme, restaure uniquement un oubli d'exactement 1 jour, même logique de contournement du trigger `profiles_guard_sensitive` que `restore_flamme`).
+- [x] **D1/D3/D5 — Classement + Palmarès + période** (`20260925130000_competition_leaderboard_and_palmares.sql`) : nouvelle RPC `get_competition_leaderboard(p_competition_id, p_period)` (classement complet + 3 blocs secondaires `most_regular`/`most_improved`/`most_liked`) ; `get_top3_app`/`get_top3_friends` acceptent désormais `p_period` (`day`/`week`/`month`/`all`, défaut `week` = comportement identique à avant pour les appelants pas encore mis à jour) — `DROP FUNCTION` explicite des anciennes signatures 0-argument pour éviter une surcharge orpheline.
+- [x] Vérifié directement en prod après `db push` : les 2 RPCs répondent correctement via PostgREST (`get_top3_app` → `200 []`, `get_competition_leaderboard` sur un id bidon → `{ok:false,error:"Non membre"}`, confirmant que le contrôle d'appartenance fonctionne malgré le `SECURITY DEFINER`).
+
+**Frontend**
+- [x] **D2 — Navigation à 4 onglets** (`App.js`) : ✨ Analyse (`AccueilStack`, inchangé dans son contenu) · 🏆 Compétitions (nouveau, `CompetitionsStack`) · 🧭 Découvrir (`DecouvrirStack` = Feed inchangé + Palmarès) · 👤 Récap (`RecapStack`, inchangé). Noms de route internes conservés (`Accueil`, `Feed`, `Récap`) pour ne casser aucun `navigate()` cross-tab existant — seuls les libellés affichés changent (`tabBarLabel`). `Competition` (détail) enregistré à la fois dans `AccueilStack` (nécessaire pour le `replace()` de `ShareToCompetitionScreen`, qui ne peut cibler qu'un écran du même stack) et dans `CompetitionsStack`. Deep link `?join_competition=` retargeté vers l'onglet Compétitions (2 call sites : consommation du token en attente + message du service worker).
+- [x] **`CompetitionsListScreen.js`** (nouveau) : liste "Mes compétitions" extraite d'`AccueilScreen` à l'identique (même fetch, même syntaxe `.order(..., { foreignTable })`), devient l'écran racine de l'onglet Compétitions ; erreurs désormais affichées en toast (avalées silencieusement avant, acceptable tant que c'était une section secondaire).
+- [x] **`AccueilScreen.js`** allégé : section "Mes compétitions" retirée, remplacée par un bandeau compact ("N ligue(s) active(s) · M nouveau(x) message(s) →", 2 requêtes de comptage légères) qui navigue vers l'onglet Compétitions.
+- [x] **D1/D5 — `CompetitionScreen.js`** : 3ᵉ onglet interne "Classement" ajouté **en premier** (devant Galerie/Chat — "raison d'être de l'écran"), sélecteur de période (Jour/Semaine/Mois/Depuis toujours), liste classée avec médailles + badge 🔥 streak, 3 blocs secondaires (🎯 Régularité, 📈 Progression, ❤️ Coup de cœur) en pied de liste.
+- [x] **D3 — `PalmaresScreen.js`** (nouveau) : podium simplifié (liste + médailles) Top 3 app/amis + petit graphique en barres SVG (`react-native-svg`, même lib que `Gauge.js`), sélecteur Semaine/Mois. Accessible depuis le Feed via une icône trophée dédiée (`FeedScreen.js`, additif uniquement).
+- [x] **D6 — `RecapScreen.js`** : les 2 blocs Top 3 (déménagés dans Palmarès) remplacés par un graphique perso "Mon évolution" (toggle 7/30 jours), dérivé du state `ootds` déjà chargé — aucune requête réseau supplémentaire.
+- [x] **Bug trouvé et corrigé pendant l'intégration** : l'agent responsable de l'icône Palmarès avait dupliqué exactement le style du bouton "notes" existant (`right: 52, bottom: 12`) → les deux icônes se superposaient dans la barre du Feed. Corrigé (`right: 88`).
+- [x] `JoinCompetitionScreen.js` (déplacé dans `CompetitionsStack`) : ses 2 `navigate('AccueilHome')` (bare, valides uniquement en tant que sibling direct dans `AccueilStack`) corrigés en `navigate('Accueil', { screen: 'AccueilHome' })` explicite, pour rester valides depuis son nouveau stack.
+- [x] Vérifications : `npm test` (56/56, y compris le smoke test qui importe `App.js` et donc tous les nouveaux écrans/stacks).
+- [x] Déployé : migrations appliquées en prod (self-host) + `git push` + `vercel --prod` (alias `ootd-fr.vercel.app` mis à jour).
+- [ ] **Reste à faire / non demandé pour l'instant** : bouton UI pour déclencher `restore_competition_streak` (la RPC existe côté serveur, mais aucun écran ne l'appelle encore — à brancher quand la mécanique "Gel de Flamme cassé" doit redevenir visible pour l'utilisateur, probablement un badge sur la ligne de classement de l'utilisateur courant dans `CompetitionScreen`) ; tester la matrice complète (période × compétition avec/sans streak/likes) sur plusieurs comptes réels.
 
 ---
 
