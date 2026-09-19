@@ -60,24 +60,57 @@ import FeedScreen from './screens/FeedScreen';
 import RecapScreen from './screens/RecapScreen';
 import ShopScreen from './screens/ShopScreen';
 import FriendsScreen from './screens/FriendsScreen';
+import CompetitionsListScreen from './screens/CompetitionsListScreen';
 import CreateCompetitionScreen from './screens/CreateCompetitionScreen';
 import CompetitionScreen from './screens/CompetitionScreen';
 import ShareToCompetitionScreen from './screens/ShareToCompetitionScreen';
 import JoinCompetitionScreen from './screens/JoinCompetitionScreen';
+import PalmaresScreen from './screens/PalmaresScreen';
 
 const Tab = createBottomTabNavigator();
 const AccueilStackNav = createNativeStackNavigator();
+const CompetitionsStackNav = createNativeStackNavigator();
+const DecouvrirStackNav = createNativeStackNavigator();
 const RecapStackNav = createNativeStackNavigator();
 
+// Onglet "✨ Analyse" (ex-Accueil) : capture + analyse IA (inchangé) — le nom
+// de route reste "Accueil" pour ne pas casser les navigate('Accueil', ...)
+// existants (deep link, rappel de notification, JoinCompetitionScreen).
+// "Competition" reste aussi présent ici (en plus de CompetitionsStack) car
+// ShareToCompetitionScreen fait navigation.replace('Competition', ...) — un
+// replace() cible toujours un écran du MÊME stack, jamais un autre onglet.
 function AccueilStack() {
   return (
     <AccueilStackNav.Navigator screenOptions={{ headerShown: false }}>
       <AccueilStackNav.Screen name="AccueilHome" component={AccueilScreen} />
       <AccueilStackNav.Screen name="ShareToCompetition" component={ShareToCompetitionScreen} />
-      <AccueilStackNav.Screen name="CreateCompetition" component={CreateCompetitionScreen} />
       <AccueilStackNav.Screen name="Competition" component={CompetitionScreen} />
-      <AccueilStackNav.Screen name="JoinCompetition" component={JoinCompetitionScreen} />
     </AccueilStackNav.Navigator>
+  );
+}
+
+// Onglet "🏆 Compétitions" (nouveau, décision D2) : liste des ligues, création,
+// détail (classement/galerie/chat), rejoindre via lien d'invitation.
+function CompetitionsStack() {
+  return (
+    <CompetitionsStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <CompetitionsStackNav.Screen name="CompetitionsHome" component={CompetitionsListScreen} />
+      <CompetitionsStackNav.Screen name="CreateCompetition" component={CreateCompetitionScreen} />
+      <CompetitionsStackNav.Screen name="Competition" component={CompetitionScreen} />
+      <CompetitionsStackNav.Screen name="JoinCompetition" component={JoinCompetitionScreen} />
+    </CompetitionsStackNav.Navigator>
+  );
+}
+
+// Onglet "🧭 Découvrir" (ex-Feed) : contenu Feed inchangé + Palmarès (décision
+// D3). Le nom de route reste "Feed" pour ne pas casser ShareToCompetitionScreen
+// (navigation.navigate('Feed')) — seul le libellé affiché change (tabBarLabel).
+function DecouvrirStack() {
+  return (
+    <DecouvrirStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <DecouvrirStackNav.Screen name="Feed" component={FeedScreen} />
+      <DecouvrirStackNav.Screen name="Palmares" component={PalmaresScreen} />
+    </DecouvrirStackNav.Navigator>
   );
 }
 
@@ -143,18 +176,30 @@ function ThemedNavigator({ userId }) {
           component={AccueilStack}
           options={{
             headerShown: false,
+            tabBarLabel: 'Analyse',
             tabBarIcon: ({ color, focused }) => (
               <TabIconPill name="sparkles-outline" focused={focused} color={color} accent={theme.accent} />
             ),
           }}
         />
         <Tab.Screen
-          name="Feed"
-          component={FeedScreen}
+          name="Compétitions"
+          component={CompetitionsStack}
           options={{
             headerShown: false,
             tabBarIcon: ({ color, focused }) => (
-              <TabIconPill name="home-outline" focused={focused} color={color} accent={theme.accent} />
+              <TabIconPill name="trophy-outline" focused={focused} color={color} accent={theme.accent} />
+            ),
+          }}
+        />
+        <Tab.Screen
+          name="Feed"
+          component={DecouvrirStack}
+          options={{
+            headerShown: false,
+            tabBarLabel: 'Découvrir',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIconPill name="compass-outline" focused={focused} color={color} accent={theme.accent} />
             ),
           }}
         />
@@ -232,7 +277,7 @@ export default function App() {
           await AsyncStorage.removeItem(PENDING_JOIN_TOKEN_KEY);
           setTimeout(() => {
             if (navigationRef.isReady()) {
-              navigationRef.navigate('Accueil', { screen: 'JoinCompetition', params: { token: pendingToken } });
+              navigationRef.navigate('Compétitions', { screen: 'JoinCompetition', params: { token: pendingToken } });
             }
           }, 400);
         }
@@ -299,7 +344,7 @@ export default function App() {
       if (event.data?.type !== 'deep-link') return;
       const token = joinCompetitionTokenFromUrl(event.data.url || '');
       if (token && navigationRef.isReady()) {
-        navigationRef.navigate('Accueil', { screen: 'JoinCompetition', params: { token } });
+        navigationRef.navigate('Compétitions', { screen: 'JoinCompetition', params: { token } });
       }
     };
     navigator.serviceWorker.addEventListener('message', handler);

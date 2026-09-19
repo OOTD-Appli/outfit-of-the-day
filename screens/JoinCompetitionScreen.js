@@ -61,7 +61,7 @@ export default function JoinCompetitionScreen({ route, navigation }) {
       <SafeAreaView style={[styles.safe, { backgroundColor: theme.bg, alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
         <Ionicons name="alert-circle-outline" size={40} color={theme.textSub} />
         <Text style={[styles.errorText, { color: theme.textPri }]}>{error}</Text>
-        <TouchableOpacity style={[styles.btn, { backgroundColor: theme.accent, marginTop: 20 }]} onPress={() => navigation.navigate('AccueilHome')}>
+        <TouchableOpacity style={[styles.btn, { backgroundColor: theme.accent, marginTop: 20 }]} onPress={() => navigation.navigate('Accueil', { screen: 'AccueilHome' })}>
           <Text style={styles.btnText}>Retourner à l'accueil</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -79,7 +79,7 @@ export default function JoinCompetitionScreen({ route, navigation }) {
         <TouchableOpacity style={[styles.btn, { backgroundColor: theme.accent, marginTop: 24 }]} onPress={join}>
           <Text style={styles.btnText}>Rejoindre</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={{ marginTop: 14 }} onPress={() => navigation.navigate('AccueilHome')}>
+        <TouchableOpacity style={{ marginTop: 14 }} onPress={() => navigation.navigate('Accueil', { screen: 'AccueilHome' })}>
           <Text style={{ color: theme.textSub, fontSize: 13.5 }}>Pas maintenant</Text>
         </TouchableOpacity>
       </View>

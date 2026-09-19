@@ -10,7 +10,7 @@ import { Audio } from 'expo-av';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import FeedCommentsModal from '../components/FeedCommentsModal';
@@ -300,6 +300,7 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
 
 /* ── FeedScreen ── */
 export default function FeedScreen() {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { width: ww } = useWindowDimensions();
   const [pageH, setPageH] = useState(0);
@@ -694,6 +695,9 @@ export default function FeedScreen() {
               <Text style={[styles.tabText, feedTab === 'pourtoi' && styles.tabTextActive, feedTab === 'pourtoi' && { color: theme.accent }]}>POUR TOI</Text>
               {feedTab === 'pourtoi' && <View style={[styles.tabUnderline, { backgroundColor: theme.accent }]} />}
             </TouchableOpacity>
+            <TouchableOpacity style={styles.palmaresBtn} onPress={() => navigation.navigate('Palmares')}>
+              <Feather name="award" size={20} color="rgba(255,255,255,0.85)" />
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.notesBtn}
               onPress={() => setShowNotes(p => !p)}
@@ -950,6 +954,7 @@ const styles = StyleSheet.create({
   tabUnderline: { height: 2.5, width: '100%', borderRadius: 2, marginTop: 4 },
   searchBtn: { position: 'absolute', right: 16, bottom: 12 },
   notesBtn: { position: 'absolute', right: 52, bottom: 12 },
+  palmaresBtn: { position: 'absolute', right: 88, bottom: 12 },
   searchBar: { position: 'absolute', left: 12, right: 12, zIndex: 15 },
   searchInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10 },
   searchInput: { flex: 1, color: '#fff', fontSize: 14, paddingVertical: 2 },

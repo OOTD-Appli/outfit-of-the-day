@@ -208,9 +208,8 @@ export default function AccueilScreen({ navigation }) {
   const [highScoreReminder, setHighScoreReminder] = useState(null); // { note } | null
   const [showLowCreditsReminder, setShowLowCreditsReminder] = useState(false);
   const [topOotds, setTopOotds] = useState([]);
-  // Compétitions
-  const [competitions, setCompetitions] = useState([]);
-  const [competitionsLoading, setCompetitionsLoading] = useState(true);
+  // Compétitions — résumé compact seulement (la liste complète vit dans l'onglet Compétitions)
+  const [competitionsSummary, setCompetitionsSummary] = useState({ count: 0, unread: 0 });
   const [outfitCrop, setOutfitCrop] = useState({ visible: false, uri: null });
   // Caméra in-app (native uniquement — web garde le fallback file-input)
   const [inAppCamera, setInAppCamera] = useState({ visible: false, mode: 'photo' });
@@ -273,32 +272,36 @@ export default function AccueilScreen({ navigation }) {
     setCredits(effective);
   }, []);
 
-  const fetchCompetitions = useCallback(async () => {
-    setCompetitionsLoading(true);
+  // Résumé compact (nombre de ligues actives + total messages non lus) — deux
+  // requêtes de comptage légères (head: true), pas de fetch de la liste complète
+  // (celle-ci vit désormais dans CompetitionsListScreen).
+  const fetchCompetitionsSummary = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data, error } = await supabase
+      const { count } = await supabase
         .from('competition_members')
-        .select('last_read_at, competitions(id, name, created_at)')
-        .eq('user_id', user.id)
-        .order('created_at', { foreignTable: 'competitions', ascending: false });
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+      const { data: memberRows, error } = await supabase
+        .from('competition_members')
+        .select('competition_id, last_read_at')
+        .eq('user_id', user.id);
       if (error) throw error;
-      const rows = (data || []).filter(r => r.competitions);
-      const withUnread = await Promise.all(rows.map(async (r) => {
-        const { count } = await supabase
+      const unreadCounts = await Promise.all((memberRows || []).map(async (r) => {
+        const { count: unreadCount } = await supabase
           .from('competition_messages')
           .select('*', { count: 'exact', head: true })
-          .eq('competition_id', r.competitions.id)
+          .eq('competition_id', r.competition_id)
           .gt('created_at', r.last_read_at)
           .neq('sender_id', user.id);
-        return { ...r.competitions, unread: count || 0 };
+        return unreadCount || 0;
       }));
-      setCompetitions(withUnread);
+      const unread = unreadCounts.reduce((sum, c) => sum + c, 0);
+      setCompetitionsSummary({ count: count || 0, unread });
     } catch (_) {
-      // silencieux : la liste des compétitions n'est pas critique au chargement
+      // silencieux : le bandeau compétitions n'est pas critique au chargement
     }
-    setCompetitionsLoading(false);
   }, []);
 
   const fetchTopOotds = useCallback(async () => {
@@ -346,8 +349,8 @@ export default function AccueilScreen({ navigation }) {
   useFocusEffect(useCallback(() => {
     fetchCredits();
     fetchTopOotds();
-    fetchCompetitions();
-  }, [fetchCredits, fetchTopOotds, fetchCompetitions]));
+    fetchCompetitionsSummary();
+  }, [fetchCredits, fetchTopOotds, fetchCompetitionsSummary]));
 
   const searchMusic = (query) => {
     setMusicPicker(prev => ({ ...prev, query }));
@@ -842,48 +845,19 @@ export default function AccueilScreen({ navigation }) {
           </Animated.View>
         )}
 
-        {/* ===== MES COMPÉTITIONS (toujours visible en scrollant) ===== */}
+        {/* ===== COMPÉTITIONS — bandeau compact (liste complète dans l'onglet Compétitions) ===== */}
         <View style={s.storiesSection}>
-          <View style={s.storiesSectionHeader}>
-            <Ionicons name="trophy-outline" size={16} color={ACCENT} />
-            <Text style={s.storiesSectionTitle}>Mes compétitions</Text>
-          </View>
-
-          {competitionsLoading ? (
-            <ActivityIndicator color={ACCENT} style={{ marginVertical: 12 }} />
-          ) : competitions.length === 0 ? (
-            <Text style={{ color: TEXT_SEC, fontSize: 13, marginBottom: 10 }}>
-              Aucune compétition pour l'instant.
-            </Text>
-          ) : (
-            competitions.map((c) => (
-              <TouchableOpacity
-                key={c.id}
-                style={s.competitionRow}
-                activeOpacity={0.85}
-                onPress={() => navigation.navigate('Competition', { competitionId: c.id, competitionName: c.name })}
-              >
-                <View style={s.competitionIconWrap}>
-                  <Ionicons name="people" size={18} color={ACCENT} />
-                </View>
-                <Text style={s.competitionName} numberOfLines={1}>{c.name}</Text>
-                {c.unread > 0 && (
-                  <View style={s.competitionUnreadDot}>
-                    <Text style={s.competitionUnreadText}>{c.unread > 9 ? '9+' : c.unread}</Text>
-                  </View>
-                )}
-                <Ionicons name="chevron-forward" size={18} color={TEXT_SEC} />
-              </TouchableOpacity>
-            ))
-          )}
-
           <TouchableOpacity
-            style={s.createCompetitionBtn}
+            style={s.competitionsBanner}
             activeOpacity={0.85}
-            onPress={() => navigation.navigate('CreateCompetition')}
+            onPress={() => navigation.navigate('Compétitions')}
           >
-            <Ionicons name="add-circle-outline" size={18} color={ACCENT} />
-            <Text style={s.createCompetitionText}>Créer une compétition</Text>
+            <Ionicons name="trophy-outline" size={18} color={ACCENT} />
+            <Text style={s.competitionsBannerText} numberOfLines={1}>
+              {competitionsSummary.count === 0
+                ? "Aucune compétition pour l'instant · Découvrir →"
+                : `${competitionsSummary.count} ligue${competitionsSummary.count > 1 ? 's' : ''} active${competitionsSummary.count > 1 ? 's' : ''} · ${competitionsSummary.unread} nouveau${competitionsSummary.unread > 1 ? 'x' : ''} message${competitionsSummary.unread > 1 ? 's' : ''} →`}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -1174,16 +1148,13 @@ function createStyles(theme) {
 
   /* Section Stories */
   storiesSection:    { marginTop: 28, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: BRD_T },
-  storiesSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
-  storiesSectionTitle:  { fontWeight: '800', fontSize: 17, color: PRI_T, flex: 1 },
 
-  /* Section Compétitions */
-  competitionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: CARD_T, borderRadius: 16, borderWidth: 1, borderColor: BRD_T, padding: 14, marginBottom: 10 },
-  competitionIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT + '1A', alignItems: 'center', justifyContent: 'center' },
-  competitionName: { flex: 1, fontWeight: '700', fontSize: 14.5, color: PRI_T },
-  competitionUnreadDot: { backgroundColor: ACCENT, borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
-  competitionUnreadText: { color: '#fff', fontSize: 10.5, fontWeight: '800' },
-  createCompetitionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: ACCENT, borderRadius: 16, paddingVertical: 13, marginTop: 4 },
-  createCompetitionText: { color: ACCENT, fontWeight: '800', fontSize: 14 },
+  /* Bandeau Compétitions (résumé compact — liste complète dans l'onglet Compétitions) */
+  competitionsBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: CARD_T, borderRadius: 16, borderWidth: 1, borderColor: BRD_T,
+    paddingVertical: 14, paddingHorizontal: 16,
+  },
+  competitionsBannerText: { flex: 1, fontWeight: '700', fontSize: 13.5, color: PRI_T },
   });
 }

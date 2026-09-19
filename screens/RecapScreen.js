@@ -6,6 +6,7 @@ import {
   useWindowDimensions, Modal, Alert, Platform,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
+import Svg, { Polyline, Circle } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -124,8 +125,7 @@ export default function RecapScreen() {
   const [profile, setProfile] = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [ootds, setOotds] = useState([]);
-  const [top3App, setTop3App] = useState([]);
-  const [top3Friends, setTop3Friends] = useState([]);
+  const [graphRange, setGraphRange] = useState(30); // 7 ou 30 jours — graphique perso "Mon évolution"
   const [loading, setLoading] = useState(true);
   const { width: ww, height: wh } = useWindowDimensions();
   const avatarSize = Math.min(Math.round(ww * 0.22), 90);
@@ -246,20 +246,10 @@ export default function RecapScreen() {
     setLoadingMoreOotds(false);
   }, [loadingMoreOotds, profile?.id]);
 
-  const fetchTop3 = useCallback(async () => {
-    const [{ data: app }, { data: friends }] = await Promise.all([
-      supabase.rpc('get_top3_app'),
-      supabase.rpc('get_top3_friends'),
-    ]);
-    setTop3App(app || []);
-    setTop3Friends(friends || []);
-  }, []);
-
   useFocusEffect(
     useCallback(() => {
       fetchProfil();
-      fetchTop3();
-    }, [fetchProfil, fetchTop3])
+    }, [fetchProfil])
   );
 
   const handleLogout = async () => {
@@ -456,6 +446,35 @@ export default function RecapScreen() {
       )
     : '-';
 
+  // Graphique perso "Mon évolution" : dérivé du state `ootds` déjà chargé (jusqu'à 21 tenues
+  // les plus récentes), pas de requête réseau dédiée. Peut donc ne pas couvrir 30 jours pleins
+  // si l'utilisateur publie plus de 21 fois sur la période — acceptable pour cette V1.
+  // Même normalisation 0-100 que moyenneScore ci-dessus, pour ne pas mélanger les échelles
+  // historiques (score_scale=10 vs 100).
+  const graphWidth = Math.max(0, ww - 64); // largeur carte (marge 16 + padding 16 de chaque côté)
+  const graphHeight = 120;
+  const graphData = (() => {
+    const now = Date.now();
+    const rangeMs = graphRange * 24 * 60 * 60 * 1000;
+    return ootds
+      .filter(o => o.created_at && now - new Date(o.created_at).getTime() <= rangeMs)
+      .map(o => ({
+        date: new Date(o.created_at).getTime(),
+        score: (o.score_global / (o.score_scale || 100)) * 100,
+      }))
+      .sort((a, b) => a.date - b.date);
+  })();
+  const graphPoints = (() => {
+    if (graphData.length < 2) return [];
+    const minDate = graphData[0].date;
+    const maxDate = graphData[graphData.length - 1].date;
+    const span = maxDate - minDate || 1;
+    return graphData.map(d => ({
+      x: ((d.date - minDate) / span) * graphWidth,
+      y: graphHeight - (Math.max(0, Math.min(100, d.score)) / 100) * graphHeight,
+    }));
+  })();
+
   const levelInfo = computeLevelInfo(profile?.points || 0);
   const logoConfig = getLogoConfig(profile?.active_logo);
   const subActive = subscription && ['active', 'trialing'].includes(subscription.status);
@@ -647,48 +666,52 @@ export default function RecapScreen() {
               </TouchableOpacity>
             </View>
 
-            {(top3App.length > 0 || top3Friends.length > 0) && (
-              <View style={styles.top3Section}>
-                {top3App.length > 0 && (
-                  <View style={styles.top3Block}>
-                    <Text style={[styles.top3Title, { color: theme.textPri }]}>🏆 Top 3 de la semaine</Text>
-                    {top3App.map((row, i) => (
-                      <View key={row.user_id} style={[styles.top3Row, { backgroundColor: theme.card }]}>
-                        <Text style={[styles.top3Rank, { color: theme.accent }]}>{i + 1}</Text>
-                        {row.avatar_url ? (
-                          <ExpoImage source={{ uri: row.avatar_url }} style={styles.top3Avatar} contentFit="cover" />
-                        ) : (
-                          <View style={[styles.top3Avatar, { backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center' }]}>
-                            <Text style={{ color: '#fff', fontWeight: '700' }}>{row.username?.[0]?.toUpperCase() || '?'}</Text>
-                          </View>
-                        )}
-                        <Text style={[styles.top3Name, { color: theme.textPri }]} numberOfLines={1}>{row.username}</Text>
-                        <Text style={[styles.top3Score, { color: theme.accent }]}>{fmtNote(row.best_score)}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-                {top3Friends.length > 0 && (
-                  <View style={styles.top3Block}>
-                    <Text style={[styles.top3Title, { color: theme.textPri }]}>👯 Top 3 entre amis</Text>
-                    {top3Friends.map((row, i) => (
-                      <View key={row.user_id} style={[styles.top3Row, { backgroundColor: theme.card }]}>
-                        <Text style={[styles.top3Rank, { color: theme.accent }]}>{i + 1}</Text>
-                        {row.avatar_url ? (
-                          <ExpoImage source={{ uri: row.avatar_url }} style={styles.top3Avatar} contentFit="cover" />
-                        ) : (
-                          <View style={[styles.top3Avatar, { backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center' }]}>
-                            <Text style={{ color: '#fff', fontWeight: '700' }}>{row.username?.[0]?.toUpperCase() || '?'}</Text>
-                          </View>
-                        )}
-                        <Text style={[styles.top3Name, { color: theme.textPri }]} numberOfLines={1}>{row.username}</Text>
-                        <Text style={[styles.top3Score, { color: theme.accent }]}>{fmtNote(row.best_score)}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
+            <View style={[styles.graphCard, { backgroundColor: theme.card }]}>
+              <View style={styles.graphHeaderRow}>
+                <Text style={[styles.graphTitle, { color: theme.textPri }]}>Mon évolution</Text>
+                <View style={styles.graphSegmentRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.graphSegmentBtn,
+                      { borderColor: theme.accent },
+                      graphRange === 7 && { backgroundColor: theme.accent },
+                    ]}
+                    onPress={() => setGraphRange(7)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.graphSegmentText, { color: graphRange === 7 ? '#fff' : theme.accent }]}>7 jours</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.graphSegmentBtn,
+                      { borderColor: theme.accent },
+                      graphRange === 30 && { backgroundColor: theme.accent },
+                    ]}
+                    onPress={() => setGraphRange(30)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.graphSegmentText, { color: graphRange === 30 ? '#fff' : theme.accent }]}>30 jours</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            )}
+              {graphPoints.length < 2 ? (
+                <Text style={[styles.graphEmptyText, { color: theme.textSub }]}>
+                  Pas encore assez de données pour un graphique.
+                </Text>
+              ) : (
+                <Svg width={graphWidth} height={graphHeight}>
+                  <Polyline
+                    points={graphPoints.map(p => `${p.x},${p.y}`).join(' ')}
+                    fill="none"
+                    stroke={theme.accent}
+                    strokeWidth={2}
+                  />
+                  {graphPoints.map((p, i) => (
+                    <Circle key={i} cx={p.x} cy={p.y} r={3.5} fill={theme.accent} />
+                  ))}
+                </Svg>
+              )}
+            </View>
 
             <Text style={[styles.galerieTitle, { color: theme.textPri }]}>Mes tenues</Text>
           </View>
@@ -1068,6 +1091,14 @@ const styles = StyleSheet.create({
   actionBtnText:  { fontWeight: '800', fontSize: 12.5 },
 
   galerieTitle:   { fontWeight: '700', fontSize: 16, padding: 16, paddingBottom: 8 },
+
+  graphCard:        { margin: 16, marginTop: 0, borderRadius: 16, padding: 16 },
+  graphHeaderRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  graphTitle:       { fontWeight: '700', fontSize: 15 },
+  graphSegmentRow:  { flexDirection: 'row', gap: 6 },
+  graphSegmentBtn:  { borderRadius: 10, borderWidth: 1.5, paddingHorizontal: 10, paddingVertical: 5 },
+  graphSegmentText: { fontWeight: '800', fontSize: 11.5 },
+  graphEmptyText:   { fontSize: 13, textAlign: 'center', paddingVertical: 20 },
 
   top3Section:    { paddingHorizontal: 16, gap: 16, marginTop: 4 },
   top3Block:      { gap: 8 },

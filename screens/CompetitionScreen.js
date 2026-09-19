@@ -15,16 +15,27 @@ import Avatar from '../components/Avatar';
 
 const GALLERY_PAGE = 24;
 
-// Galerie (tenues soumises par les membres) + chat de groupe. V1 volontairement
-// plus simple que l'ancien FlammesScreen 1-à-1 : pas d'audio, pas de
-// swipe-to-reply, pas d'indicateur de frappe — ajoutables plus tard sans
-// changer le modèle de données.
+const RANKING_PERIODS = [
+  { key: 'day', label: 'Jour' },
+  { key: 'week', label: 'Semaine' },
+  { key: 'month', label: 'Mois' },
+  { key: 'all', label: 'Depuis toujours' },
+];
+
+// Classement (raison d'être de l'écran) + galerie (tenues soumises par les
+// membres) + chat de groupe. V1 volontairement plus simple que l'ancien
+// FlammesScreen 1-à-1 : pas d'audio, pas de swipe-to-reply, pas d'indicateur
+// de frappe — ajoutables plus tard sans changer le modèle de données.
 export default function CompetitionScreen({ route, navigation }) {
   const { competitionId, competitionName } = route.params || {};
   const { theme } = useTheme();
   const { showToast } = useToast();
   const [userId, setUserId] = useState(null);
-  const [tab, setTab] = useState('gallery'); // 'gallery' | 'chat'
+  const [tab, setTab] = useState('ranking'); // 'ranking' | 'gallery' | 'chat'
+
+  const [ranking, setRanking] = useState(null);
+  const [rankingLoading, setRankingLoading] = useState(true);
+  const [period, setPeriod] = useState('week'); // 'day' | 'week' | 'month' | 'all'
 
   const [gallery, setGallery] = useState([]);
   const [galleryLoading, setGalleryLoading] = useState(true);
@@ -45,6 +56,17 @@ export default function CompetitionScreen({ route, navigation }) {
     setActiveCompetition(competitionId);
     return () => setActiveCompetition(null);
   }, [competitionId]);
+
+  const loadRanking = useCallback(async () => {
+    setRankingLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('get_competition_leaderboard', { p_competition_id: competitionId, p_period: period });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'Erreur classement');
+      setRanking(data);
+    } catch (e) { showToast(e?.message || 'Erreur classement', { type: 'error' }); }
+    setRankingLoading(false);
+  }, [competitionId, period, showToast]);
 
   const loadGallery = useCallback(async () => {
     setGalleryLoading(true);
@@ -83,6 +105,7 @@ export default function CompetitionScreen({ route, navigation }) {
     setMessagesLoading(false);
   }, [competitionId, showToast]);
 
+  useEffect(() => { loadRanking(); }, [loadRanking]);
   useEffect(() => { loadGallery(); }, [loadGallery]);
   useEffect(() => { loadMessages(); }, [loadMessages]);
 
@@ -199,6 +222,35 @@ export default function CompetitionScreen({ route, navigation }) {
     }
   };
 
+  const renderRankingItem = ({ item, index }) => {
+    const mine = item.user_id === userId;
+    const rank = index + 1;
+    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null;
+    return (
+      <View
+        style={[
+          styles.rankingRow,
+          { borderColor: theme.border },
+          mine && { backgroundColor: `${theme.accent}1A`, borderColor: theme.accent },
+        ]}
+      >
+        <Text style={[styles.rankingRank, { color: theme.textPri }]}>{medal || rank}</Text>
+        <Avatar uri={item.avatar_url} username={item.username} size={36} />
+        <Text style={[styles.rankingUsername, { color: theme.textPri }]} numberOfLines={1}>
+          {item.username || '?'}
+        </Text>
+        <Text style={[styles.rankingScore, { color: theme.textPri }]}>
+          {item.best_score != null ? Math.round(item.best_score) : '—'}
+        </Text>
+        {item.streak_count > 0 && (
+          <View style={styles.rankingStreakBadge}>
+            <Text style={styles.rankingStreakText}>🔥{item.streak_count}</Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const renderGalleryItem = ({ item }) => (
     <View style={styles.galleryItem}>
       <ExpoImage source={{ uri: item.ootds.image_url }} style={styles.galleryImage} contentFit="cover" />
@@ -247,6 +299,9 @@ export default function CompetitionScreen({ route, navigation }) {
       </View>
 
       <View style={[styles.tabs, { borderBottomColor: theme.border }]}>
+        <TouchableOpacity style={styles.tabBtn} onPress={() => setTab('ranking')}>
+          <Text style={[styles.tabText, { color: tab === 'ranking' ? theme.accent : theme.textSub }]}>Classement</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.tabBtn} onPress={() => setTab('gallery')}>
           <Text style={[styles.tabText, { color: tab === 'gallery' ? theme.accent : theme.textSub }]}>Galerie</Text>
         </TouchableOpacity>
@@ -255,7 +310,62 @@ export default function CompetitionScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      {tab === 'gallery' ? (
+      {tab === 'ranking' ? (
+        <View style={{ flex: 1 }}>
+          <View style={styles.periodRow}>
+            {RANKING_PERIODS.map((p) => (
+              <TouchableOpacity
+                key={p.key}
+                style={[
+                  styles.periodPill,
+                  { borderColor: theme.border },
+                  period === p.key && { backgroundColor: theme.accent, borderColor: theme.accent },
+                ]}
+                onPress={() => setPeriod(p.key)}
+              >
+                <Text style={[styles.periodPillText, { color: period === p.key ? '#fff' : theme.textSub }]}>{p.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {rankingLoading ? (
+            <ActivityIndicator color={theme.accent} style={{ marginTop: 40 }} />
+          ) : (
+            <FlatList
+              data={ranking?.ranking || []}
+              keyExtractor={(item) => item.user_id}
+              renderItem={renderRankingItem}
+              contentContainerStyle={styles.rankingList}
+              ListEmptyComponent={<Text style={[styles.empty, { color: theme.textSub }]}>Aucun classement pour l'instant.</Text>}
+              ListFooterComponent={
+                <>
+                  {ranking?.most_regular && (
+                    <View style={[styles.rankingHighlightBox, { borderColor: theme.border }]}>
+                      <Text style={[styles.rankingHighlightText, { color: theme.textPri }]}>
+                        🎯 Le plus régulier : {ranking.most_regular.username} · {ranking.most_regular.streak_count} jours
+                      </Text>
+                    </View>
+                  )}
+                  {ranking?.most_improved && (
+                    <View style={[styles.rankingHighlightBox, { borderColor: theme.border }]}>
+                      <Text style={[styles.rankingHighlightText, { color: theme.textPri }]}>
+                        📈 Progression : {ranking.most_improved.username} · +{ranking.most_improved.delta} pts
+                      </Text>
+                    </View>
+                  )}
+                  {ranking?.most_liked && (
+                    <View style={[styles.rankingHighlightBox, styles.rankingHighlightRow, { borderColor: theme.border }]}>
+                      <Text style={[styles.rankingHighlightText, { color: theme.textPri }]}>
+                        ❤️ Coup de cœur : {ranking.most_liked.username}
+                      </Text>
+                      <ExpoImage source={{ uri: ranking.most_liked.image_url }} style={styles.rankingLikedThumb} contentFit="cover" />
+                    </View>
+                  )}
+                </>
+              }
+            />
+          )}
+        </View>
+      ) : tab === 'gallery' ? (
         <>
           <TouchableOpacity style={styles.sortBtn} onPress={() => setSortByScore(v => !v)}>
             <Text style={[styles.sortText, { color: theme.textSub }]}>
@@ -318,6 +428,20 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth },
   tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
   tabText: { fontWeight: '700', fontSize: 13.5 },
+  periodRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
+  periodPill: { flex: 1, paddingVertical: 8, borderRadius: 20, borderWidth: 1, alignItems: 'center' },
+  periodPillText: { fontSize: 11.5, fontWeight: '700' },
+  rankingList: { padding: 12, gap: 8 },
+  rankingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth },
+  rankingRank: { width: 26, textAlign: 'center', fontSize: 15, fontWeight: '800' },
+  rankingUsername: { flex: 1, fontSize: 14, fontWeight: '600' },
+  rankingScore: { fontSize: 15, fontWeight: '800', marginLeft: 6 },
+  rankingStreakBadge: { marginLeft: 8, backgroundColor: '#FF6B0022', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
+  rankingStreakText: { fontSize: 11, fontWeight: '700', color: '#FF6B00' },
+  rankingHighlightBox: { marginHorizontal: 4, marginTop: 8, padding: 10, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth },
+  rankingHighlightRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  rankingHighlightText: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  rankingLikedThumb: { width: 40, height: 40, borderRadius: 8 },
   sortBtn: { alignSelf: 'flex-end', paddingHorizontal: 16, paddingTop: 10 },
   sortText: { fontSize: 12, fontWeight: '600' },
   galleryList: { padding: 8 },
