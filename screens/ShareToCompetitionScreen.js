@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, Switch,
   ActivityIndicator, Image,
@@ -22,21 +22,33 @@ export default function ShareToCompetitionScreen({ navigation }) {
   const [competitions, setCompetitions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(new Set());
+  // Défaut aligné sur la confidentialité du compte (compte public → publié par
+  // défaut dans le Feed, compte privé → non publié par défaut) — ajusté dès
+  // que profiles.is_private est connu (voir loadCompetitions ci-dessous).
+  // userToggledPublicRef évite d'écraser un choix manuel si l'utilisateur
+  // touche le switch avant que ce fetch n'ait fini de répondre.
   const [makePublic, setMakePublic] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const userToggledPublicRef = useRef(false);
 
   const loadCompetitions = useCallback(async () => {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data, error } = await supabase
-        .from('competition_members')
-        .select('competitions(id, name, created_at)')
-        .eq('user_id', user.id)
-        .order('created_at', { foreignTable: 'competitions', ascending: false });
+      const [{ data, error }, { data: profile }] = await Promise.all([
+        supabase
+          .from('competition_members')
+          .select('competitions(id, name, created_at)')
+          .eq('user_id', user.id)
+          .order('created_at', { foreignTable: 'competitions', ascending: false }),
+        supabase.from('profiles').select('is_private').eq('id', user.id).single(),
+      ]);
       if (error) throw error;
       setCompetitions((data || []).map(r => r.competitions).filter(Boolean));
+      if (!userToggledPublicRef.current) {
+        setMakePublic(!profile?.is_private);
+      }
     } catch (e) {
       showToast(e?.message || 'Erreur chargement compétitions', { type: 'error' });
     }
@@ -135,7 +147,7 @@ export default function ShareToCompetitionScreen({ navigation }) {
               </View>
               <Switch
                 value={makePublic}
-                onValueChange={setMakePublic}
+                onValueChange={(v) => { userToggledPublicRef.current = true; setMakePublic(v); }}
                 trackColor={{ false: '#555', true: theme.accent + '88' }}
                 thumbColor={makePublic ? theme.accent : '#888'}
               />
