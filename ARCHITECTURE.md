@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Référence technique OOTD
 
-> Dernière mise à jour : 2026-09-25 (Compétitions v2 — décisions D1-D6 : classement par ligue, Palmarès, streak par compétition, navigation 4 onglets)
+> Dernière mise à jour : 2026-09-27 (écran Compétition réécrit selon la maquette v4 "gestes séparés")
 
 ## Vue d'ensemble
 
@@ -209,27 +209,30 @@ Racine de l'onglet Compétitions. Reprend fidèlement l'ancien fetch d'`AccueilS
 ### PalmaresScreen (`screens/PalmaresScreen.js`) — nouveau (2026-09-25, décision D3)
 Remplace un chat public global envisagé puis écarté (risque de modération/harcèlement sur une app qui note l'apparence). Accessible depuis le Feed via l'icône trophée. Sélecteur Semaine/Mois → `get_top3_app`/`get_top3_friends` (désormais paramétrées par `p_period`). Rendu : podium simplifié (liste + médailles 🥇🥈🥉, pas d'étagères) pour Top 3 app et Top 3 amis, plus un petit graphique en barres SVG (`react-native-svg`, même bibliothèque que `components/Gauge.js`) des scores du Top 3 app, barre de l'utilisateur courant mise en évidence.
 
-### CompetitionScreen (`screens/CompetitionScreen.js`)
-Reçoit `{ route: { params: { competitionId, competitionName } }, navigation }`. **Trois onglets internes** (`tab` state, `'ranking' | 'gallery' | 'chat'`, Classement en premier — "raison d'être de l'écran", décision D1) :
+### CompetitionScreen (`screens/CompetitionScreen.js`) — réécrit 2026-09-27 ("maquette v4, gestes séparés")
+Reçoit `{ route: { params: { competitionId, competitionName } }, navigation }`. **Deux pages glissables** (pas des onglets React Navigation — un pager maison à base de `PanResponder`/`Animated`, `panelIndex` 0|1) : **Photos & chat** puis **Classement**, permutables via les boutons du switcher ou un glissement horizontal de toute la page (seuil 20% de la largeur, rubber-band aux bords, désactivé quand le viewer plein écran est ouvert).
 
-**Classement** (2026-09-25, décisions D1/D5)
-- `get_competition_leaderboard(p_competition_id, p_period)` RPC — sélecteur de période (Jour/Semaine/Mois/Depuis toujours, state `period`)
-- Liste classée (médailles 🥇🥈🥉 pour les 3 premiers, sinon rang numérique), score ou `—` si aucune soumission sur la période, badge 🔥`streak_count` si >0, ligne de l'utilisateur courant mise en évidence
-- 3 blocs secondaires en pied de liste (`ListFooterComponent`) — pour ne pas toujours récompenser le même meilleur score : 🎯 **Régularité** (`most_regular`, plus grand `streak_count`), 📈 **Progression** (`most_improved`, plus grand delta de moyenne vs. la période précédente de même durée), ❤️ **Coup de cœur** (`most_liked`, tenue la plus likée de la période dans cette compétition)
+> Écran à **palette fixe** (`const C = {...}` en tête de fichier, sombre, couleurs reprises 1:1 de la maquette HTML validée par l'utilisateur) — volontairement indépendant de `useTheme()`/du thème clair-sombre du reste de l'app, décision assumée pour préserver le rendu exact de la maquette.
 
-**Galerie**
-- `ootd_competitions` joint `ootds(id, image_url, score_global, caption, styles, user_id, profiles(username, avatar_url))`, filtré `competition_id`
-- Tri par date (défaut) ou par score (`sortByScore`) — **`.order('score_global', { foreignTable: 'ootds', ascending: false })`**, jamais `.order('ootds(score_global)', ...)` : cette dernière syntaxe n'est pas supportée par supabase-js et échoue silencieusement (bug réel rencontré et corrigé le 2026-09-24, voir Post-mortems)
-- Grille 3 colonnes, badge score par vignette
+**Photos & chat**
+- *Tenues du jour* : une vignette par membre de la compétition (`competition_members` joint `profiles`, LEFT JOIN sur `ootd_competitions`/`ootds` filtré à la fenêtre du jour local via `getLocalDayIsoRange()`) — photo + score si posté aujourd'hui, avatar fantôme + "n'a pas encore posté" sinon. **Remplace l'ancienne galerie historique complète** (tri par date/score, tout l'historique) — voir Post-mortems / limitations si le besoin de parcourir l'historique remonte.
+- Tap sur une vignette (remplie ou vide) → **viewer plein écran** (`fsOpen` state, overlay absolu) : 4 directions à sens unique et axe verrouillé au premier mouvement (`Math.abs(dx) > Math.abs(dy)*1.15` → axe X, sinon Y) — gauche/droite change de membre (pager interne `fsTrackX`), bas dézoome+ferme (translateY/scale/opacity), haut ouvre un champ de réponse superposé à la photo (`fsReply`, envoi sans quitter le plein écran — le message part dans le chat avec `quoted_label = "Réponse à la tenue de <nom>"`, pas de `reply_to_id` car il n'y a pas de message existant à cibler).
+- Chat de groupe : table `competition_messages` (inchangée dans son rôle), liste **chronologique** (haut→bas, auto-scroll en bas via `onContentSizeChange`) — remplace l'ancienne `FlatList inverted`.
+  - **Swipe-to-reply** : glissement horizontal (droite uniquement, clampé à 64px) sur la ligne d'un message → ouvre la barre de réponse (bandeau au-dessus du champ de saisie), la citation (`reply_to_id`, résolue dynamiquement depuis les messages déjà chargés — jamais dupliquée en dur) s'affiche dans la nouvelle bulle envoyée.
+  - **Likes** (`competition_message_likes`, plusieurs personnes par message, compteur agrégé) via RPC `toggle_competition_message_like` — toggle atomique.
+  - **Réactions emoji** (`competition_message_reactions`, whitelist fermée de 5 emoji verrouillée aussi côté DB) via RPC `add_competition_message_reaction` — ajout uniquement en V1, pas de retrait.
+  - Soft-delete par appui long (RPC `delete_competition_message`, expéditeur uniquement) — inchangé.
+  - **Limitation connue** : likes/réactions ne se synchronisent pas en temps réel entre plusieurs appareils (seul l'auteur de l'action voit la mise à jour immédiate) — seuls les nouveaux messages restent temps réel via le channel Realtime existant.
+- Realtime : **un channel par compétition ouverte** (`competition-chat-<id>`, filtré `competition_id=eq.<id>`) — inchangé, voir Post-mortems.
+- Bouton "Ajouter" dans le header → génère un lien via `create_competition_invite` et l'envoie via `Share.share()` — inchangé (ex-icône, désormais un bouton pilule avec libellé, fidèle à la maquette).
 
-**Chat de groupe**
-- Table `competition_messages` (remplace `messages` pour ce contexte) — texte ou photo, pas de messages vocaux/swipe-to-reply en V1 (ajoutables plus tard sans changer le modèle de données)
-- Realtime : **un channel par compétition ouverte** (`competition-chat-<id>`, filtré `competition_id=eq.<id>`) — pas de channel global unique possible, les filtres `postgres_changes` de Supabase ne supportent que l'égalité simple, pas une liste de compétitions
-- Soft-delete par appui long (RPC `delete_competition_message`, expéditeur uniquement)
-- Pas d'accusé de lecture par message — juste un curseur `competition_members.last_read_at` mis à jour par `mark_competition_read` à l'ouverture, utilisé pour le badge non-lu d'`AccueilScreen`
-- Bouton "inviter" dans le header → génère un lien via `create_competition_invite` et l'envoie via `Share.share()`
+**Classement** (inchangé dans sa logique de données, décisions D1/D5 du 2026-09-25 — seul le rendu visuel a changé)
+- `get_competition_leaderboard(p_competition_id, p_period)` RPC — sélecteur de période (Jour/Semaine/Mois/Depuis toujours)
+- **Podium** (argent-or-bronze, 1er au centre en plus grand) : une place sans membre (compétition à moins de 3 membres) devient un CTA "Inviter" (→ `create_competition_invite`) plutôt qu'un membre fictif
+- **Classement complet** : tous les membres, rang/avatar/nom (+tag "Toi")/badge 🔥`streak_count` si >0/score ou `—`
+- **2 chips de reconnaissance** sous la liste : 🎯 Régularité (`most_regular`) et ❤️ Coup de cœur (`most_liked`) — `most_improved` (Progression) reste calculé côté RPC mais n'est plus affiché dans cette version de l'écran (la maquette validée ne montre que 2 chips) ; facile à réafficher si redemandé.
 
-`lib/activeChat.js` (`setActiveCompetition`/`getActiveCompetition`) retient la compétition dont le chat est ouvert.
+`lib/activeChat.js` (`setActiveCompetition`/`getActiveCompetition`) retient la compétition dont le chat est ouvert — inchangé.
 
 ### CreateCompetitionScreen (`screens/CreateCompetitionScreen.js`) — nouveau
 - Nom (1-60 caractères) **et** sélection multiple des membres en une fois, parmi les amis déjà acceptés (`friendships`, mêmes requêtes que `FriendsScreen`) — pas de lien à générer pour démarrer
@@ -490,6 +493,8 @@ Inchangées, voir `stripe-webhook`.
 | `submit_ootd_to_competitions(...)` | RPC atomique de publication (voir AccueilScreen Phase 5). Vérifie l'appartenance à **toutes** les compétitions ciblées avant d'insérer quoi que ce soit. `p_score_global` est un paramètre explicite passé par le client (pas recalculé en somme/moyenne dans la RPC) — le calcul du score reste la responsabilité de `analyze-outfit`. |
 | `delete_competition_message(p_id)` | Soft-delete, expéditeur uniquement, même pattern que l'ancien `delete_message`. |
 | `mark_competition_read(p_competition_id)` | Met à jour `competition_members.last_read_at` pour le membre courant. |
+| `toggle_competition_message_like(p_message_id)` — nouveau (2026-09-27) | Like/unlike atomique sur un message de chat (plusieurs personnes peuvent liker). Retourne `{ok, liked, like_count}`. Écriture RPC uniquement (pas de policy INSERT/DELETE directe sur `competition_message_likes`, sinon un membre pourrait liker au nom d'un autre `user_id`). |
+| `add_competition_message_reaction(p_message_id, p_emoji)` — nouveau (2026-09-27) | Ajoute une réaction emoji (whitelist fermée de 5 emoji, verrouillée aussi par une `CHECK` constraint sur `competition_message_reactions`). Idempotent (`ON CONFLICT DO NOTHING`), ajout uniquement en V1 — pas de RPC de retrait. |
 | `get_top3_app(p_period text DEFAULT 'week')` | Classement groupé par utilisateur (`MAX(score_global)`), filtré `is_public=true` et `profiles.is_private=false`. **Période paramétrable depuis 2026-09-25** (décision D5) : `'day'\|'week'\|'month'\|'all'`, défaut `'week'` = comportement identique à l'ancienne version 0-argument (les appelants pas encore mis à jour, ex. `RecapScreen` s'il l'appelait encore sans argument, gardent le même résultat). |
 | `get_top3_friends(p_period text DEFAULT 'week')` | Même requête/paramétrage, filtrée sur les amis acceptés (`friendships`) de l'appelant — **indépendant de l'appartenance à une compétition commune** (décision produit explicite). |
 | `get_competition_leaderboard(p_competition_id, p_period text DEFAULT 'week')` — nouveau (2026-09-25, D1/D3/D5) | Classement complet d'**une** compétition (pas seulement un Top 3 global) + 3 blocs secondaires. Revérifie elle-même l'appartenance en premier (`SECURITY DEFINER` contourne le RLS, donc `{ok:false,error:'Non membre'}` sinon — sans ça n'importe quel utilisateur authentifié pourrait lire le classement de n'importe quelle compétition en devinant son id). Retour : `{ok, ranking:[{user_id,username,avatar_url,best_score,streak_count}], most_regular, most_improved, most_liked}` (les 3 derniers `null` si personne ne qualifie). |
@@ -564,8 +569,13 @@ Table d'association `ootd_id` × `competition_id`, PK composite. **Dénormalise 
 | content, image_url | text | nullable, au moins un des deux (ou `is_deleted`) |
 | created_at | timestamptz | |
 | is_deleted | boolean DEFAULT false | Soft delete |
+| **reply_to_id** | uuid → competition_messages(id), nullable | **Nouveau (2026-09-27)** : réponse à un autre message (swipe-to-reply). Résolu dynamiquement côté client depuis les messages déjà chargés — jamais dupliqué en dur. |
+| **quoted_label** | text, nullable | **Nouveau (2026-09-27)** : citation en texte plat pour "répondre à une tenue" depuis le viewer plein écran (pas de message existant à cibler dans ce cas → pas de `reply_to_id` possible). Mutuellement exclusif avec `reply_to_id`. |
 
 RLS : SELECT/INSERT membres uniquement (`is_competition_member`). Realtime activé (`REPLICA IDENTITY FULL` + publication `supabase_realtime`).
+
+### `competition_message_likes` / `competition_message_reactions` — nouveau (2026-09-27)
+`competition_message_likes(message_id, user_id, created_at)`, PK `(message_id, user_id)` — un like par personne par message, compteur agrégé côté client. `competition_message_reactions(message_id, user_id, emoji, created_at)`, PK `(message_id, user_id, emoji)`, `CHECK (emoji IN ('😂','🔥','❤️','😮','👍'))` — whitelist fermée verrouillée aussi côté DB. RLS : SELECT membres de la compétition du message (via `is_competition_member`), **aucune policy INSERT/UPDATE/DELETE directe** — écriture uniquement via `toggle_competition_message_like`/`add_competition_message_reaction` (sinon un membre pourrait écrire au nom d'un autre `user_id`).
 
 ### `likes`, `comments`, `friendships`, `flammes`, `snaps`, `subscriptions`, `web_push_subscriptions`, `analyze_rate_limit`
 Inchangées structurellement. `friendships` reste actif (Top 3 amis, sélection de membres). `flammes`/`snaps` restent en base (non purgées) mais plus aucun code client n'écrit dedans.
@@ -594,6 +604,8 @@ Table, bucket Storage, trigger de nettoyage et job pg_cron `cleanup-expired-stor
 | **ootd_competitions** | membre | propriétaire ootd + membre | — | soi |
 | **competition_invites** | membre | — (RPC uniquement) | — | — (révocation via RPC) |
 | **competition_messages** | membre | sender + membre | — (RPC pour soft-delete) | — |
+| **competition_message_likes** | membre (via message→compétition) | — (RPC uniquement) | — | — (RPC toggle) |
+| **competition_message_reactions** | membre (via message→compétition) | — (RPC uniquement) | — | — |
 
 ---
 

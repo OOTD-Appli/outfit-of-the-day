@@ -1,6 +1,32 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-25 — Compétitions v2, décisions D1-D6 (classement, Palmarès, streak par ligue, navigation 4 onglets).
+> Dernière mise à jour : 2026-09-27 — Écran Compétition réécrit selon la maquette v4 "gestes séparés" (carrousel du jour, plein écran gestuel, swipe-to-reply, likes/réactions).
+
+---
+
+## Écran Compétition v4 "gestes séparés" — 2026-09-27
+
+D'après une maquette HTML itérée par l'utilisateur avec Claude (podium + classement, carrousel des tenues du jour, viewer plein écran à gestes directionnels séparés, chat de groupe avec swipe-to-reply/likes/réactions), reproduite fidèlement dans `CompetitionScreen.js`. Remplace la structure à 3 onglets (Classement/Galerie/Chat) livrée le 2026-09-25.
+
+**Backend** (`20260927120000_competition_chat_social.sql`)
+- [x] `competition_messages.reply_to_id` (FK auto-référente, réponse à un message) + `competition_messages.quoted_label` (texte plat, pour "répondre à une tenue" depuis le viewer plein écran — pas de message existant à cibler dans ce cas, donc pas de `reply_to_id` possible).
+- [x] Tables `competition_message_likes`/`competition_message_reactions` (RLS lecture-seule pour les membres, écriture uniquement via RPC `SECURITY DEFINER` — jamais de policy INSERT/DELETE directe, sinon un membre pourrait liker au nom d'un autre `user_id`).
+- [x] RPCs `toggle_competition_message_like(p_message_id)` (toggle atomique, retourne le nouveau compteur) et `add_competition_message_reaction(p_message_id, p_emoji)` (whitelist fermée de 5 emoji, verrouillée aussi côté DB via `CHECK`, ajout uniquement en V1 — pas de retrait de réaction).
+
+**Frontend** (`screens/CompetitionScreen.js`, réécriture quasi complète)
+- [x] 2 pages glissables (`Photos & chat` / `Classement`) au lieu de 3 onglets — bascule par les boutons du switcher OU par un glissement horizontal de la page entière (seuil de 20% de la largeur, effet "rubber-band" aux bords), désactivé pendant que le viewer plein écran est ouvert.
+- [x] Carrousel "Les tenues du jour" : une vignette par membre (photo réelle + score si posté aujourd'hui, avatar fantôme + "n'a pas encore posté" sinon) — remplace l'ancienne galerie historique complète (voir note ci-dessous).
+- [x] Viewer plein écran au tap sur une vignette : 4 directions à sens unique — gauche/droite change de membre, bas dézoome/ferme (glissement + fondu + échelle), haut ouvre un champ de réponse superposé à la photo (reste en plein écran après envoi). Verrouillage d'axe (x/y) dès qu'un mouvement dépasse un petit seuil, pour ne jamais mélanger les deux gestes.
+- [x] Chat : swipe vers la droite sur un message pour répondre (icône de réponse révélée progressivement, seuil de déclenchement à 42px), citation affichée dans la nouvelle bulle ; like (❤️/🤍, compteur agrégé, plusieurs personnes peuvent liker) ; réaction emoji (popover de 5 emoji, chips agrégées sous la bulle). Liste de messages en ordre chronologique (haut→bas, auto-scroll en bas), remplace l'ancienne `FlatList inverted`.
+- [x] Classement : podium (argent-or-bronze, la place manquante devient un CTA "Inviter" si la compétition a moins de 3 membres) + liste complète + 2 badges (🎯 Régularité, ❤️ Coup de cœur) — la RPC `get_competition_leaderboard` et le sélecteur de période Jour/Semaine/Mois/Toujours sont inchangés (livrés le 2026-09-25).
+- [x] Écran à **palette fixe** (sombre, couleurs reprises 1:1 de la maquette), volontairement indépendant du `useTheme()` clair/sombre du reste de l'app — décision assumée pour préserver le rendu exact validé par l'utilisateur.
+- [x] Vérifications : `npm test` (56/56) + `npx expo export --platform web` (build complet, 1262 modules, sans erreur).
+- [x] Migration appliquée en prod + déployé (Vercel).
+- [ ] **Reste à faire / limitations connues (V1)** :
+  - Le bouton "🔔 Relancer" (viewer plein écran, membre n'ayant pas posté) affiche un toast placeholder — aucune notification push réelle envoyée (nécessiterait une RPC/Edge Function dédiée pour lire le token de l'autre membre, hors scope de cette passe).
+  - Les likes/réactions **ne se synchronisent pas en temps réel** entre plusieurs appareils ouverts simultanément (seul l'auteur de l'action voit la mise à jour immédiate ; les autres la verront au prochain chargement de la conversation) — seuls les nouveaux messages restent en temps réel (Realtime inchangé).
+  - **L'ancienne galerie historique complète (tri par date/score, toutes les tenues jamais soumises à la compétition) a été retirée de cet écran**, remplacée par le carrousel "tenues du jour" de la maquette. Si l'utilisateur veut retrouver un moyen de parcourir l'historique complet, il faudra un nouvel écran/onglet dédié — non redemandé pour l'instant, à clarifier si le besoin remonte.
+  - Gestes non testés sur device réel par l'agent (pas d'accès à un simulateur/navigateur tactile dans cet environnement) — zone de risque technique la plus probable : négociation entre le `PanResponder` de la page (glissement Photos&chat ↔ Classement), celui de chaque message (swipe-to-reply) et le scroll vertical natif. À tester en priorité après déploiement.
 
 ---
 

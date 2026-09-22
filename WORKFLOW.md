@@ -1,6 +1,6 @@
 # WORKFLOW.md — Développement et déploiement OOTD
 
-> Dernière mise à jour : 2026-09-25 (Compétitions v2 — décisions D1-D6)
+> Dernière mise à jour : 2026-09-27 (écran Compétition réécrit selon la maquette v4 "gestes séparés")
 
 ## Prérequis
 
@@ -82,6 +82,7 @@ npx supabase db push --db-url "postgres://postgres.your-tenant-id:<pwd>@192.168.
 | `20260924120000_fix_competition_rls_and_fk.sql` | Corrige la récursion RLS infinie (`is_competition_member` helper) + FK `competition_messages.sender_id` → `profiles(id)` |
 | `20260925120000_competition_streak.sql` | `competition_members.streak_count`/`last_submission_date` + logique de streak dans `submit_ootd_to_competitions` + RPC `restore_competition_streak` (décision D4) |
 | `20260925130000_competition_leaderboard_and_palmares.sql` | RPC `get_competition_leaderboard` (classement par compétition + blocs Régularité/Progression/Coup de cœur) + `get_top3_app`/`get_top3_friends` paramétrées par période (décisions D1/D3/D5) — dépend de la migration précédente (colonnes de streak) |
+| `20260927120000_competition_chat_social.sql` | `competition_messages.reply_to_id`/`quoted_label` (réponses) + tables `competition_message_likes`/`competition_message_reactions` + RPCs `toggle_competition_message_like`/`add_competition_message_reaction` (écran Compétition v4 "gestes séparés") |
 
 **Nouveau projet self-host vierge** : rejouer toutes les migrations dans l'ordre depuis `20260510120000_initial_schema.sql`. **Sur l'instance de prod existante** : n'appliquer que les migrations pas encore poussées — `supabase db push` détecte automatiquement lesquelles via sa table de suivi interne, il suffit de lancer la commande, elle est idempotente.
 
