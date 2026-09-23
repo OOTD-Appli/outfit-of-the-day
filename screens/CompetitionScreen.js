@@ -817,7 +817,12 @@ export default function CompetitionScreen({ route, navigation }) {
               <>
                 <Podium ranking={ranking?.ranking || []} userId={userId} onInvite={shareInvite} />
 
-                <Text style={styles.sectionLabel}>Classement complet</Text>
+                <View style={styles.sectionLabelRow}>
+                  <Text style={styles.sectionLabel}>Classement complet</Text>
+                  <Text style={styles.sectionLabelHint}>
+                    {period === 'day' ? 'meilleur score' : 'score moyen'}
+                  </Text>
+                </View>
                 {(ranking?.ranking || []).length === 0 ? (
                   <Text style={styles.emptyText}>Aucun classement pour l'instant.</Text>
                 ) : (
@@ -832,8 +837,8 @@ export default function CompetitionScreen({ route, navigation }) {
                       {row.streak_count > 0 && (
                         <View style={styles.streakChip}><Text style={styles.streakChipText}>🔥 {row.streak_count}</Text></View>
                       )}
-                      <Text style={row.best_score != null ? styles.rowScore : styles.rowScoreMuted}>
-                        {row.best_score != null ? Math.round(row.best_score) : '—'}
+                      <Text style={row.score != null ? styles.rowScore : styles.rowScoreMuted}>
+                        {row.score != null ? Math.round(row.score) : '—'}
                       </Text>
                     </View>
                   ))
@@ -977,8 +982,8 @@ function Podium({ ranking, userId, onInvite }) {
                 </View>
               </View>
               <Text style={styles.podiumName} numberOfLines={1}>{s.entry.user_id === userId ? 'Toi' : s.entry.username}</Text>
-              <Text style={s.entry.best_score != null ? styles.podiumScore : styles.podiumScoreMuted}>
-                {s.entry.best_score != null ? Math.round(s.entry.best_score) : '—'}
+              <Text style={s.entry.score != null ? styles.podiumScore : styles.podiumScoreMuted}>
+                {s.entry.score != null ? Math.round(s.entry.score) : '—'}
               </Text>
             </>
           ) : (
@@ -1106,7 +1111,9 @@ const styles = StyleSheet.create({
   podiumBarSilver: { height: 32, backgroundColor: C.bgElevated2, borderWidth: 1, borderColor: C.borderSoft },
   podiumBarBronze: { height: 22, borderWidth: 1.5, borderColor: C.borderSoft, borderStyle: 'dashed' },
 
-  sectionLabel: { fontSize: 12, color: C.textFaint, marginBottom: 8, marginTop: 4, fontFamily: FONT_BODY.semibold },
+  sectionLabelRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 },
+  sectionLabel: { fontSize: 12, color: C.textFaint, fontFamily: FONT_BODY.semibold },
+  sectionLabelHint: { fontSize: 11, color: C.textFaint, fontFamily: FONT_BODY.regular, fontStyle: 'italic' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 7 },
   rowMe: { borderColor: C.accent, backgroundColor: 'rgba(237,147,177,0.08)' },
   rankNum: { width: 16, textAlign: 'center', fontSize: 12, color: C.textFaint, fontFamily: FONT_DISPLAY },

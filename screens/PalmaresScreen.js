@@ -18,7 +18,10 @@ function formatScore(value) {
   return Number.isFinite(num) ? String(Math.round(num)) : '–';
 }
 
-// Barres verticales simples (jusqu'à 3) : hauteur ∝ best_score/100.
+// Barres verticales simples (jusqu'à 3) : hauteur ∝ score/100. "score" est un
+// meilleur score (période "Jour") ou une moyenne (autres périodes) selon
+// get_top3_app/get_top3_friends (2026-09-30) — cet écran n'exposant que
+// Semaine/Mois, c'est toujours une moyenne ici en pratique.
 // La barre de l'utilisateur courant ressort avec une couleur dédiée.
 function ScoreBarChart({ data, currentUserId, theme }) {
   const chartHeight = 120;
@@ -30,7 +33,7 @@ function ScoreBarChart({ data, currentUserId, theme }) {
     <View style={styles.chartWrap}>
       <Svg width={width} height={chartHeight}>
         {data.map((row, i) => {
-          const score = Number(row.best_score) || 0;
+          const score = Number(row.score) || 0;
           const barHeight = Math.max(4, Math.min(chartHeight, (score / 100) * chartHeight));
           const x = 12 + i * (barWidth + gap);
           const y = chartHeight - barHeight;
@@ -56,7 +59,7 @@ function ScoreBarChart({ data, currentUserId, theme }) {
             <Text style={[styles.chartLabelName, { color: theme.textSub }]} numberOfLines={1}>
               {row.username}
             </Text>
-            <Text style={[styles.chartLabelScore, { color: theme.textPri }]}>{formatScore(row.best_score)}</Text>
+            <Text style={[styles.chartLabelScore, { color: theme.textPri }]}>{formatScore(row.score)}</Text>
           </View>
         ))}
       </View>
@@ -77,7 +80,7 @@ function Top3Block({ title, data, emptyLabel, theme }) {
               <Text style={styles.medal}>{MEDALS[i] || `${i + 1}`}</Text>
               <Avatar uri={row.avatar_url} username={row.username} size={36} />
               <Text style={[styles.rowName, { color: theme.textPri }]} numberOfLines={1}>{row.username}</Text>
-              <Text style={[styles.rowScore, { color: theme.accent }]}>{formatScore(row.best_score)}</Text>
+              <Text style={[styles.rowScore, { color: theme.accent }]}>{formatScore(row.score)}</Text>
             </View>
           ))}
         </View>
