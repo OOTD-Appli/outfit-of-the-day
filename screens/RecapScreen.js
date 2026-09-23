@@ -2,12 +2,12 @@ import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { computeLevelInfo } from '../lib/utils';
 import {
   View, Text, StyleSheet, TouchableOpacity, Switch, Animated,
-  FlatList, ActivityIndicator, TextInput, ScrollView,
+  FlatList, ActivityIndicator, TextInput, ScrollView, PanResponder,
   useWindowDimensions, Modal, Alert, Platform,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import Svg, { Polyline, Circle } from 'react-native-svg';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
@@ -42,16 +42,6 @@ const PERSONALITIES = [
 function fmtNote(value) {
   if (typeof value !== 'number') return '–';
   return Number.isInteger(value) ? `${value}` : value.toFixed(1).replace('.', ',');
-}
-
-// Le conseil peut être du JSON structuré { points_forts, axes_amelioration } ou du texte brut.
-function parseConseil(conseil) {
-  if (!conseil) return null;
-  try {
-    const p = JSON.parse(conseil);
-    if (Array.isArray(p?.points_forts) && Array.isArray(p?.axes_amelioration)) return p;
-  } catch (_) {}
-  return null;
 }
 
 function DarkLightToggle({ isDark, onToggle, accent }) {
@@ -102,9 +92,16 @@ function DarkLightToggle({ isDark, onToggle, accent }) {
 
 // Mémoïsé : évite de re-rendre toute la grille (photos + animations d'entrée)
 // quand un state sans rapport change ailleurs dans l'écran (settings, avatar upload...).
+//
+// scrollSnapAlign/scrollSnapStop (web uniquement, ignorées sans effet sur natif) :
+// pagingEnabled seul s'est déjà révélé peu fiable sur react-native-web (voir
+// Post-mortem "Feed — swipe cassé sur web", TACHES.md 2026-08-15) — un swipe
+// franc pouvait sauter plusieurs pages au lieu de s'arrêter net sur la
+// suivante. Même fix que FeedScreen (CSS scroll-snap natif), version
+// horizontale ici (voir styles.lbListWeb sur le FlatList parent).
 const LightboxPage = memo(function LightboxPage({ item, ww, wh }) {
   return (
-    <View style={[styles.lbPage, { width: ww, height: wh }]}>
+    <View style={[styles.lbPage, { width: ww, height: wh }, Platform.OS === 'web' && styles.lbPageWeb]}>
       <ExpoImage source={{ uri: item.image_url }} style={{ width: ww, height: wh }} contentFit="contain" />
     </View>
   );
@@ -139,7 +136,15 @@ export default function RecapScreen() {
   const [avatarLoadError, setAvatarLoadError] = useState(false);
   const { showToast } = useToast();
   const { theme, colorMode, setColorMode } = useTheme();
+  const insets = useSafeAreaInsets();
   const [lightbox, setLightbox] = useState({ visible: false, index: 0 });
+  // Fermeture par swipe vers le bas (lightbox) : translateY/opacity animés au
+  // fil du doigt, capturés uniquement sur un geste nettement vertical et vers
+  // le bas — un geste horizontal reste entièrement dévolu au FlatList de
+  // pagination (voir onMoveShouldSetPanResponderCapture ci-dessous, même
+  // logique d'axe que le viewer plein écran de CompetitionScreen).
+  const lbTranslateY = useRef(new Animated.Value(0)).current;
+  const lbOpacity = useRef(new Animated.Value(1)).current;
   const [downloading, setDownloading] = useState(false);
   const [loadingMoreOotds, setLoadingMoreOotds] = useState(false);
   const ootdsPageRef = useRef(0);
@@ -321,8 +326,42 @@ export default function RecapScreen() {
     }
   };
 
-  const openLightbox = useCallback((index) => setLightbox({ visible: true, index }), []);
+  const openLightbox = useCallback((index) => {
+    lbTranslateY.setValue(0);
+    lbOpacity.setValue(1);
+    setLightbox({ visible: true, index });
+  }, [lbTranslateY, lbOpacity]);
   const closeLightbox = () => setLightbox({ visible: false, index: 0 });
+
+  const lbPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponderCapture: () => false,
+      // Ne capture le geste (et ne bloque donc le FlatList horizontal) que si
+      // le mouvement est nettement vertical vers le bas — un swipe horizontal,
+      // même léger, reste prioritaire pour changer de photo.
+      onMoveShouldSetPanResponderCapture: (_, g) => g.dy > 10 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
+      onPanResponderMove: (_, g) => {
+        if (g.dy <= 0) return;
+        lbTranslateY.setValue(g.dy);
+        lbOpacity.setValue(Math.max(0.3, 1 - g.dy / 400));
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 120 || g.vy > 0.8) {
+          // 1000px de marge : toujours largement hors-écran, peu importe la
+          // hauteur réelle — évite de dépendre de `wh` capturé une seule fois
+          // dans la fermeture de useRef(PanResponder.create(...)).
+          Animated.timing(lbTranslateY, { toValue: 1000, duration: 200, useNativeDriver: true }).start(closeLightbox);
+        } else {
+          Animated.spring(lbTranslateY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+          Animated.timing(lbOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(lbTranslateY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+        Animated.timing(lbOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+      },
+    })
+  ).current;
   const renderGridItem = useCallback(({ item, index }) => (
     <GridItem item={item} index={index} onPress={openLightbox} />
   ), [openLightbox]);
@@ -889,13 +928,23 @@ export default function RecapScreen() {
         </View>
       </Modal>
 
-      {/* Lightbox plein écran : défilement horizontal page par page */}
+      {/* Lightbox plein écran : épurée (image + 4 notes seulement), défilement
+          horizontal page par page magnétique, swipe vers le bas pour fermer. */}
       <Modal visible={lightbox.visible} animationType="fade" onRequestClose={closeLightbox} statusBarTranslucent>
-        <View style={[styles.lbContainer, { width: ww, height: wh }]}>
+        <Animated.View
+          style={[
+            styles.lbContainer,
+            { width: ww, height: wh, transform: [{ translateY: lbTranslateY }], opacity: lbOpacity },
+          ]}
+          {...lbPanResponder.panHandlers}
+        >
           <FlatList
             data={ootds}
             horizontal
             pagingEnabled
+            disableIntervalMomentum
+            decelerationRate="fast"
+            bounces={false}
             windowSize={3}
             maxToRenderPerBatch={2}
             showsHorizontalScrollIndicator={false}
@@ -906,6 +955,7 @@ export default function RecapScreen() {
               setLightbox((prev) => ({ ...prev, index: Math.round(e.nativeEvent.contentOffset.x / ww) }))
             }
             renderItem={renderLightboxItem}
+            style={Platform.OS === 'web' ? styles.lbListWeb : undefined}
           />
           <SafeAreaView style={styles.lbBar} edges={['top']} pointerEvents="box-none">
             <TouchableOpacity style={styles.lbBtn} onPress={closeLightbox} activeOpacity={0.8}>
@@ -932,89 +982,32 @@ export default function RecapScreen() {
             </View>
           </SafeAreaView>
 
-          {/* Panneau métadonnées de l'outfit courant : notes, description, conseils IA */}
+          {/* Uniquement les 4 notes (score global + 3 sous-scores) — plus de
+              date, description ni conseils IA dans la vue plein écran (demande
+              explicite : interface minimaliste). Décoratif, ne capte aucun
+              geste : pointerEvents="none" pour ne jamais gêner le swipe. */}
           {(() => {
             const cur = ootds[lightbox.index];
             if (!cur) return null;
-            const conseilStruct = parseConseil(cur.conseil);
-            const hasConseil = conseilStruct || (cur.conseil && cur.conseil.trim());
             return (
-              <View style={styles.lbInfoWrap} pointerEvents="box-none">
-                <ScrollView
-                  contentContainerStyle={styles.lbInfoContent}
-                  showsVerticalScrollIndicator={false}
-                  pointerEvents="auto"
-                >
-                  <View style={styles.lbGlobalRow}>
-                    <View style={[styles.lbGlobalBadge, { backgroundColor: theme.accent }]}>
-                      <Ionicons name="star" size={15} color="#fff" />
-                      <Text style={styles.lbGlobalScore}>{fmtNote(cur.score_global)}</Text>
-                      <Text style={styles.lbGlobalMax}>/{cur.score_scale || 100}</Text>
+              <View style={[styles.lbScoresWrap, { bottom: insets.bottom + 16 }]} pointerEvents="none">
+                <View style={[styles.lbGlobalBadge, { backgroundColor: theme.accent }]}>
+                  <Ionicons name="star" size={13} color="#fff" />
+                  <Text style={styles.lbGlobalScore}>{fmtNote(cur.score_global)}</Text>
+                  <Text style={styles.lbGlobalMax}>/{cur.score_scale || 100}</Text>
+                </View>
+                <View style={styles.lbSubScoresRow}>
+                  {NOTE_BADGES.map(b => (
+                    <View key={b.key} style={styles.lbSubBadge}>
+                      <Ionicons name={b.icon} size={12} color={b.color} />
+                      <Text style={[styles.lbSubBadgeScore, { color: b.color }]}>{fmtNote(cur[b.key])}</Text>
                     </View>
-                    <Text style={styles.lbDate}>
-                      {new Date(cur.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
-                    </Text>
-                  </View>
-
-                  <View style={styles.lbBadgesRow}>
-                    {NOTE_BADGES.map(b => (
-                      <View key={b.key} style={styles.lbBadge}>
-                        <Ionicons name={b.icon} size={15} color={b.color} />
-                        <Text style={styles.lbBadgeLabel}>{b.label}</Text>
-                        <Text style={[styles.lbBadgeScore, { color: b.color }]}>{fmtNote(cur[b.key])}</Text>
-                      </View>
-                    ))}
-                  </View>
-
-                  {Array.isArray(cur.styles) && cur.styles.length > 0 && (
-                    <View style={styles.lbStylesRow}>
-                      {cur.styles.map(st => (
-                        <View key={st} style={[styles.lbStyleChip, { borderColor: theme.accent + '88' }]}>
-                          <Text style={[styles.lbStyleChipText, { color: theme.accent }]}>{st}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-
-                  {cur.caption ? (
-                    <View style={styles.lbSection}>
-                      <Text style={styles.lbSectionTitle}>Description</Text>
-                      <Text style={styles.lbSectionBody}>{cur.caption}</Text>
-                    </View>
-                  ) : null}
-
-                  {hasConseil ? (
-                    <View style={styles.lbSection}>
-                      <Text style={styles.lbSectionTitle}>Conseils IA</Text>
-                      {conseilStruct ? (
-                        <>
-                          {conseilStruct.points_forts.length > 0 && (
-                            <>
-                              <Text style={[styles.lbConseilSub, { color: theme.accent }]}>Points forts</Text>
-                              {conseilStruct.points_forts.map((pt, i) => (
-                                <Text key={`pf${i}`} style={styles.lbConseilItem}>• {pt}</Text>
-                              ))}
-                            </>
-                          )}
-                          {conseilStruct.axes_amelioration.length > 0 && (
-                            <>
-                              <Text style={[styles.lbConseilSub, { color: theme.accent, marginTop: 8 }]}>À améliorer</Text>
-                              {conseilStruct.axes_amelioration.map((ax, i) => (
-                                <Text key={`ax${i}`} style={styles.lbConseilItem}>→ {ax}</Text>
-                              ))}
-                            </>
-                          )}
-                        </>
-                      ) : (
-                        <Text style={styles.lbSectionBody}>{cur.conseil}</Text>
-                      )}
-                    </View>
-                  ) : null}
-                </ScrollView>
+                  ))}
+                </View>
               </View>
             );
           })()}
-        </View>
+        </Animated.View>
       </Modal>
     </SafeAreaView>
   );
@@ -1040,26 +1033,22 @@ const styles = StyleSheet.create({
   lbBarRight:     { flexDirection: 'row', gap: 8 },
   lbBtn:          { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', marginTop: 8 },
 
-  /* Panneau métadonnées lightbox */
-  lbInfoWrap:     { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '52%', backgroundColor: 'rgba(10,10,10,0.86)', borderTopLeftRadius: 22, borderTopRightRadius: 22 },
-  lbInfoContent:  { padding: 18, paddingBottom: 36 },
-  lbGlobalRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  lbGlobalBadge:  { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
-  lbGlobalScore:  { color: '#fff', fontWeight: '800', fontSize: 19 },
-  lbGlobalMax:    { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '700' },
-  lbDate:         { color: 'rgba(255,255,255,0.6)', fontSize: 12 },
-  lbBadgesRow:    { flexDirection: 'row', gap: 8 },
-  lbBadge:        { flex: 1, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 14, paddingVertical: 10, gap: 2 },
-  lbBadgeLabel:   { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '600' },
-  lbBadgeScore:   { fontSize: 18, fontWeight: '800' },
-  lbStylesRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
-  lbStyleChip:    { borderWidth: 1, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
-  lbStyleChipText:{ fontSize: 12, fontWeight: '700' },
-  lbSection:      { marginTop: 16 },
-  lbSectionTitle: { color: '#fff', fontWeight: '800', fontSize: 14, marginBottom: 6 },
-  lbSectionBody:  { color: 'rgba(255,255,255,0.82)', fontSize: 13.5, lineHeight: 20 },
-  lbConseilSub:   { fontWeight: '700', fontSize: 12.5, marginBottom: 4 },
-  lbConseilItem:  { color: 'rgba(255,255,255,0.82)', fontSize: 13, lineHeight: 19, marginBottom: 3 },
+  // web uniquement (ignorées sans effet sur natif) — scroll-snap CSS natif en
+  // renfort de pagingEnabled, qui s'est déjà montré peu fiable sur
+  // react-native-web seul (voir Post-mortem Feed, TACHES.md 2026-08-15).
+  lbListWeb:      { scrollSnapType: 'x mandatory', overflowX: 'scroll' },
+  lbPageWeb:      { scrollSnapAlign: 'start', scrollSnapStop: 'always' },
+
+  /* Widget compact des 4 notes, bas-gauche — remplace l'ancien panneau
+     métadonnées (date/description/conseils IA retirés, demande explicite
+     d'interface minimaliste en plein écran). */
+  lbScoresWrap:   { position: 'absolute', left: 16, gap: 6, alignItems: 'flex-start' },
+  lbGlobalBadge:  { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16 },
+  lbGlobalScore:  { color: '#fff', fontWeight: '800', fontSize: 15 },
+  lbGlobalMax:    { color: 'rgba(255,255,255,0.85)', fontSize: 10.5, fontWeight: '700' },
+  lbSubScoresRow: { flexDirection: 'row', gap: 6 },
+  lbSubBadge:     { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(10,10,10,0.6)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 4 },
+  lbSubBadgeScore:{ fontSize: 12, fontWeight: '800' },
 
   profileCard:    { alignItems: 'center', padding: 20 },
   avatarContainer:{ position: 'relative', marginBottom: 12 },

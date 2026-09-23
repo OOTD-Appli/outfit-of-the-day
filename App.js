@@ -1,8 +1,8 @@
 import { registerForPushNotifications, savePushToken, scheduleDailyReminder } from './lib/notifications';
 import { registerWebPush } from './lib/webPush';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useState, useEffect } from 'react';
-import { View, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { useState, useEffect, useRef } from 'react';
+import { View, StyleSheet, ActivityIndicator, Platform, PanResponder } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -124,6 +124,56 @@ function RecapStack() {
   );
 }
 
+// ===========================================================================
+// Swipe latéral entre onglets (2026-09-29) — ordre visuel Analyse/Compétitions/
+// Découvrir/Récap. Ne se déclenche QUE quand l'onglet actif est à la racine de
+// sa propre pile interne (aucun écran empilé par-dessus) : dès qu'un écran est
+// poussé (CompetitionScreen et son pager interne Photos&chat/Classement + son
+// viewer plein écran + le swipe-to-reply des messages, ShopScreen, FriendsScreen,
+// CreateCompetitionScreen, PalmaresScreen, JoinCompetitionScreen...), ce swipe
+// se désactive de lui-même et laisse la priorité totale aux gestes internes de
+// cet écran. C'est le même principe que la plupart des apps à onglets + pile de
+// navigation (le swipe entre sections ne fonctionne que sur l'écran d'accueil
+// de chaque section) — et ça évite d'avoir à arbitrer geste par geste contre
+// les PanResponder internes de ces écrans, puisqu'ils ne sont jamais la racine
+// d'un onglet. Seuil de distance + dominance horizontale volontairement plus
+// élevés que les gestes internes de l'app (60px, ratio 1.4) pour limiter le
+// risque de faux positif contre un petit carrousel horizontal interne à un
+// écran racine.
+const TAB_ORDER = ['Accueil', 'Compétitions', 'Feed', 'Récap'];
+const TAB_SWIPE_THRESHOLD = 60;
+const TAB_SWIPE_DOMINANCE = 1.4;
+
+function getActiveTabRootInfo() {
+  if (!navigationRef.isReady()) return null;
+  const state = navigationRef.getRootState();
+  if (!state?.routes?.length) return null;
+  const activeRoute = state.routes[state.index];
+  // Une pile interne fraîchement montée peut ne pas encore avoir de `.state`
+  // du tout (undefined) — c'est aussi "à la racine" (aucun écran poussé).
+  const isAtRoot = !activeRoute.state || activeRoute.state.index === 0;
+  return { activeIndex: state.index, isAtRoot };
+}
+
+function useTabSwipeResponder() {
+  return useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponderCapture: (_, g) => {
+        if (Math.abs(g.dx) < TAB_SWIPE_THRESHOLD || Math.abs(g.dx) < Math.abs(g.dy) * TAB_SWIPE_DOMINANCE) return false;
+        return !!getActiveTabRootInfo()?.isAtRoot;
+      },
+      onPanResponderRelease: (_, g) => {
+        const info = getActiveTabRootInfo();
+        if (!info?.isAtRoot) return;
+        const nextIndex = info.activeIndex + (g.dx < 0 ? 1 : -1);
+        if (nextIndex < 0 || nextIndex >= TAB_ORDER.length) return;
+        navigationRef.navigate(TAB_ORDER[nextIndex]);
+      },
+    })
+  ).current;
+}
+
 function TabIconPill({ name, focused, color, accent }) {
   if (focused) {
     return (
@@ -138,6 +188,7 @@ function TabIconPill({ name, focused, color, accent }) {
 function ThemedNavigator({ userId }) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const tabSwipeResponder = useTabSwipeResponder();
 
   // Glassmorphism sur web : fond semi-transparent + blur
   const isWeb = Platform.OS === 'web';
@@ -159,6 +210,7 @@ function ThemedNavigator({ userId }) {
 
   return (
     <NavigationContainer ref={navigationRef}>
+      <View style={{ flex: 1 }} {...tabSwipeResponder.panHandlers}>
       <Tab.Navigator
         screenOptions={{
           // Le header est activé par défaut — FeedScreen (full-screen) le désactive
@@ -214,6 +266,7 @@ function ThemedNavigator({ userId }) {
           }}
         />
       </Tab.Navigator>
+      </View>
     </NavigationContainer>
   );
 }

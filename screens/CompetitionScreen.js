@@ -184,6 +184,8 @@ export default function CompetitionScreen({ route, navigation }) {
   const { width } = useWindowDimensions();
 
   const [userId, setUserId] = useState(null);
+  const [createdBy, setCreatedBy] = useState(null); // pour n'afficher "Supprimer" qu'au créateur
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // ---- Page pager (Photos & chat <-> Classement) ----
   const [panelIndex, setPanelIndexState] = useState(0);
@@ -230,6 +232,11 @@ export default function CompetitionScreen({ route, navigation }) {
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null));
   }, []);
+
+  useEffect(() => {
+    supabase.from('competitions').select('created_by').eq('id', competitionId).single()
+      .then(({ data }) => setCreatedBy(data?.created_by || null));
+  }, [competitionId]);
 
   useEffect(() => {
     setActiveCompetition(competitionId);
@@ -486,6 +493,57 @@ export default function CompetitionScreen({ route, navigation }) {
     }
   };
 
+  // ================= Quitter / Supprimer (audit règles métier, 2026-09-29) =================
+  // Confirmation cross-plateforme établie ailleurs dans l'app (ex. RecapScreen.deleteOotd) :
+  // Alert.alert n'a pas de vrais boutons sur react-native-web → window.confirm sur web.
+  const confirmThen = (message, onConfirm) => {
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm ? window.confirm(message) : true) onConfirm();
+      return;
+    }
+    Alert.alert(message, null, [
+      { text: 'Annuler', style: 'cancel' },
+      { text: 'Confirmer', style: 'destructive', onPress: onConfirm },
+    ]);
+  };
+
+  const doLeaveCompetition = async () => {
+    try {
+      const { data, error } = await supabase.rpc('leave_competition', { p_competition_id: competitionId });
+      if (error || !data?.ok) throw new Error(error?.message || data?.error);
+      showToast('Tu as quitté la compétition', { type: 'success' });
+      navigation.goBack();
+    } catch (e) {
+      showToast(e?.message || 'Erreur', { type: 'error' });
+    }
+  };
+
+  const doDeleteCompetition = async () => {
+    try {
+      const { data, error } = await supabase.rpc('delete_competition', { p_competition_id: competitionId });
+      if (error || !data?.ok) throw new Error(error?.message || data?.error);
+      showToast('Compétition supprimée', { type: 'success' });
+      navigation.goBack();
+    } catch (e) {
+      showToast(e?.message || 'Erreur', { type: 'error' });
+    }
+  };
+
+  const leaveCompetition = () => {
+    setMenuOpen(false);
+    confirmThen(
+      'Quitter définitivement cette compétition ? Tu pourras la rejoindre à nouveau uniquement avec un nouveau lien d\'invitation.',
+      doLeaveCompetition,
+    );
+  };
+  const deleteCompetition = () => {
+    setMenuOpen(false);
+    confirmThen(
+      'Supprimer définitivement cette compétition pour tous les membres ? Cette action est irréversible.',
+      doDeleteCompetition,
+    );
+  };
+
   // ================= Pager de page (Photos&chat <-> Classement) =================
   const applyPanel = useCallback((idx, animated = true) => {
     setPanelIndex(idx);
@@ -617,6 +675,25 @@ export default function CompetitionScreen({ route, navigation }) {
             <Ionicons name="add" size={14} color={C.accent} />
             <Text style={styles.addBtnText}>Ajouter</Text>
           </TouchableOpacity>
+          <View>
+            <TouchableOpacity style={styles.menuBtn} onPress={() => setMenuOpen(v => !v)} hitSlop={8}>
+              <Ionicons name="ellipsis-vertical" size={18} color={C.textSub} />
+            </TouchableOpacity>
+            {menuOpen && (
+              <View style={styles.menuPopover}>
+                <TouchableOpacity style={styles.menuItem} onPress={leaveCompetition}>
+                  <Ionicons name="exit-outline" size={16} color={C.love} />
+                  <Text style={styles.menuItemText}>Quitter la compétition</Text>
+                </TouchableOpacity>
+                {createdBy && userId && createdBy === userId && (
+                  <TouchableOpacity style={styles.menuItem} onPress={deleteCompetition}>
+                    <Ionicons name="trash-outline" size={16} color={C.love} />
+                    <Text style={styles.menuItemText}>Supprimer la compétition</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
         </View>
         <View style={styles.switcher}>
           <TouchableOpacity style={[styles.switchBtn, panelIndex === 0 && styles.switchBtnActive]} onPress={() => applyPanel(0)}>
@@ -856,8 +933,11 @@ export default function CompetitionScreen({ route, navigation }) {
         </Animated.View>
       )}
 
-      {activePopoverId !== null && (
-        <Pressable style={StyleSheet.absoluteFill} onPress={() => setActivePopoverId(null)} />
+      {(activePopoverId !== null || menuOpen) && (
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => { setActivePopoverId(null); setMenuOpen(false); }}
+        />
       )}
     </SafeAreaView>
   );
@@ -951,20 +1031,33 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bgPage },
   glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 260 },
 
-  header: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderSoft2 },
+  // zIndex > 0 : nécessaire pour que le popover du menu "..." (nested ici)
+  // et, plus bas, celui des réactions emoji (nested dans viewport) restent
+  // au-dessus du Pressable plein écran qui les ferme au tap extérieur — ce
+  // dernier est un frère JSX plus tardif, donc dessiné par-dessus par défaut
+  // sans cette priorité explicite (reste bien sous fsOverlay, zIndex 50).
+  header: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderSoft2, zIndex: 2 },
   headerRow1: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   titleBlock: { flex: 1, minWidth: 0 },
   title: { color: C.textPri, fontSize: 16.5, fontFamily: FONT_DISPLAY },
   subtitle: { color: C.textSub, fontSize: 11, fontFamily: FONT_BODY.semibold },
   addBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(237,147,177,0.14)', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
   addBtnText: { color: C.accent, fontSize: 12, fontFamily: FONT_BODY.bold },
+  menuBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  menuPopover: {
+    position: 'absolute', top: 34, right: 0, minWidth: 210, zIndex: 10,
+    backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft,
+    borderRadius: 14, paddingVertical: 6,
+  },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 14, paddingVertical: 11 },
+  menuItemText: { color: C.love, fontSize: 13, fontFamily: FONT_BODY.semibold },
   switcher: { flexDirection: 'row', gap: 6 },
   switchBtn: { flex: 1, backgroundColor: C.bgElevated, borderRadius: 13, paddingVertical: 9, alignItems: 'center' },
   switchBtnActive: { backgroundColor: C.accent },
   switchBtnText: { color: C.textSub, fontSize: 12.5, fontFamily: FONT_BODY.semibold },
   switchBtnTextActive: { color: C.onAccent },
 
-  viewport: { flex: 1, overflow: 'hidden' },
+  viewport: { flex: 1, overflow: 'hidden', zIndex: 1 },
   track: { flexDirection: 'row', flex: 1 },
 
   sectionCaption: { color: C.textFaint, fontSize: 11.5, marginHorizontal: 16, marginTop: 14, marginBottom: 8, fontFamily: FONT_BODY.semibold },
