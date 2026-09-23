@@ -13,6 +13,7 @@ import { supabase } from '../lib/supabase';
 import { useToast } from '../lib/toastContext';
 import { setActiveCompetition } from '../lib/activeChat';
 import { getLocalDayIsoRange } from '../lib/competitionUtils';
+import { useCompetitionFonts, FONT_DISPLAY, FONT_BODY } from '../lib/competitionFonts';
 import Avatar from '../components/Avatar';
 
 // ===========================================================================
@@ -133,7 +134,7 @@ function MessageRow({ message, isMine, quoteText, popoverOpen, onTogglePopover, 
             ) : message.image_url ? (
               <ExpoImage source={{ uri: message.image_url }} style={rs.bubbleImage} contentFit="cover" />
             ) : (
-              <Text style={[rs.bubbleText, isMine && { color: C.onAccent }]}>{message.content}</Text>
+              <Text style={[rs.bubbleText, isMine ? rs.bubbleTextOut : rs.bubbleTextIn]}>{message.content}</Text>
             )}
           </View>
         </TouchableOpacity>
@@ -277,7 +278,14 @@ export default function CompetitionScreen({ route, navigation }) {
     try {
       const { data, error } = await supabase
         .from('competition_messages')
-        .select('id, sender_id, content, image_url, created_at, is_deleted, reply_to_id, quoted_label, profiles(username, avatar_url), competition_message_likes(user_id), competition_message_reactions(user_id, emoji)')
+        // profiles!competition_messages_sender_id_fkey (pas juste "profiles(...)") :
+        // depuis l'ajout de competition_message_likes/reactions (2026-09-27), ces 2
+        // tables ont chacune une FK vers competition_messages ET vers profiles —
+        // PostgREST les traite comme des tables de jonction many-to-many possibles
+        // vers profiles, ce qui rend l'embed "profiles(...)" nu ambigu (3 chemins
+        // candidats). Le hint !fkey force explicitement la relation directe
+        // sender_id -> profiles voulue ici (confirmé en prod, PGRST201).
+        .select('id, sender_id, content, image_url, created_at, is_deleted, reply_to_id, quoted_label, profiles!competition_messages_sender_id_fkey(username, avatar_url), competition_message_likes(user_id), competition_message_reactions(user_id, emoji)')
         .eq('competition_id', competitionId)
         .order('created_at', { ascending: true })
         .limit(MESSAGES_LIMIT);
@@ -582,6 +590,15 @@ export default function CompetitionScreen({ route, navigation }) {
   ).current;
 
   const memberCount = todaysPhotos.length;
+  const [fontsLoaded] = useCompetitionFonts();
+
+  if (!fontsLoaded) {
+    return (
+      <SafeAreaView style={[styles.safe, { alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator color={C.accent} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
@@ -909,18 +926,20 @@ const rs = StyleSheet.create({
   colOut: { alignItems: 'flex-end' },
   quote: { backgroundColor: C.bgElevated2, borderLeftWidth: 2, borderLeftColor: C.accent, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, marginBottom: 4 },
   quoteOut: { backgroundColor: 'rgba(0,0,0,0.15)', borderLeftColor: 'rgba(58,15,34,0.4)' },
-  quoteText: { fontSize: 11, color: C.textSub },
+  quoteText: { fontSize: 11, color: C.textSub, fontFamily: FONT_BODY.regular },
   bubble: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 17 },
   bubbleIn: { backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderBottomLeftRadius: 5 },
   bubbleOut: { backgroundColor: C.accent, borderBottomRightRadius: 5 },
   bubbleText: { fontSize: 13.5, lineHeight: 18, color: C.textPri },
-  deletedText: { fontSize: 13, fontStyle: 'italic', color: C.textFaint },
+  bubbleTextIn: { fontFamily: FONT_BODY.regular },
+  bubbleTextOut: { fontFamily: FONT_BODY.medium, color: C.onAccent },
+  deletedText: { fontSize: 13, fontStyle: 'italic', color: C.textFaint, fontFamily: FONT_BODY.regular },
   bubbleImage: { width: 160, height: 160, borderRadius: 12 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, paddingHorizontal: 4, position: 'relative' },
-  metaTime: { fontSize: 9.5, color: C.textFaint },
+  metaTime: { fontSize: 9.5, color: C.textFaint, fontFamily: FONT_BODY.regular },
   actionsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   miniBtn: {},
-  miniBtnText: { fontSize: 11, fontWeight: '700', color: C.textFaint },
+  miniBtnText: { fontSize: 11, color: C.textFaint, fontFamily: FONT_BODY.bold },
   reactPopover: { position: 'absolute', bottom: '100%', left: 0, marginBottom: 4, flexDirection: 'row', gap: 4, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 6, zIndex: 5 },
   reactPopoverEmoji: { fontSize: 16 },
   reactsRow: { flexDirection: 'row', gap: 4, marginTop: 4 },
@@ -935,48 +954,48 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderSoft2 },
   headerRow1: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   titleBlock: { flex: 1, minWidth: 0 },
-  title: { color: C.textPri, fontWeight: '700', fontSize: 16.5 },
-  subtitle: { color: C.textSub, fontSize: 11, fontWeight: '600' },
+  title: { color: C.textPri, fontSize: 16.5, fontFamily: FONT_DISPLAY },
+  subtitle: { color: C.textSub, fontSize: 11, fontFamily: FONT_BODY.semibold },
   addBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(237,147,177,0.14)', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
-  addBtnText: { color: C.accent, fontWeight: '700', fontSize: 12 },
+  addBtnText: { color: C.accent, fontSize: 12, fontFamily: FONT_BODY.bold },
   switcher: { flexDirection: 'row', gap: 6 },
   switchBtn: { flex: 1, backgroundColor: C.bgElevated, borderRadius: 13, paddingVertical: 9, alignItems: 'center' },
   switchBtnActive: { backgroundColor: C.accent },
-  switchBtnText: { color: C.textSub, fontWeight: '600', fontSize: 12.5 },
+  switchBtnText: { color: C.textSub, fontSize: 12.5, fontFamily: FONT_BODY.semibold },
   switchBtnTextActive: { color: C.onAccent },
 
   viewport: { flex: 1, overflow: 'hidden' },
   track: { flexDirection: 'row', flex: 1 },
 
-  sectionCaption: { color: C.textFaint, fontSize: 11.5, fontWeight: '600', marginHorizontal: 16, marginTop: 14, marginBottom: 8 },
-  emptyText: { color: C.textSub, fontSize: 13, marginHorizontal: 16, marginBottom: 10 },
+  sectionCaption: { color: C.textFaint, fontSize: 11.5, marginHorizontal: 16, marginTop: 14, marginBottom: 8, fontFamily: FONT_BODY.semibold },
+  emptyText: { color: C.textSub, fontSize: 13, marginHorizontal: 16, marginBottom: 10, fontFamily: FONT_BODY.regular },
 
   thumbRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16 },
   thumb: { flex: 1, aspectRatio: 1 / 1.05, borderRadius: 16, overflow: 'hidden', backgroundColor: '#1a1020' },
   thumbScore: { position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(10,6,10,0.55)', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
-  thumbScoreText: { color: '#fff', fontWeight: '700', fontSize: 11.5 },
+  thumbScoreText: { color: '#fff', fontSize: 11.5, fontFamily: FONT_DISPLAY },
   thumbNameWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingTop: 16, paddingBottom: 6 },
-  thumbNameText: { color: '#fff', fontSize: 11, fontWeight: '600', flexShrink: 1 },
+  thumbNameText: { color: '#fff', fontSize: 11, flexShrink: 1, fontFamily: FONT_BODY.semibold },
   thumbEmpty: { flex: 1, borderWidth: 1.5, borderColor: C.borderSoft, borderStyle: 'dashed', borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: 6, padding: 8 },
   ghostAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.bgElevated2, alignItems: 'center', justifyContent: 'center' },
-  ghostAvatarText: { color: C.textFaint, fontWeight: '700', fontSize: 12 },
-  thumbEmptyText: { fontSize: 10.5, color: C.textSub, fontWeight: '600', textAlign: 'center' },
+  ghostAvatarText: { color: C.textFaint, fontSize: 12, fontFamily: FONT_DISPLAY },
+  thumbEmptyText: { fontSize: 10.5, color: C.textSub, textAlign: 'center', fontFamily: FONT_BODY.semibold },
 
   inputArea: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.borderSoft2 },
   replyBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingTop: 8 },
   replyBarAccent: { width: 3, alignSelf: 'stretch', backgroundColor: C.accent, borderRadius: 3, minHeight: 26 },
-  replyBarLabel: { fontSize: 10.5, color: C.accent, fontWeight: '700' },
-  replyBarSnip: { fontSize: 11.5, color: C.textSub },
+  replyBarLabel: { fontSize: 10.5, color: C.accent, fontFamily: FONT_BODY.bold },
+  replyBarSnip: { fontSize: 11.5, color: C.textSub, fontFamily: FONT_BODY.regular },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10 },
   inputIconBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.bgElevated, alignItems: 'center', justifyContent: 'center' },
-  chatField: { flex: 1, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 9, fontSize: 13, color: C.textPri },
+  chatField: { flex: 1, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 9, fontSize: 13, color: C.textPri, fontFamily: FONT_BODY.regular },
   sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
 
   clScroll: { padding: 16, paddingBottom: 30 },
   periodRow: { flexDirection: 'row', gap: 6, marginBottom: 18 },
   pill: { flex: 1, borderWidth: 1, borderColor: C.borderSoft, borderRadius: 999, paddingVertical: 8, alignItems: 'center' },
   pillActive: { backgroundColor: C.accent, borderColor: 'transparent' },
-  pillText: { color: C.textSub, fontWeight: '600', fontSize: 11.5 },
+  pillText: { color: C.textSub, fontSize: 11.5, fontFamily: FONT_BODY.semibold },
   pillTextActive: { color: C.onAccent },
 
   podium: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 22 },
@@ -986,57 +1005,57 @@ const styles = StyleSheet.create({
   podiumAvatarInvite: { borderStyle: 'dashed', borderWidth: 1.5, borderColor: C.borderSoft, backgroundColor: C.bgElevated2 },
   medal: { position: 'absolute', bottom: -4, right: -4, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.bgBase },
   medalText: { fontSize: 10 },
-  podiumName: { fontSize: 12.5, fontWeight: '600', color: C.textPri, textAlign: 'center' },
-  podiumScore: { marginTop: 5, fontWeight: '700', fontSize: 13, paddingHorizontal: 10, paddingVertical: 2, borderRadius: 999, backgroundColor: C.bgElevated2, color: C.accent },
-  podiumScoreMuted: { marginTop: 5, fontSize: 13, color: C.textFaint },
+  podiumName: { fontSize: 12.5, color: C.textPri, textAlign: 'center', fontFamily: FONT_BODY.semibold },
+  podiumScore: { marginTop: 5, fontSize: 13, paddingHorizontal: 10, paddingVertical: 2, borderRadius: 999, backgroundColor: C.bgElevated2, color: C.accent, fontFamily: FONT_DISPLAY },
+  podiumScoreMuted: { marginTop: 5, fontSize: 13, color: C.textFaint, fontFamily: FONT_DISPLAY },
   podiumBar: { width: '100%', borderTopLeftRadius: 10, borderTopRightRadius: 10, marginTop: 10 },
   podiumBarGold: { height: 46, backgroundColor: C.accent },
   podiumBarSilver: { height: 32, backgroundColor: C.bgElevated2, borderWidth: 1, borderColor: C.borderSoft },
   podiumBarBronze: { height: 22, borderWidth: 1.5, borderColor: C.borderSoft, borderStyle: 'dashed' },
 
-  sectionLabel: { fontSize: 12, fontWeight: '600', color: C.textFaint, marginBottom: 8, marginTop: 4 },
+  sectionLabel: { fontSize: 12, color: C.textFaint, marginBottom: 8, marginTop: 4, fontFamily: FONT_BODY.semibold },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 7 },
   rowMe: { borderColor: C.accent, backgroundColor: 'rgba(237,147,177,0.08)' },
-  rankNum: { width: 16, textAlign: 'center', fontWeight: '700', fontSize: 12, color: C.textFaint },
+  rankNum: { width: 16, textAlign: 'center', fontSize: 12, color: C.textFaint, fontFamily: FONT_DISPLAY },
   rowNameWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
-  rowName: { fontSize: 13, fontWeight: '600', color: C.textPri, flexShrink: 1 },
+  rowName: { fontSize: 13, color: C.textPri, flexShrink: 1, fontFamily: FONT_BODY.semibold },
   tag: { backgroundColor: 'rgba(237,147,177,0.14)', borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 },
-  tagText: { fontSize: 9.5, fontWeight: '700', color: C.accent },
+  tagText: { fontSize: 9.5, color: C.accent, fontFamily: FONT_BODY.bold },
   streakChip: { backgroundColor: 'rgba(255,138,76,0.15)', borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 },
-  streakChipText: { fontSize: 10.5, fontWeight: '700', color: C.streak },
-  rowScore: { fontWeight: '700', fontSize: 14, color: C.textPri },
-  rowScoreMuted: { fontSize: 12, fontWeight: '600', color: C.textFaint },
+  streakChipText: { fontSize: 10.5, color: C.streak, fontFamily: FONT_BODY.bold },
+  rowScore: { fontSize: 14, color: C.textPri, fontFamily: FONT_DISPLAY },
+  rowScoreMuted: { fontSize: 12, color: C.textFaint, fontFamily: FONT_BODY.semibold },
 
   chipsRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   achip: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
   achipIc: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  achipTx: { fontSize: 10.5, color: C.textPri, fontWeight: '600' },
-  achipSub: { fontSize: 8.5, color: C.textSub, fontWeight: '600' },
+  achipTx: { fontSize: 10.5, color: C.textPri, fontFamily: FONT_BODY.semibold },
+  achipSub: { fontSize: 8.5, color: C.textSub, fontFamily: FONT_BODY.semibold },
 
   fsOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.bgBase, zIndex: 50 },
   fsTrack: { flexDirection: 'row', flex: 1 },
   fsSlide: { height: '100%', position: 'relative' },
   fsTop: { position: 'absolute', top: 14, left: 14, right: 14, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 2 },
-  fsName: { flex: 1, fontSize: 13, fontWeight: '600', color: '#fff' },
+  fsName: { flex: 1, fontSize: 13, color: '#fff', fontFamily: FONT_BODY.semibold },
   fsScore: { backgroundColor: 'rgba(10,6,10,0.55)', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 3 },
-  fsScoreText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  fsScoreText: { color: '#fff', fontSize: 14, fontFamily: FONT_DISPLAY },
   fsCloseBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(10,6,10,0.45)', alignItems: 'center', justifyContent: 'center' },
   fsCloseBtnAbs: { position: 'absolute', top: 14, right: 14, zIndex: 2 },
   fsBottom: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 14, paddingTop: 34, paddingBottom: 16 },
   gaugesRow: { flexDirection: 'row', gap: 8 },
   gaugeHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
-  gaugeLabel: { fontSize: 9.5, color: 'rgba(246,238,242,0.65)', fontWeight: '600' },
+  gaugeLabel: { fontSize: 9.5, color: 'rgba(246,238,242,0.65)', fontFamily: FONT_BODY.semibold },
   gaugeTrack: { height: 3.5, borderRadius: 99, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden' },
   gaugeFill: { height: '100%', borderRadius: 99 },
-  fsHint: { textAlign: 'center', fontSize: 11, color: 'rgba(246,238,242,0.55)', fontWeight: '600', marginTop: 10 },
+  fsHint: { textAlign: 'center', fontSize: 11, color: 'rgba(246,238,242,0.55)', marginTop: 10, fontFamily: FONT_BODY.semibold },
   fsEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 30 },
   ghostAvatarLg: { width: 56, height: 56, borderRadius: 28, backgroundColor: C.bgElevated2, alignItems: 'center', justifyContent: 'center' },
-  ghostAvatarLgText: { color: C.textFaint, fontWeight: '700', fontSize: 18 },
-  fsEmptyText: { fontSize: 13, color: C.textSub, fontWeight: '600', textAlign: 'center' },
+  ghostAvatarLgText: { color: C.textFaint, fontSize: 18, fontFamily: FONT_DISPLAY },
+  fsEmptyText: { fontSize: 13, color: C.textSub, textAlign: 'center', fontFamily: FONT_BODY.semibold },
   nudgeBtn: { borderWidth: 1, borderColor: C.borderSoft, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6 },
-  nudgeBtnText: { color: C.accent, fontSize: 11.5, fontWeight: '700' },
+  nudgeBtnText: { color: C.accent, fontSize: 11.5, fontFamily: FONT_BODY.bold },
   fsReply: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: C.bgElevated, borderTopWidth: 1, borderTopColor: C.borderSoft, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 14, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 3 },
-  fsReplyInput: { flex: 1, backgroundColor: C.bgElevated2, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 10, fontSize: 13, color: C.textPri },
+  fsReplyInput: { flex: 1, backgroundColor: C.bgElevated2, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 10, fontSize: 13, color: C.textPri, fontFamily: FONT_BODY.regular },
   fsReplySend: { backgroundColor: C.accent, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 10 },
-  fsReplySendText: { color: C.onAccent, fontWeight: '700', fontSize: 12.5 },
+  fsReplySendText: { color: C.onAccent, fontSize: 12.5, fontFamily: FONT_BODY.bold },
 });
