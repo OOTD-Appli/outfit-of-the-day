@@ -85,7 +85,15 @@ function mapMessageRow(row, userId) {
 }
 
 // ---------------------------------------------------------------------------
-// Ligne de message : swipe-to-reply (glisser vers la droite), like, réactions.
+// Ligne de message (redesign 2026-09-30, plus de boutons visibles) :
+// - swipe vers la droite = répondre (inchangé, PanResponder axis-locked) ;
+// - double-tap sur la bulle = liker (cœur animé façon Instagram, pas de
+//   compteur permanent affiché à côté d'un bouton) ;
+// - appui long sur la bulle = ouvre le popover de réactions emoji (avant
+//   déclenché par un bouton "😊+" séparé) — pour ses propres messages, ce
+//   même popover ajoute une option de suppression (l'appui long servait
+//   avant UNIQUEMENT à supprimer ses propres messages : ce rôle est repris
+//   dans le popover pour ne pas perdre la fonctionnalité).
 // Le PanResponder n'engage le drag horizontal que si le mouvement est
 // nettement horizontal (|dx|>10 et dominant sur dy) — sinon le scroll vertical
 // natif du parent reste prioritaire, exactement comme dans la maquette.
@@ -93,6 +101,9 @@ function mapMessageRow(row, userId) {
 function MessageRow({ message, isMine, quoteText, popoverOpen, onTogglePopover, onSwipeReply, onToggleLike, onPickReaction, onDelete }) {
   const translateX = useRef(new Animated.Value(0)).current;
   const iconOpacity = useRef(new Animated.Value(0)).current;
+  const heartScale = useRef(new Animated.Value(0)).current;
+  const heartOpacity = useRef(new Animated.Value(0)).current;
+  const lastTapAt = useRef(0);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -115,14 +126,39 @@ function MessageRow({ message, isMine, quoteText, popoverOpen, onTogglePopover, 
     })
   ).current;
 
+  const playHeartBurst = () => {
+    heartScale.setValue(0.4);
+    heartOpacity.setValue(1);
+    Animated.spring(heartScale, { toValue: 1.15, friction: 4, tension: 60, useNativeDriver: true }).start(() => {
+      Animated.timing(heartOpacity, { toValue: 0, duration: 320, delay: 200, useNativeDriver: true }).start();
+    });
+  };
+
+  const handleTap = () => {
+    if (message.is_deleted) return;
+    const now = Date.now();
+    if (now - lastTapAt.current < 280) {
+      lastTapAt.current = 0;
+      onToggleLike(message);
+      playHeartBurst();
+    } else {
+      lastTapAt.current = now;
+    }
+  };
+
   return (
     <View style={[rs.row, isMine && rs.rowOut]}>
       <Animated.View pointerEvents="none" style={[rs.replyIcon, { opacity: iconOpacity }]}>
         <Ionicons name="arrow-undo" size={15} color={C.accent} />
       </Animated.View>
-      {!isMine && <Avatar uri={message.profiles?.avatar_url} username={message.profiles?.username} size={24} borderWidth={0} />}
+      {!isMine && <Avatar uri={message.profiles?.avatar_url} username={message.profiles?.username} size={28} borderWidth={0} />}
       <Animated.View {...panResponder.panHandlers} style={[rs.col, isMine && rs.colOut, { transform: [{ translateX }] }]}>
-        <TouchableOpacity activeOpacity={isMine ? 0.75 : 1} onLongPress={() => isMine && onDelete(message)} delayLongPress={400}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={handleTap}
+          onLongPress={() => !message.is_deleted && onTogglePopover(message.id)}
+          delayLongPress={350}
+        >
           {(message.reply_to_id || message.quoted_label) && !message.is_deleted && (
             <View style={[rs.quote, isMine && rs.quoteOut]}>
               <Text style={rs.quoteText} numberOfLines={1}>{message.quoted_label || quoteText || 'Message'}</Text>
@@ -136,22 +172,15 @@ function MessageRow({ message, isMine, quoteText, popoverOpen, onTogglePopover, 
             ) : (
               <Text style={[rs.bubbleText, isMine ? rs.bubbleTextOut : rs.bubbleTextIn]}>{message.content}</Text>
             )}
+            <Animated.View pointerEvents="none" style={[rs.heartBurst, { opacity: heartOpacity, transform: [{ scale: heartScale }] }]}>
+              <Text style={rs.heartBurstEmoji}>❤️</Text>
+            </Animated.View>
           </View>
         </TouchableOpacity>
 
         {!message.is_deleted && (
           <View style={rs.metaRow}>
             <Text style={rs.metaTime}>{fmtTime(message.created_at)}</Text>
-            <View style={rs.actionsRow}>
-              <TouchableOpacity style={rs.miniBtn} onPress={() => onToggleLike(message)} hitSlop={6}>
-                <Text style={[rs.miniBtnText, message.likedByMe && { color: C.love }]}>
-                  {message.likedByMe ? '❤️' : '🤍'}{message.likeCount > 0 ? ` ${message.likeCount}` : ''}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={rs.miniBtn} onPress={() => onTogglePopover(message.id)} hitSlop={6}>
-                <Text style={rs.miniBtnText}>😊+</Text>
-              </TouchableOpacity>
-            </View>
             {popoverOpen && (
               <View style={rs.reactPopover}>
                 {REACT_EMOJIS.map(e => (
@@ -159,13 +188,23 @@ function MessageRow({ message, isMine, quoteText, popoverOpen, onTogglePopover, 
                     <Text style={rs.reactPopoverEmoji}>{e}</Text>
                   </TouchableOpacity>
                 ))}
+                {isMine && (
+                  <TouchableOpacity onPress={() => { onTogglePopover(message.id); onDelete(message); }} hitSlop={4} style={rs.reactPopoverDelete}>
+                    <Ionicons name="trash-outline" size={15} color={C.love} />
+                  </TouchableOpacity>
+                )}
               </View>
             )}
           </View>
         )}
 
-        {message.reactions.length > 0 && (
+        {(message.likeCount > 0 || message.reactions.length > 0) && (
           <View style={rs.reactsRow}>
+            {message.likeCount > 0 && (
+              <View style={[rs.reactChip, message.likedByMe && rs.reactChipLiked]}>
+                <Text style={rs.reactChipText}>❤️{message.likeCount > 1 ? ` ${message.likeCount}` : ''}</Text>
+              </View>
+            )}
             {message.reactions.map(r => (
               <View key={r.emoji} style={rs.reactChip}>
                 <Text style={rs.reactChipText}>{r.emoji}{r.count > 1 ? ` ${r.count}` : ''}</Text>
@@ -182,6 +221,14 @@ export default function CompetitionScreen({ route, navigation }) {
   const { competitionId, competitionName } = route.params || {};
   const { showToast } = useToast();
   const { width } = useWindowDimensions();
+  // Même piège que todaysPhotosRef ci-dessous : pagerResponder et fsResponder
+  // sont tous deux des useRef(PanResponder.create(...)).current, donc figés au
+  // premier rendu — lire `width` en direct dedans le fige aussi (recalcul de
+  // layout si la fenêtre est redimensionnée/pivotée sur ce PWA web, ex. rotation
+  // d'écran) plutôt que de suivre l'écran courant. Trouvé en revue adversariale
+  // du fix todaysPhotos (2026-09-30) — même classe de bug, déclencheur différent.
+  const widthRef = useRef(width);
+  useEffect(() => { widthRef.current = width; }, [width]);
 
   const [userId, setUserId] = useState(null);
   const [createdBy, setCreatedBy] = useState(null); // pour n'afficher "Supprimer" qu'au créateur
@@ -196,6 +243,16 @@ export default function CompetitionScreen({ route, navigation }) {
   // ---- Tenues du jour ----
   const [todaysPhotos, setTodaysPhotos] = useState([]);
   const [todaysLoading, setTodaysLoading] = useState(true);
+  // Miroir en ref, lu par fsResponder (useRef(PanResponder.create(...)).current
+  // ne garde QUE le rendu initial : ses closures d'onPanResponderMove/Release
+  // restent figées pour toujours sur le state du premier rendu — todaysPhotos
+  // y valait encore [] à ce moment (chargé de façon async par loadTodaysPhotos
+  // après résolution de userId). Lire todaysPhotos directement dedans le
+  // condamnait à toujours voir un tableau vide, cassant silencieusement le
+  // swipe gauche/droite ET le swipe vers le haut du viewer plein écran (bug
+  // réel diagnostiqué le 2026-09-30, confirmé par 2 investigations indépendantes).
+  const todaysPhotosRef = useRef([]);
+  useEffect(() => { todaysPhotosRef.current = todaysPhotos; }, [todaysPhotos]);
 
   // ---- Chat ----
   const [messages, setMessages] = useState([]);
@@ -545,21 +602,26 @@ export default function CompetitionScreen({ route, navigation }) {
   };
 
   // ================= Pager de page (Photos&chat <-> Classement) =================
+  // Lit widthRef.current (pas width) : pagerResponder (frozen, voir plus bas)
+  // n'appelle jamais que la copie de applyPanel figée à son tout premier rendu —
+  // passer par la ref garantit que même cette copie fige lit la largeur actuelle
+  // au moment de l'appel plutôt que celle du montage.
   const applyPanel = useCallback((idx, animated = true) => {
     setPanelIndex(idx);
-    Animated.timing(pagerX, { toValue: -idx * width, duration: animated ? 320 : 0, useNativeDriver: true }).start();
-  }, [pagerX, width]);
+    Animated.timing(pagerX, { toValue: -idx * widthRef.current, duration: animated ? 320 : 0, useNativeDriver: true }).start();
+  }, [pagerX]);
 
   const pagerResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, g) => !fsOpenRef.current && Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy),
       onPanResponderMove: (_, g) => {
-        const next = Math.max(Math.min(-panelIndexRef.current * width + g.dx, width * 0.18), -width - width * 0.18);
+        const w = widthRef.current;
+        const next = Math.max(Math.min(-panelIndexRef.current * w + g.dx, w * 0.18), -w - w * 0.18);
         pagerX.setValue(next);
       },
       onPanResponderRelease: (_, g) => {
-        const threshold = width * 0.2;
+        const threshold = widthRef.current * 0.2;
         let next = panelIndexRef.current;
         if (g.dx < -threshold && panelIndexRef.current === 0) next = 1;
         else if (g.dx > threshold && panelIndexRef.current === 1) next = 0;
@@ -591,14 +653,14 @@ export default function CompetitionScreen({ route, navigation }) {
     });
   }
   function openFsReply() {
-    if (!todaysPhotos[fsIndexRef.current]?.ootd) return;
+    if (!todaysPhotosRef.current[fsIndexRef.current]?.ootd) return;
     setFsReplyOpen(true);
     setTimeout(() => fsReplyInputRef.current?.focus(), 250);
   }
   async function sendFsReply() {
     const trimmed = fsReplyText.trim();
     if (!trimmed) return;
-    const photo = todaysPhotos[fsIndexRef.current];
+    const photo = todaysPhotosRef.current[fsIndexRef.current];
     await insertMessage({ content: trimmed, quotedLabel: `Réponse à la tenue de ${photo?.username || '?'}` });
     closeFsReply();
   }
@@ -616,22 +678,32 @@ export default function CompetitionScreen({ route, navigation }) {
           }
         }
         if (fsAxisRef.current === 'x') {
-          const next = Math.max(Math.min(-fsIndexRef.current * width + g.dx, width * 0.15), -(todaysPhotos.length - 1) * width - width * 0.15);
+          const w = widthRef.current;
+          const next = Math.max(Math.min(-fsIndexRef.current * w + g.dx, w * 0.15), -(todaysPhotosRef.current.length - 1) * w - w * 0.15);
           fsTrackX.setValue(next);
-        } else if (fsAxisRef.current === 'y' && g.dy > 0) {
-          fsOverlayTranslateY.setValue(Math.min(g.dy * 0.5, 130));
-          fsOverlayScale.setValue(1 - Math.min(g.dy, 260) / 1500);
-          fsOverlayOpacity.setValue(1 - Math.min(g.dy, 220) / 380);
+        } else if (fsAxisRef.current === 'y') {
+          if (g.dy > 0) {
+            fsOverlayTranslateY.setValue(Math.min(g.dy * 0.5, 130));
+            fsOverlayScale.setValue(1 - Math.min(g.dy, 260) / 1500);
+            fsOverlayOpacity.setValue(1 - Math.min(g.dy, 220) / 380);
+          } else {
+            // Léger cue visuel pour le swipe vers le haut (ouvrir la réponse) —
+            // avant ce fix, cette branche n'existait pas du tout : aucun retour
+            // visuel pendant le drag, contribuant à l'impression que "rien ne
+            // se passe" même une fois le bug de fermeture ci-dessus corrigé.
+            fsOverlayTranslateY.setValue(Math.max(g.dy * 0.25, -46));
+          }
         }
       },
       onPanResponderRelease: (_, g) => {
         if (fsAxisRef.current === 'x') {
-          const threshold = width * 0.18;
+          const w = widthRef.current;
+          const threshold = w * 0.18;
           let next = fsIndexRef.current;
-          if (g.dx < -threshold && fsIndexRef.current < todaysPhotos.length - 1) next += 1;
+          if (g.dx < -threshold && fsIndexRef.current < todaysPhotosRef.current.length - 1) next += 1;
           else if (g.dx > threshold && fsIndexRef.current > 0) next -= 1;
           setFsIndex(next);
-          Animated.timing(fsTrackX, { toValue: -next * width, duration: 260, useNativeDriver: true }).start();
+          Animated.timing(fsTrackX, { toValue: -next * w, duration: 260, useNativeDriver: true }).start();
         } else if (fsAxisRef.current === 'y') {
           const dy = g.dy;
           Animated.parallel([
@@ -665,19 +737,19 @@ export default function CompetitionScreen({ route, navigation }) {
       <View style={styles.header}>
         <View style={styles.headerRow1}>
           <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={22} color={C.textPri} />
+            <Ionicons name="chevron-back" size={25} color={C.textPri} />
           </TouchableOpacity>
           <View style={styles.titleBlock}>
             <Text style={styles.title} numberOfLines={1}>{competitionName}</Text>
             {memberCount > 0 && <Text style={styles.subtitle}>{memberCount} membre{memberCount > 1 ? 's' : ''}</Text>}
           </View>
           <TouchableOpacity style={styles.addBtn} onPress={shareInvite}>
-            <Ionicons name="add" size={14} color={C.accent} />
+            <Ionicons name="add" size={16} color={C.accent} />
             <Text style={styles.addBtnText}>Ajouter</Text>
           </TouchableOpacity>
           <View>
             <TouchableOpacity style={styles.menuBtn} onPress={() => setMenuOpen(v => !v)} hitSlop={8}>
-              <Ionicons name="ellipsis-vertical" size={18} color={C.textSub} />
+              <Ionicons name="ellipsis-vertical" size={21} color={C.textSub} />
             </TouchableOpacity>
             {menuOpen && (
               <View style={styles.menuPopover}>
@@ -720,7 +792,7 @@ export default function CompetitionScreen({ route, navigation }) {
               {todaysLoading ? (
                 <ActivityIndicator color={C.accent} style={{ marginVertical: 16 }} />
               ) : (
-                <View style={styles.thumbRow}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.thumbRow}>
                   {todaysPhotos.map((p, i) => (
                     <TouchableOpacity key={p.userId} style={styles.thumb} activeOpacity={0.85} onPress={() => openFullscreen(i)}>
                       {p.ootd ? (
@@ -740,7 +812,7 @@ export default function CompetitionScreen({ route, navigation }) {
                       )}
                     </TouchableOpacity>
                   ))}
-                </View>
+                </ScrollView>
               )}
 
               <Text style={styles.sectionCaption}>Discussion</Text>
@@ -777,13 +849,13 @@ export default function CompetitionScreen({ route, navigation }) {
                     <Text style={styles.replyBarSnip} numberOfLines={1}>{replyTo.snippet}</Text>
                   </View>
                   <TouchableOpacity onPress={() => setReplyTo(null)} hitSlop={8}>
-                    <Ionicons name="close" size={16} color={C.textFaint} />
+                    <Ionicons name="close" size={18} color={C.textFaint} />
                   </TouchableOpacity>
                 </View>
               )}
               <View style={styles.inputRow}>
                 <TouchableOpacity style={styles.inputIconBtn} onPress={pickPhoto} disabled={sending}>
-                  <Ionicons name="image-outline" size={17} color={C.accent} />
+                  <Ionicons name="image-outline" size={20} color={C.accent} />
                 </TouchableOpacity>
                 <TextInput
                   ref={textInputRef}
@@ -795,7 +867,7 @@ export default function CompetitionScreen({ route, navigation }) {
                   onSubmitEditing={sendText}
                 />
                 <TouchableOpacity style={styles.sendBtn} onPress={sendText} disabled={!text.trim() || sending}>
-                  <Ionicons name="send" size={15} color={C.onAccent} />
+                  <Ionicons name="send" size={18} color={C.onAccent} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -1011,25 +1083,26 @@ const rs = StyleSheet.create({
   colOut: { alignItems: 'flex-end' },
   quote: { backgroundColor: C.bgElevated2, borderLeftWidth: 2, borderLeftColor: C.accent, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, marginBottom: 4 },
   quoteOut: { backgroundColor: 'rgba(0,0,0,0.15)', borderLeftColor: 'rgba(58,15,34,0.4)' },
-  quoteText: { fontSize: 11, color: C.textSub, fontFamily: FONT_BODY.regular },
-  bubble: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 17 },
+  quoteText: { fontSize: 12.5, color: C.textSub, fontFamily: FONT_BODY.regular },
+  bubble: { paddingHorizontal: 15, paddingVertical: 10, borderRadius: 18, position: 'relative' },
   bubbleIn: { backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderBottomLeftRadius: 5 },
   bubbleOut: { backgroundColor: C.accent, borderBottomRightRadius: 5 },
-  bubbleText: { fontSize: 13.5, lineHeight: 18, color: C.textPri },
+  bubbleText: { fontSize: 15, lineHeight: 21, color: C.textPri },
   bubbleTextIn: { fontFamily: FONT_BODY.regular },
   bubbleTextOut: { fontFamily: FONT_BODY.medium, color: C.onAccent },
-  deletedText: { fontSize: 13, fontStyle: 'italic', color: C.textFaint, fontFamily: FONT_BODY.regular },
-  bubbleImage: { width: 160, height: 160, borderRadius: 12 },
+  deletedText: { fontSize: 14, fontStyle: 'italic', color: C.textFaint, fontFamily: FONT_BODY.regular },
+  bubbleImage: { width: 190, height: 190, borderRadius: 13 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, paddingHorizontal: 4, position: 'relative' },
-  metaTime: { fontSize: 9.5, color: C.textFaint, fontFamily: FONT_BODY.regular },
-  actionsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  miniBtn: {},
-  miniBtnText: { fontSize: 11, color: C.textFaint, fontFamily: FONT_BODY.bold },
-  reactPopover: { position: 'absolute', bottom: '100%', left: 0, marginBottom: 4, flexDirection: 'row', gap: 4, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 6, zIndex: 5 },
-  reactPopoverEmoji: { fontSize: 16 },
+  metaTime: { fontSize: 11, color: C.textFaint, fontFamily: FONT_BODY.regular },
+  heartBurst: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  heartBurstEmoji: { fontSize: 38 },
+  reactPopover: { position: 'absolute', bottom: '100%', left: 0, marginBottom: 4, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 7, zIndex: 5 },
+  reactPopoverEmoji: { fontSize: 19 },
+  reactPopoverDelete: { marginLeft: 4, paddingLeft: 8, borderLeftWidth: 1, borderLeftColor: C.borderSoft2 },
   reactsRow: { flexDirection: 'row', gap: 4, marginTop: 4 },
-  reactChip: { backgroundColor: C.bgElevated2, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 },
-  reactChipText: { fontSize: 12, color: C.textPri },
+  reactChip: { backgroundColor: C.bgElevated2, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  reactChipLiked: { borderColor: 'rgba(255,92,122,0.5)' },
+  reactChipText: { fontSize: 13, color: C.textPri },
 });
 
 const styles = StyleSheet.create({
@@ -1044,50 +1117,54 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderSoft2, zIndex: 2 },
   headerRow1: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   titleBlock: { flex: 1, minWidth: 0 },
-  title: { color: C.textPri, fontSize: 16.5, fontFamily: FONT_DISPLAY },
-  subtitle: { color: C.textSub, fontSize: 11, fontFamily: FONT_BODY.semibold },
-  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(237,147,177,0.14)', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
-  addBtnText: { color: C.accent, fontSize: 12, fontFamily: FONT_BODY.bold },
-  menuBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  title: { color: C.textPri, fontSize: 19, fontFamily: FONT_DISPLAY },
+  subtitle: { color: C.textSub, fontSize: 12.5, fontFamily: FONT_BODY.semibold },
+  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(237,147,177,0.14)', borderRadius: 999, paddingHorizontal: 13, paddingVertical: 9 },
+  addBtnText: { color: C.accent, fontSize: 13.5, fontFamily: FONT_BODY.bold },
+  menuBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   menuPopover: {
-    position: 'absolute', top: 34, right: 0, minWidth: 210, zIndex: 10,
+    position: 'absolute', top: 38, right: 0, minWidth: 220, zIndex: 10,
     backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft,
     borderRadius: 14, paddingVertical: 6,
   },
-  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 14, paddingVertical: 11 },
-  menuItemText: { color: C.love, fontSize: 13, fontFamily: FONT_BODY.semibold },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 14, paddingVertical: 12 },
+  menuItemText: { color: C.love, fontSize: 14.5, fontFamily: FONT_BODY.semibold },
   switcher: { flexDirection: 'row', gap: 6 },
-  switchBtn: { flex: 1, backgroundColor: C.bgElevated, borderRadius: 13, paddingVertical: 9, alignItems: 'center' },
+  switchBtn: { flex: 1, backgroundColor: C.bgElevated, borderRadius: 13, paddingVertical: 11, alignItems: 'center' },
   switchBtnActive: { backgroundColor: C.accent },
-  switchBtnText: { color: C.textSub, fontSize: 12.5, fontFamily: FONT_BODY.semibold },
+  switchBtnText: { color: C.textSub, fontSize: 14, fontFamily: FONT_BODY.semibold },
   switchBtnTextActive: { color: C.onAccent },
 
   viewport: { flex: 1, overflow: 'hidden', zIndex: 1 },
   track: { flexDirection: 'row', flex: 1 },
 
-  sectionCaption: { color: C.textFaint, fontSize: 11.5, marginHorizontal: 16, marginTop: 14, marginBottom: 8, fontFamily: FONT_BODY.semibold },
-  emptyText: { color: C.textSub, fontSize: 13, marginHorizontal: 16, marginBottom: 10, fontFamily: FONT_BODY.regular },
+  sectionCaption: { color: C.textFaint, fontSize: 13, marginHorizontal: 16, marginTop: 14, marginBottom: 9, fontFamily: FONT_BODY.semibold },
+  emptyText: { color: C.textSub, fontSize: 14, marginHorizontal: 16, marginBottom: 10, fontFamily: FONT_BODY.regular },
 
-  thumbRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16 },
-  thumb: { flex: 1, aspectRatio: 1 / 1.05, borderRadius: 16, overflow: 'hidden', backgroundColor: '#1a1020' },
-  thumbScore: { position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(10,6,10,0.55)', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
-  thumbScoreText: { color: '#fff', fontSize: 11.5, fontFamily: FONT_DISPLAY },
-  thumbNameWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingTop: 16, paddingBottom: 6 },
-  thumbNameText: { color: '#fff', fontSize: 11, flexShrink: 1, fontFamily: FONT_BODY.semibold },
-  thumbEmpty: { flex: 1, borderWidth: 1.5, borderColor: C.borderSoft, borderStyle: 'dashed', borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: 6, padding: 8 },
-  ghostAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.bgElevated2, alignItems: 'center', justifyContent: 'center' },
-  ghostAvatarText: { color: C.textFaint, fontSize: 12, fontFamily: FONT_DISPLAY },
-  thumbEmptyText: { fontSize: 10.5, color: C.textSub, textAlign: 'center', fontFamily: FONT_BODY.semibold },
+  // Carrousel horizontal (2026-09-30) : les vignettes avaient une taille flex
+  // divisée par le nombre de membres (minuscules dès 4+ participants) — passe
+  // en ScrollView horizontal avec une largeur fixe plus grande, quel que soit
+  // le nombre de membres.
+  thumbRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16 },
+  thumb: { width: 148, aspectRatio: 1 / 1.05, borderRadius: 18, overflow: 'hidden', backgroundColor: '#1a1020' },
+  thumbScore: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(10,6,10,0.55)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  thumbScoreText: { color: '#fff', fontSize: 13, fontFamily: FONT_DISPLAY },
+  thumbNameWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 9, paddingTop: 18, paddingBottom: 7 },
+  thumbNameText: { color: '#fff', fontSize: 12.5, flexShrink: 1, fontFamily: FONT_BODY.semibold },
+  thumbEmpty: { flex: 1, borderWidth: 1.5, borderColor: C.borderSoft, borderStyle: 'dashed', borderRadius: 18, alignItems: 'center', justifyContent: 'center', gap: 7, padding: 10 },
+  ghostAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: C.bgElevated2, alignItems: 'center', justifyContent: 'center' },
+  ghostAvatarText: { color: C.textFaint, fontSize: 14, fontFamily: FONT_DISPLAY },
+  thumbEmptyText: { fontSize: 12, color: C.textSub, textAlign: 'center', fontFamily: FONT_BODY.semibold },
 
   inputArea: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.borderSoft2 },
   replyBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingTop: 8 },
   replyBarAccent: { width: 3, alignSelf: 'stretch', backgroundColor: C.accent, borderRadius: 3, minHeight: 26 },
-  replyBarLabel: { fontSize: 10.5, color: C.accent, fontFamily: FONT_BODY.bold },
-  replyBarSnip: { fontSize: 11.5, color: C.textSub, fontFamily: FONT_BODY.regular },
+  replyBarLabel: { fontSize: 11.5, color: C.accent, fontFamily: FONT_BODY.bold },
+  replyBarSnip: { fontSize: 12.5, color: C.textSub, fontFamily: FONT_BODY.regular },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10 },
-  inputIconBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.bgElevated, alignItems: 'center', justifyContent: 'center' },
-  chatField: { flex: 1, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 9, fontSize: 13, color: C.textPri, fontFamily: FONT_BODY.regular },
-  sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
+  inputIconBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: C.bgElevated, alignItems: 'center', justifyContent: 'center' },
+  chatField: { flex: 1, backgroundColor: C.bgElevated, borderWidth: 1, borderColor: C.borderSoft2, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 11, fontSize: 14.5, color: C.textPri, fontFamily: FONT_BODY.regular },
+  sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
 
   clScroll: { padding: 16, paddingBottom: 30 },
   periodRow: { flexDirection: 'row', gap: 6, marginBottom: 18 },
