@@ -1,6 +1,34 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-28 — Corrections post-lancement de l'écran Compétition v4 (2 bugs d'embed PostgREST, police de la maquette, refonte visuelle de la liste des compétitions).
+> Dernière mise à jour : 2026-09-30 — Agrégation des scores de classement par période (moyenne hors "Jour").
+
+---
+
+## Classements : moyenne (pas record) hors période "Jour" — 2026-09-30
+
+Demande produit (`Output/2026-09-23_prompt-claude-code-scores-periode.md`) : `get_top3_app`/`get_top3_friends`/`get_competition_leaderboard` utilisaient `MAX(score_global)` pour **toutes** les périodes du sélecteur Jour/Semaine/Mois/Toujours — seule "Jour" doit rester un record, les 3 autres doivent refléter la régularité.
+
+**Backend** (`20260930120000_leaderboard_avg_for_non_day_periods.sql`)
+- [x] `p_period = 'day'` → `MAX(score_global)` inchangé ; `'week'\|'month'\|'all'` → `ROUND(AVG(score_global), 1)` (même logique que le calcul déjà existant de `most_improved`).
+- [x] Colonne de sortie renommée `best_score` → `score` dans les 3 fonctions (son sens change selon la période — un nom neutre évite la confusion côté client). `DROP FUNCTION IF EXISTS` nécessaire avant `CREATE OR REPLACE` pour `get_top3_app`/`get_top3_friends` (Postgres refuse de changer les colonnes d'un `RETURNS TABLE` existant) ; pas nécessaire pour `get_competition_leaderboard` (retour `jsonb` opaque, juste une clé renommée).
+- [x] Vérifié en prod après `db push` : `get_top3_app`/`get_top3_friends` répondent `200 []` pour `'day'` et `'week'` (pas d'erreur de schéma, cache PostgREST rechargé via `NOTIFY pgrst, 'reload schema'`).
+
+**Frontend**
+- [x] `PalmaresScreen.js` : les 3 lectures `row.best_score` → `row.score` (barres SVG + libellés Top 3 app/amis).
+- [x] `CompetitionScreen.js` : `row.best_score`/`s.entry.best_score` → `.score` (liste "Classement complet" + podium) + libellé ajouté à côté de "Classement complet" ("meilleur score" si `period === 'day'`, "score moyen" sinon).
+- [x] **`RecapScreen.js` non modifié** : le prompt source affirmait que cet écran lisait aussi `.best_score`, mais ses 2 blocs Top 3 avaient déjà été retirés lors de la décision D6 (2026-09-25, remplacés par le graphique perso "Mon évolution") — vérifié par recherche exhaustive avant de coder, aucune référence trouvée dans ce fichier.
+- [x] Vérifications : `npm test` (56/56) + `npx expo export --platform web` (build complet). Migration appliquée en prod + déployé (Vercel).
+
+---
+
+## Audit des règles métier Compétitions v2 (quitter / supprimer / invitation stricte) — 2026-09-29
+
+Suite à une mission d'audit demandée par l'utilisateur (comparer le cahier des charges Compétitions v2 à l'implémentation réelle plutôt que reconstruire). 3 écarts trouvés et corrigés (`20260929120000_competition_leave_delete_strict_invite.sql`).
+
+- [x] **Départ volontaire** : la RLS autorisait déjà `DELETE` sur `competition_members` par soi-même, mais aucune RPC/bouton ne l'exposait proprement. Ajout de `leave_competition(p_competition_id)` + entrée "Quitter la compétition" dans le nouveau menu "..." du header de `CompetitionScreen.js` (confirmation destructive).
+- [x] **Droits du créateur** : aucune RPC ni policy RLS `DELETE` n'existait sur `competitions` — personne, pas même le créateur, ne pouvait supprimer une compétition. Ajout de `delete_competition(p_competition_id)` (vérifié sur `created_by`, cascade déjà en place sur toutes les FK) + entrée "Supprimer la compétition" dans le même menu, affichée uniquement si `created_by === userId`.
+- [x] **Système d'invitation strict** : vrai uniquement à la création (`create_competition_with_members` vérifiait déjà l'amitié) — le lien d'invitation (`redeem_competition_invite`) ne vérifiait aucune amitié, n'importe qui avec le lien pouvait rejoindre. Durci pour n'accepter que les amis acceptés du créateur du lien.
+- [x] Vérifications : `npm test` + `npx expo export --platform web`. Migration appliquée en prod + déployé (Vercel).
 
 ---
 
