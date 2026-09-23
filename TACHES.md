@@ -1,6 +1,27 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-27 — Écran Compétition réécrit selon la maquette v4 "gestes séparés" (carrousel du jour, plein écran gestuel, swipe-to-reply, likes/réactions).
+> Dernière mise à jour : 2026-09-28 — Corrections post-lancement de l'écran Compétition v4 (2 bugs d'embed PostgREST, police de la maquette, refonte visuelle de la liste des compétitions).
+
+---
+
+## Corrections post-lancement écran Compétition v4 — 2026-09-28
+
+Remontées par l'utilisateur juste après le déploiement du 2026-09-27 (captures d'écran : 2 toasts d'erreur rouges, écran rendu dans la police système au lieu de la maquette).
+
+**Bugs corrigés (migration `20260928120000_fix_competition_members_profiles_fk.sql` + requête frontend)**
+- [x] **`competition_members.user_id` référençait `auth.users(id)` au lieu de `profiles(id)`** — la contrainte FK existait déjà mais n'avait jamais été corrigée lors de la création de la table (même piège que `competition_messages.sender_id`, déjà documenté en Post-mortems, mais raté ici). Invisible via `information_schema.constraint_column_usage` sur ce self-host (qui ne résout pas fiablement les cibles cross-schema) — confirmé directement via `pg_constraint`. Bloquait l'embed `profiles(...)` du carrousel "tenues du jour", introduit le 2026-09-27 : premier endroit du code à en avoir besoin depuis cette table.
+- [x] **Ambiguïté PostgREST sur `competition_messages` → `profiles`** (`PGRST201`, "more than one relationship was found") — depuis l'ajout de `competition_message_likes`/`competition_message_reactions` (2026-09-27), ces 2 tables ont chacune une FK vers `competition_messages` ET vers `profiles`, ce que PostgREST traite comme des jonctions many-to-many candidates vers `profiles` — 3 chemins possibles pour un embed `profiles(...)` nu. Fix purement frontend (pas de migration) : hint explicite `profiles!competition_messages_sender_id_fkey(...)` dans le `.select()` de `loadMessages`.
+- [x] Les deux fixes vérifiés directement contre l'API REST en prod avant et après correction (300/PGRST201 → 200).
+
+**Police fidèle à la maquette (`lib/competitionFonts.js`, nouveau)**
+- [x] Le premier port de l'écran Compétition v4 (2026-09-27) utilisait par erreur la police système partout — la maquette validée par l'utilisateur utilise 'Baloo 2' (titres, scores, rangs, initiales des avatars fantômes — toujours en graisse 700 dans la maquette) et 'Plus Jakarta Sans' (tout le reste, plusieurs graisses). Chargées via `@expo-google-fonts/baloo-2`/`@expo-google-fonts/plus-jakarta-sans` (nouvelles dépendances), un hook partagé `useCompetitionFonts()` + écran qui affiche un spinner tant que les polices ne sont pas prêtes.
+- [x] Appliqué sur `CompetitionScreen.js` ET `CompetitionsListScreen.js` (cohérence visuelle de toute l'aire "Compétitions").
+
+**Refonte visuelle de `CompetitionsListScreen.js`**
+- [x] Remplace le style générique `useTheme()` par la même palette fixe sombre que `CompetitionScreen` (dégradé de fond, cartes arrondies élevées, icône dans un cercle teinté accent, badge non-lu, bouton "Créer une compétition" en pointillés façon slot "Inviter" du podium).
+- [x] Ajout du nombre de membres par compétition (petite requête de comptage supplémentaire par ligne, même pattern que le compteur non-lu déjà existant) et d'un bloc vide illustré si aucune compétition.
+
+**Vérifications** : `npm test` (56/56) + `npx expo export --platform web` (build complet, polices confirmées présentes dans les assets générés) + migration et requêtes vérifiées en prod. Déployé (Vercel).
 
 ---
 

@@ -1,6 +1,6 @@
 # WORKFLOW.md — Développement et déploiement OOTD
 
-> Dernière mise à jour : 2026-09-27 (écran Compétition réécrit selon la maquette v4 "gestes séparés")
+> Dernière mise à jour : 2026-09-28 (corrections post-lancement écran Compétition v4 : 2 bugs d'embed PostgREST, police de la maquette)
 
 ## Prérequis
 
@@ -83,6 +83,7 @@ npx supabase db push --db-url "postgres://postgres.your-tenant-id:<pwd>@192.168.
 | `20260925120000_competition_streak.sql` | `competition_members.streak_count`/`last_submission_date` + logique de streak dans `submit_ootd_to_competitions` + RPC `restore_competition_streak` (décision D4) |
 | `20260925130000_competition_leaderboard_and_palmares.sql` | RPC `get_competition_leaderboard` (classement par compétition + blocs Régularité/Progression/Coup de cœur) + `get_top3_app`/`get_top3_friends` paramétrées par période (décisions D1/D3/D5) — dépend de la migration précédente (colonnes de streak) |
 | `20260927120000_competition_chat_social.sql` | `competition_messages.reply_to_id`/`quoted_label` (réponses) + tables `competition_message_likes`/`competition_message_reactions` + RPCs `toggle_competition_message_like`/`add_competition_message_reaction` (écran Compétition v4 "gestes séparés") |
+| `20260928120000_fix_competition_members_profiles_fk.sql` | Corrige `competition_members.user_id` (référençait `auth.users(id)` au lieu de `profiles(id)` depuis la création de la table) — bloquait l'embed `profiles(...)` du carrousel "tenues du jour" |
 
 **Nouveau projet self-host vierge** : rejouer toutes les migrations dans l'ordre depuis `20260510120000_initial_schema.sql`. **Sur l'instance de prod existante** : n'appliquer que les migrations pas encore poussées — `supabase db push` détecte automatiquement lesquelles via sa table de suivi interne, il suffit de lancer la commande, elle est idempotente.
 
@@ -196,6 +197,8 @@ npm run eas:build:prod      # AAB Android (Play Store)
 - [ ] Toute colonne destinée à être embed-jointe avec `profiles` dans un `.select()` client → FK vers `profiles(id)`, **jamais** `auth.users(id)` (PostgREST ne peut pas résoudre l'embed sinon — piège déjà rencontré 2 fois, voir Post-mortems ARCHITECTURE.md)
 - [ ] Tri par une colonne d'une ressource imbriquée → `.order('col', { foreignTable: 'table', ascending })`, **jamais** `.order('table(col)', ...)` (syntaxe invalide, échoue silencieusement ou en erreur visible)
 - [ ] Nouvelle policy RLS qui vérifie une appartenance/relation sur **la même table** qu'elle protège → passer par une fonction `SECURITY DEFINER`, jamais un `EXISTS` direct sur la même table (récursion infinie)
+- [ ] Toute FK ajoutée à une table existante : vérifier sa cible réelle via `pg_get_constraintdef(oid)` sur `pg_constraint` si un doute existe — `information_schema.constraint_column_usage` ne résout pas fiablement les cibles cross-schema (ex. `auth.users`) sur ce self-host, une FK vers le mauvais schéma peut y être invisible (piège déjà rencontré 2 fois, voir Post-mortems ARCHITECTURE.md)
+- [ ] Nouvelle table de jonction (likes/réactions/etc.) reliée à deux tables déjà reliées entre elles par une FK directe → l'embed existant `.select('autreTable(...)')` risque de devenir ambigu côté PostgREST (`PGRST201`) ; désambiguïser avec un hint explicite `autreTable!nom_de_la_fk(...)` dès l'ajout de la nouvelle table, ne pas attendre le bug en prod
 
 **Sécurité**
 - [ ] Jamais de clé API dans le code client ou `.env` versionné
