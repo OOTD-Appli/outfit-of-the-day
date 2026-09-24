@@ -1,6 +1,18 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-24 — Build du nouveau système de rentabilisation (pricing final v2 : tentatives quotidiennes, bouton Retenter, Gel de Flamme retiré).
+> Dernière mise à jour : 2026-09-25 — Refonte visuelle de l'écran Récap (réordonnancement + carte "Compte").
+
+---
+
+## Refonte visuelle de l'écran Récap — 2026-09-25
+
+Purement structurel/visuel, d'après un prompt + une maquette HTML de référence — aucune nouvelle donnée, requête ou logique métier.
+
+- [x] Nouvel ordre des sections : photo+nom → stats → hashtags → "Mon évolution" (remonté depuis le bas de l'écran) → nouvelle carte "Compte" → galerie "Mes tenues" → carte "Niveau" (descendue tout en bas, après la galerie — déplacée du `ListHeaderComponent` vers le `ListFooterComponent` de la `FlatList`).
+- [x] Carte "Compte" (nouveau) : remplace les 3 boutons Réglages/Abonnement/Mes amis + le bouton "Se déconnecter" du header. 4 lignes empilées — Réglages/Mes amis en navigation simple (icône neutre + chevron) ; Abonnement traité différemment (icône dorée + sous-texte + badge du plan actuel Free/Plus/Elite, car action commerciale) ; Se déconnecter en rouge discret (action rare, plus en bouton visible en haut d'écran). Accents dorée/rouge fixes (`GOLD`/`DANGER`, mêmes valeurs que `C.gold`/`C.love` dans CompetitionScreen), indépendants du thème cosmétique de l'utilisateur.
+- [x] Galerie : badge de score ajouté en médaillon (coin haut-droit) sur chaque vignette de la grille, même normalisation `/100` que `moyenneScore` — en plus du badge déjà existant dans la lightbox plein écran.
+- [x] Nettoyage des styles devenus morts (`actionsRow`/`actionBtn`/`logoutBtn`/`logoutText`) après le retrait de leurs seuls points d'usage.
+- [x] Vérifications : `npm test` (56/56) + `npx expo export --platform web`. Déployé (Vercel).
 
 ---
 
