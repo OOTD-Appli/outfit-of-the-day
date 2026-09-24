@@ -192,7 +192,7 @@ export default function RecapScreen() {
       const [{ data: profileData }, { data: ootdsData }, { data: subData }] = await Promise.all([
         supabase
           .from('profiles')
-          .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, flame_freezes, style_stats, specialized_feed, analysis_personality, has_analysis_pass, has_ootd_plus_pass')
+          .select('id, username, avatar_url, active_logo, bio, is_private, points, niveau, style_stats, specialized_feed, analysis_personality, has_analysis_pass, has_ootd_plus_pass')
           .eq('id', user.id)
           .single(),
         supabase

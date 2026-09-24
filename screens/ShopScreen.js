@@ -46,9 +46,12 @@ const ICON_PRICES  = { fire: 150, diamond: 200, star: 200, crown: 200 };
 const LOGO_PRICES  = { bleu_neon: 500, sunset: 600, vert_neon: 500, rose_flashy: 650, rose_pastel: 750 };
 
 // Achats express Stripe (paiement unique en euros, crédit posé par le webhook)
+// Gel de Flamme retiré (pricing final v2, 2026-09-23, décision #4) : la moyenne
+// hebdo ignore déjà les jours manqués (AVG SQL sur les lignes existantes,
+// migration 20260930120000) — plus besoin d'un produit payant pour protéger
+// une série d'un oubli.
 const EXPRESS = [
-  { product: 'flame_freeze', emoji: '🧊', name: 'Gel de Flamme',      desc: 'Protège une de tes séries 🔥 lors d\'un oubli', price: '0,99€' },
-  { product: 'points_2000',  emoji: '🪙', name: 'Pack de 2 000 Points', desc: 'Crédité instantanément sur ton profil',        price: '0,99€' },
+  { product: 'points_2000',  emoji: '🪙', name: 'Pack de 2 000 Points', desc: 'Crédité instantanément sur ton profil', price: '0,99€' },
 ];
 
 // ─── Abonnements Premium (Stripe) ───────────────────────────────────────────────
@@ -60,7 +63,7 @@ const PLANS = [
     price: '2,99€',
     icon: 'star',
     perks: [
-      '20 analyses IA par jour',
+      '2 tentatives d\'analyse par jour',
       'Badge premium sur ton profil',
       'Historique complet de tes OOTD',
       'Personnalité IA "Styliste bienveillant"',
@@ -73,8 +76,8 @@ const PLANS = [
     icon: 'diamond',
     highlight: true,
     perks: [
-      'Analyses IA illimitées',
-      'Tous les thèmes & logos débloqués',
+      '5 tentatives d\'analyse par jour',
+      'Tous les thèmes débloqués',
       'Badge Elite exclusif',
       'Toutes les personnalités IA',
     ],
@@ -112,13 +115,11 @@ export default function ShopScreen() {
     if (!silent) setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setLoading(false); return; }
-    // Verse les gels gratuits du mois si dû (idempotent côté serveur)
-    try { await supabase.rpc('claim_monthly_freezes'); } catch (_) {}
     const [{ data: prof }, { data: sub }] = await Promise.all([
       supabase
         .from('profiles')
         .select(
-          'points, flame_freezes, daily_credits, credits_reset_date, ' +
+          'points, daily_credits, credits_reset_date, ' +
           'has_analysis_pass, has_ootd_plus_pass, ' +
           'unlocked_themes, unlocked_logos, active_theme, active_logo'
         )
@@ -258,15 +259,12 @@ export default function ShopScreen() {
   const hasAnalysis = !!profile?.has_analysis_pass;
   const hasAnyPass  = hasPlus || hasAnalysis || subActive;
   const today       = new Date().toISOString().split('T')[0];
-  const freezes     = profile?.flame_freezes || 0;
-  const numBaseMax  = isElite ? Infinity : (hasPlus || hasAnalysis || activePlan === 'plus') ? 20 : 2;
+  // Pricing final v2 (2026-09-23) : Elite plafonné à 5 tentatives/jour, jamais
+  // illimité — voir migration 20261001120000_credits_daily_attempts_v2.sql.
+  const numBaseMax  = isElite ? 5 : (hasPlus || hasAnalysis || activePlan === 'plus') ? 2 : 1;
   const liveToday   = profile?.credits_reset_date < today ? 0 : (profile?.daily_credits ?? 0);
-  // Le Pass Analyse 24h pousse daily_credits à 20 sans poser de pass permanent :
-  // on reflète ce boost dans le plafond affiché du jour.
-  const maxCreds    = isElite ? '∞' : Math.max(numBaseMax, liveToday);
-  const credsToday  = isElite
-    ? '∞'
-    : (profile?.credits_reset_date < today ? numBaseMax : (profile?.daily_credits ?? 0));
+  const maxCreds    = Math.max(numBaseMax, liveToday);
+  const credsToday  = profile?.credits_reset_date < today ? numBaseMax : (profile?.daily_credits ?? 0);
 
   const isThemeOwned = (id) => id === 'default' || isElite || hasPlus || (profile?.unlocked_themes || []).includes(id);
   const isLogoOwned  = (id) => id === 'default' || isElite || hasPlus || (profile?.unlocked_logos  || []).includes(id);
@@ -414,13 +412,6 @@ export default function ShopScreen() {
           <Text style={[s.headerSub, { color: theme.textSub }]}>Premium par abonnement · cosmétiques avec tes points</Text>
         </View>
 
-        {/* Compteur de gels de flamme */}
-        <View style={[s.freezeChip, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text style={[s.freezeChipText, { color: theme.textPri }]}>
-            ❄️ Gels de flamme : <Text style={{ color: theme.accent, fontWeight: '900' }}>{freezes}</Text>
-          </Text>
-        </View>
-
         {/* Stats */}
         <View style={[s.statsCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <View style={s.statCol}>
@@ -451,14 +442,11 @@ export default function ShopScreen() {
         <Text style={[s.sectionSub, { color: theme.textSub }]}>Micro-achats en euros, crédités instantanément</Text>
         {EXPRESS.map((item) => {
           const busyThis  = buying === 'pay_' + item.product;
-          const showStock = item.product === 'flame_freeze' && freezes > 0;
           return (
             <View key={item.product} style={[s.passRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <Text style={s.cosEmoji}>{item.emoji}</Text>
               <View style={{ flex: 1 }}>
-                <Text style={[s.passName, { color: theme.textPri }]}>
-                  {item.name}{showStock ? ` · ${freezes} en stock` : ''}
-                </Text>
+                <Text style={[s.passName, { color: theme.textPri }]}>{item.name}</Text>
                 <Text style={[s.passDesc, { color: theme.textSub }]}>{item.desc}</Text>
               </View>
               <TouchableOpacity
@@ -511,9 +499,6 @@ const s = StyleSheet.create({
   header:      { marginBottom: 12 },
   headerTitle: { fontSize: 26, fontWeight: '900' },
   headerSub:   { fontSize: 12, marginTop: 3 },
-
-  freezeChip:     { alignSelf: 'flex-start', borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 8, marginBottom: 16 },
-  freezeChipText: { fontSize: 13, fontWeight: '700' },
 
   statsCard: {
     borderRadius: 18, borderWidth: 1,

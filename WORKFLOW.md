@@ -1,6 +1,6 @@
 # WORKFLOW.md — Développement et déploiement OOTD
 
-> Dernière mise à jour : 2026-09-28 (corrections post-lancement écran Compétition v4 : 2 bugs d'embed PostgREST, police de la maquette)
+> Dernière mise à jour : 2026-09-24 (pricing final v2 : tentatives quotidiennes plafonnées + bouton Retenter, Gel de Flamme retiré du Shop)
 
 ## Prérequis
 
@@ -86,6 +86,7 @@ npx supabase db push --db-url "postgres://postgres.your-tenant-id:<pwd>@192.168.
 | `20260928120000_fix_competition_members_profiles_fk.sql` | Corrige `competition_members.user_id` (référençait `auth.users(id)` au lieu de `profiles(id)` depuis la création de la table) — bloquait l'embed `profiles(...)` du carrousel "tenues du jour" |
 | `20260929120000_competition_leave_delete_strict_invite.sql` | Audit des règles métier Compétitions v2 : RPCs `leave_competition` (n'importe quel membre) et `delete_competition` (créateur uniquement, vérifié sur `created_by` — cascade déjà en place sur toutes les FK) + `redeem_competition_invite` durci (n'accepte plus que les amis acceptés du créateur du lien, faille corrigée) |
 | `20260930120000_leaderboard_avg_for_non_day_periods.sql` | `get_top3_app`/`get_top3_friends`/`get_competition_leaderboard` : `MAX(score_global)` gardé seulement pour `'day'`, `ROUND(AVG(score_global),1)` pour `'week'\|'month'\|'all'` (régularité plutôt que record) ; colonne de sortie `best_score` → `score` |
+| `20261001120000_credits_daily_attempts_v2.sql` | Pricing final v2 : `consume_daily_credit` — plafonds Gratuit 1 / Plus 2 / Elite 5 (au lieu de 2/20/illimité), retire la sentinelle "illimité" (`credits=-1`) pour Elite |
 
 **Nouveau projet self-host vierge** : rejouer toutes les migrations dans l'ordre depuis `20260510120000_initial_schema.sql`. **Sur l'instance de prod existante** : n'appliquer que les migrations pas encore poussées — `supabase db push` détecte automatiquement lesquelles via sa table de suivi interne, il suffit de lancer la commande, elle est idempotente.
 

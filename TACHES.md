@@ -1,6 +1,46 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-30 — Agrégation des scores de classement par période (moyenne hors "Jour").
+> Dernière mise à jour : 2026-09-24 — Build du nouveau système de rentabilisation (pricing final v2 : tentatives quotidiennes, bouton Retenter, Gel de Flamme retiré).
+
+---
+
+## Pricing final v2 : tentatives quotidiennes + bouton Retenter, Gel de Flamme retiré — 2026-09-24
+
+D'après `Output/2026-09-23_pricing-final-tentatives-quotidiennes.md` (4 décisions de pricing tranchées le 2026-09-23) et `Output/2026-09-23_prompt-claude-code-shop-perks-final.md` (mise à jour des perks Shop pour les refléter).
+
+**Backend** (`20261001120000_credits_daily_attempts_v2.sql`)
+- [x] `consume_daily_credit` : nouveaux plafonds quotidiens Gratuit 1 (au lieu de 2) / Plus 2 (au lieu de 20) / Elite 5 (au lieu d'illimité). Retire la sentinelle "illimité" (`credits=-1/max_credits=-1`) pour Elite — passe par exactement la même logique de décrément que les autres tiers, juste un plafond plus généreux.
+- [x] Garde-fou explicite (voir doc) : un plafond illimité recréerait le pay-to-win avec le nouveau système "chaque retentative efface le résultat précédent" (retenter à l'infini jusqu'à un score quasi parfait).
+
+**Frontend — AccueilScreen.js (nouveau bouton "Retenter")**
+- [x] Actions post-analyse : "✅ Publier cette tenue" (primaire, inchangé dans le fond) + "🔁 Retenter (N restante(s))" (nouveau, affiché tant que `credits > 0`, masqué à 0 — plus le choix une fois la dernière tentative du jour utilisée) + "Choisir une autre photo" (ex-"Analyser une nouvelle tenue", démoté en option tertiaire discrète).
+- [x] `retryAnalysis()` : ré-analyse la MÊME photo (`image` non réinitialisée) — efface `score`/`photoIncomplete`/`highScoreReminder` puis rappelle `analyzeOutfit(true)`. Le flag `isRetry` contourne le cooldown anti-doublon de 5 min (`lastAnalyzedRef`), qui existe pour éviter un renvoi accidentel, pas un retenter volontaire.
+- [x] Suppression du concept "illimité" côté client (state `unlimited`, sentinelle `max_credits === -1`) — devenu mort avec le plafond Elite.
+
+**Frontend — ShopScreen.js (perks + Gel de Flamme)**
+- [x] Perks Plus : "2 tentatives d'analyse par jour" (au lieu de "20 analyses IA par jour"). Perks Elite : "5 tentatives d'analyse par jour" (au lieu de "Analyses IA illimitées"), "Tous les thèmes débloqués" (retrait de la mention "& logos").
+- [x] Entrée EXPRESS "Gel de Flamme" (`flame_freeze`) retirée du catalogue — la moyenne hebdo des classements ignore déjà les jours manqués (`AVG` SQL, migration 20260930120000), plus besoin d'un produit payant pour protéger une série. Chip "❄️ Gels de flamme : N" et appel `claim_monthly_freezes()` au focus retirés avec (n'affichaient/n'alimentaient plus rien d'utile sans le produit).
+- [x] `numBaseMax`/`maxCreds`/`credsToday` (affichage "Analyses du jour") mis à jour pour les nouveaux plafonds (plus de branches `Infinity`/`'∞'` pour Elite).
+- [x] Vérifié (grep repo-wide) : plus aucune référence à "gel de flamme"/"analyses illimitées" dans `screens/`/`lib/`/`components/`/`App.js` (un `flame_freezes` mort dans le `.select()` de `RecapScreen.js` nettoyé au passage, jamais affiché).
+- [ ] **Écart signalé, non résolu** : le récap de pricing coche "Logos/icônes de profil supprimés ✅", mais le catalogue Icônes/Logos (achat par points) existe toujours intégralement dans `ShopScreen.js` — aucun prompt reçu ne demande de le retirer, donc non touché. À clarifier avec l'utilisateur si un futur prompt doit couvrir ce retrait.
+- [x] Vérifications : `npm test` (56/56) + `npx expo export --platform web`. Revue adversariale indépendante du diff (logique de crédits/retenter/plafonds) avant commit.
+
+---
+
+## Corrections écran Compétition v4 : swipe cassé + redesign chat + tailles — 2026-09-23
+
+Remontées utilisateur sur l'écran Compétition (viewer plein écran + chat), après le déploiement du 2026-09-25/27/28/29/30.
+
+**Bug réel diagnostiqué (pas juste patché à l'aveugle)**
+- [x] Swipe gauche/droite (changer de tenue) et swipe vers le haut (répondre) ne faisaient rien dans le viewer plein écran. Cause : `fsResponder` (`useRef(PanResponder.create(...)).current`) fige ses callbacks au premier rendu — ils lisaient `todaysPhotos` (encore `[]` à ce moment, chargé de façon async) directement plutôt que via une ref. Deux investigations indépendantes ont convergé sur cette cause exacte. Fix : `todaysPhotosRef`/`widthRef` (même piège trouvé en revue adversariale pour `width`), lus dans `fsResponder`/`pagerResponder`/`applyPanel`. Ajout du retour visuel manquant pendant le glissement vers le haut.
+- [x] Revue adversariale indépendante du correctif avant commit (1 problème mineur trouvé et corrigé : `width` avait le même piège que `todaysPhotos`).
+
+**Chat — interactions par geste**
+- [x] Suppression des boutons visibles sous les messages (❤️/🤍 + compteur, "😊+"), remplacés par : double-tap pour liker (cœur animé), swipe pour répondre (inchangé), appui long pour ouvrir le sélecteur de réactions emoji (inclut désormais la suppression pour ses propres messages).
+
+**Tailles augmentées** (partie Photos & chat uniquement)
+- [x] Titre, boutons du header, onglets, texte des messages, zone de saisie, et carrousel des tenues du jour (passé en défilement horizontal à taille fixe plus grande au lieu de rétrécir avec le nombre de membres).
+- [x] Vérifications : `npm test` (56/56) + `npx expo export --platform web`. Migration appliquée en prod + déployé (Vercel).
 
 ---
 

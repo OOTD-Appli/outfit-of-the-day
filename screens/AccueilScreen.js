@@ -201,8 +201,7 @@ export default function AccueilScreen({ navigation }) {
   }, []);
   const [caption, setCaption] = useState('');
   const [credits, setCredits] = useState(null);
-  const [maxCredits, setMaxCredits] = useState(2);
-  const [unlimited, setUnlimited] = useState(false);
+  const [maxCredits, setMaxCredits] = useState(1);
   const [analysisPersonality, setAnalysisPersonality] = useState('coach');
   const [userTier, setUserTier] = useState('free');
   const [highScoreReminder, setHighScoreReminder] = useState(null); // { note } | null
@@ -216,6 +215,12 @@ export default function AccueilScreen({ navigation }) {
   const { showToast } = useToast();
   const cachedPublicUrlRef = useRef(null);
   const lastAnalyzedRef = useRef({ uri: null, ts: 0 });
+  // Photos pour lesquelles un "Retenter" explicite a déjà été tenté (succès ou
+  // échec) — évite qu'un Retenter en échec (réseau, timeout) ne laisse
+  // l'utilisateur bloqué par le cooldown anti-spam sur le bouton générique
+  // "Analyser ma tenue" une fois l'écran revenu à l'état "avant" (score effacé
+  // avant l'appel réseau, donc pas encore réussi au moment de l'échec).
+  const retriedUrisRef = useRef(new Set());
   const resultFade = useRef(new Animated.Value(0)).current;
   const resultRise = useRef(new Animated.Value(14)).current;
 
@@ -253,19 +258,13 @@ export default function AccueilScreen({ navigation }) {
     if (!data) return;
     setAnalysisPersonality(data.analysis_personality || 'coach');
 
-    // Tier : Elite (abonnement) = illimité · Plus (abonnement) ou pass legacy = 20 · sinon 2
+    // Pricing final v2 (2026-09-23) : tentatives quotidiennes plafonnées pour
+    // tous les tiers, Elite compris (jamais illimité — voir la migration
+    // 20261001120000 pour le raisonnement anti pay-to-win).
     const tier = resolveTier({ subscription: sub, hasPlus: data.has_ootd_plus_pass, hasAnalysis: data.has_analysis_pass });
     setUserTier(tier);
 
-    if (tier === 'elite') {
-      setUnlimited(true);
-      setMaxCredits(Infinity);
-      setCredits(Infinity);
-      return;
-    }
-
-    setUnlimited(false);
-    const max = tier === 'plus' ? 20 : 2;
+    const max = tier === 'elite' ? 5 : tier === 'plus' ? 2 : 1;
     setMaxCredits(max);
     const today = new Date().toISOString().split('T')[0];
     const effective = data.credits_reset_date < today ? max : data.daily_credits;
@@ -456,10 +455,15 @@ export default function AccueilScreen({ navigation }) {
     );
   };
 
-  const analyzeOutfit = async () => {
+  const analyzeOutfit = async (isRetry = false) => {
     if (!image || credits === 0) return;
+    // Le cooldown anti-spam (relancer par erreur la même photo) ne s'applique
+    // pas à un "Retenter" explicite : c'est précisément le geste que le
+    // pricing final v2 encourage (retenter efface le résultat précédent).
     const COOLDOWN_MS = 5 * 60 * 1000;
     if (
+      !isRetry &&
+      !retriedUrisRef.current.has(image.uri) &&
       image.uri === lastAnalyzedRef.current.uri &&
       Date.now() - lastAnalyzedRef.current.ts < COOLDOWN_MS
     ) {
@@ -496,14 +500,8 @@ export default function AccueilScreen({ navigation }) {
       }
       if (!parsed || typeof parsed.global !== "number") throw new Error("Reponse IA invalide, reessaie.");
       setPhotoIncomplete(null);
-      if (parsed.max_credits === -1 || parsed.credits_remaining === -1) {
-        setUnlimited(true);
-        setCredits(Infinity);
-        setMaxCredits(Infinity);
-      } else {
-        if (typeof parsed.credits_remaining === "number") setCredits(parsed.credits_remaining);
-        if (typeof parsed.max_credits === "number") setMaxCredits(parsed.max_credits);
-      }
+      if (typeof parsed.credits_remaining === "number") setCredits(parsed.credits_remaining);
+      if (typeof parsed.max_credits === "number") setMaxCredits(parsed.max_credits);
       cachedPublicUrlRef.current = null;
       lastAnalyzedRef.current = { uri: image.uri, ts: Date.now() };
       setScore(parsed);
@@ -513,6 +511,19 @@ export default function AccueilScreen({ navigation }) {
       console.log("analyzeOutfit error:", e);
     }
     setLoading(false);
+  };
+
+  // "Retenter" (pricing final v2) : ré-analyse la MÊME photo — efface le
+  // résultat précédent (impossible d'y revenir), consomme une tentative comme
+  // n'importe quelle analyse. Contrairement à "Choisir une autre photo",
+  // `image` n'est jamais réinitialisée ici.
+  const retryAnalysis = () => {
+    if (credits === 0 || !image) return;
+    retriedUrisRef.current.add(image.uri);
+    setScore(null);
+    setPhotoIncomplete(null);
+    setHighScoreReminder(null);
+    analyzeOutfit(true);
   };
 
   const uploadAnalyzedImageIfNeeded = useCallback(async () => {
@@ -631,13 +642,13 @@ export default function AccueilScreen({ navigation }) {
               <View style={[s.creditsChip, credits === 0 && s.creditsChipEmpty]}>
                 <Ionicons name="flash" size={13} color={credits === 0 ? TEXT_SEC : ACCENT} />
                 <Text style={[s.creditsChipText, credits === 0 && s.creditsChipTextEmpty]}>
-                  {unlimited ? 'Analyses illimitées' : credits === null ? '...' : `${credits}/${maxCredits} analyses`}
+                  {credits === null ? '...' : `${credits}/${maxCredits} analyses`}
                 </Text>
               </View>
             </View>
 
             {/* Plus de crédits */}
-            {!unlimited && credits === 0 && (
+            {credits === 0 && (
               <View style={s.noCreditsCard}>
                 <Text style={s.noCreditsTitle}>⚡ Analyses épuisées</Text>
                 <Text style={s.noCreditsText}>
@@ -654,7 +665,7 @@ export default function AccueilScreen({ navigation }) {
             )}
 
             {/* Rappel n°2 : dernière analyse du jour (gratuit, 1x/jour) */}
-            {!unlimited && credits === 1 && showLowCreditsReminder && (
+            {credits === 1 && showLowCreditsReminder && (
               <View style={s.noCreditsCard}>
                 <Text style={s.noCreditsTitle}>⚡ Dernière analyse du jour !</Text>
                 <Text style={s.noCreditsText}>
@@ -821,14 +832,27 @@ export default function AccueilScreen({ navigation }) {
               </View>
             )}
 
-            {/* Actions post-analyse */}
+            {/* Actions post-analyse (pricing final v2) : publier cette tenue, ou
+                retenter (efface ce résultat, consomme une tentative) — masqué
+                une fois la dernière tentative du jour utilisée, il ne reste
+                alors plus que la publication. "Choisir une autre photo" reste
+                disponible en option secondaire, discrète. */}
             <View style={s.postAnalysisActions}>
               <Bouncy
                 style={s.actionPrimary}
                 onPress={() => setShowCustomization(true)}
               >
-                <Text style={s.actionPrimaryText}>✏️ Personnaliser et partager</Text>
+                <Text style={s.actionPrimaryText}>✅ Publier cette tenue</Text>
               </Bouncy>
+              {credits > 0 && (
+                <TouchableOpacity
+                  style={[s.actionSecondary, loading && s.actionDisabled]}
+                  onPress={retryAnalysis}
+                  disabled={loading}
+                >
+                  <Text style={s.actionSecondaryText}>🔁 Retenter ({credits} restante{credits > 1 ? 's' : ''})</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 style={s.retryBtn}
                 onPress={() => {
@@ -838,7 +862,7 @@ export default function AccueilScreen({ navigation }) {
                   cachedPublicUrlRef.current = null;
                 }}
               >
-                <Text style={s.retryText}>Analyser une nouvelle tenue</Text>
+                <Text style={s.retryText}>Choisir une autre photo</Text>
               </TouchableOpacity>
             </View>
 

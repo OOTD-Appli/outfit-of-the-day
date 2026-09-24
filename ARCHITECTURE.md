@@ -147,10 +147,10 @@ Reçoit `{ navigation }` de React Navigation. Racine de la stack `AccueilStack`.
 - Cooldown anti-double-analyse : 5 min sur la même image (`lastAnalyzedRef`)
 - Recadrage : `CROP_ASPECT = 9/16` (constante locale, reprise de l'ancien `components/StoryMedia.js` supprimé avec les Stories)
 
-**Phase 2 — Crédits**
-- Tier Elite (Stripe) → illimité
-- Tier Plus/pass → 20/jour
-- Gratuit → 2/jour
+**Phase 2 — Crédits** (pricing final v2, 2026-09-23, migration `20261001120000`)
+- Tier Elite (Stripe) → 5/jour (plafonné, plus de sentinelle "illimité" — voir Post-mortems/RPCs)
+- Tier Plus/pass → 2/jour
+- Gratuit → 1/jour
 - Si `credits === 0` : carte `noCreditsCard` + bouton "Obtenir plus" → Récap → Shop
 - Tier résolu via `lib/tier.resolveTier()` (`userTier` state) — partagé avec RecapScreen/ShopScreen
 
@@ -169,6 +169,8 @@ Reçoit `{ navigation }` de React Navigation. Racine de la stack `AccueilStack`.
 - **Note sur 100** (v3, 2026-09) : 3 jauges arc (Fit /33, Harmonie /34, Détails /33) via `components/Gauge.js` (`max` dynamique par critère), note globale = somme directe des 3 (pas de moyenne), 1-2 hashtags de style
 - **`photo_complete: false`** : si l'IA juge la photo trop incomplète (buste seul, cadrage trop serré) pour noter équitablement, aucun score n'est calculé et **aucun crédit n'est consommé** — un bandeau "Photo incomplète" (raison + bouton "Reprendre la photo") s'affiche à la place du résultat (state `photoIncomplete`)
 - Animations : fade + rise + scale (AnimatedEntrance)
+
+**Actions post-analyse** (pricing final v2, 2026-09-23) : "✅ Publier cette tenue" (primaire → Phase 4) et "🔁 Retenter" (secondaire, affiché tant que `credits > 0`, masqué à 0 — plus le choix une fois la dernière tentative du jour utilisée). Retenter ré-analyse la **même photo** (`image` non réinitialisée, contrairement à "Choisir une autre photo" en option tertiaire discrète) : efface `score` avant de rappeler `analyzeOutfit(true)` — le flag `isRetry` contourne le cooldown anti-double-analyse de 5 min (`lastAnalyzedRef`), qui existe pour empêcher un renvoi accidentel de la même image, pas un retenter volontaire. Consomme une tentative comme n'importe quelle analyse ; impossible de revenir consulter/publier le score précédent une fois qu'on a retenté (garde-fou anti pay-to-win : payer donne plus de *chances*, jamais un score garanti).
 
 > L'ancienne "analyse contextuelle" (bouton "Conseil contextuel", Edge Function `contextual-analysis`) a été **retirée entièrement** (2026-09-24).
 
@@ -219,15 +221,16 @@ Reçoit `{ route: { params: { competitionId, competitionName } }, navigation }`.
 > **Police fidèle à la maquette** (`lib/competitionFonts.js`, nouveau 2026-09-28) : la première version de cet écran (2026-09-27) rendait tout dans la police système par erreur — aucun chargement de police custom n'avait été fait. La maquette utilise 'Baloo 2' (titre, scores, rangs, initiales des avatars fantômes — toujours en graisse 700) et 'Plus Jakarta Sans' (tout le reste, plusieurs graisses : regular/medium/semibold/bold). Chargées via `@expo-google-fonts/baloo-2`/`@expo-google-fonts/plus-jakarta-sans`, hook partagé `useCompetitionFonts()` (aussi utilisé par `CompetitionsListScreen`) — écran affiche un spinner tant que les polices ne sont pas prêtes. Chaque fichier TTF étant à graisse fixe, `fontFamily` (via `FONT_DISPLAY`/`FONT_BODY.<graisse>`) remplace `fontWeight` partout sur ces écrans plutôt que de les combiner.
 
 **Photos & chat**
-- *Tenues du jour* : une vignette par membre de la compétition (`competition_members` joint `profiles`, LEFT JOIN sur `ootd_competitions`/`ootds` filtré à la fenêtre du jour local via `getLocalDayIsoRange()`) — photo + score si posté aujourd'hui, avatar fantôme + "n'a pas encore posté" sinon. **Remplace l'ancienne galerie historique complète** (tri par date/score, tout l'historique) — voir Post-mortems / limitations si le besoin de parcourir l'historique remonte.
+- *Tenues du jour* : carrousel horizontal (`ScrollView horizontal`, largeur de vignette fixe 148px depuis le 2026-09-23 — remplace l'ancien `flex:1` qui rétrécissait les vignettes dès 4+ membres), une vignette par membre de la compétition (`competition_members` joint `profiles`, LEFT JOIN sur `ootd_competitions`/`ootds` filtré à la fenêtre du jour local via `getLocalDayIsoRange()`) — photo + score si posté aujourd'hui, avatar fantôme + "n'a pas encore posté" sinon. **Remplace l'ancienne galerie historique complète** (tri par date/score, tout l'historique) — voir Post-mortems / limitations si le besoin de parcourir l'historique remonte.
 - Tap sur une vignette (remplie ou vide) → **viewer plein écran** (`fsOpen` state, overlay absolu) : 4 directions à sens unique et axe verrouillé au premier mouvement (`Math.abs(dx) > Math.abs(dy)*1.15` → axe X, sinon Y) — gauche/droite change de membre (pager interne `fsTrackX`), bas dézoome+ferme (translateY/scale/opacity), haut ouvre un champ de réponse superposé à la photo (`fsReply`, envoi sans quitter le plein écran — le message part dans le chat avec `quoted_label = "Réponse à la tenue de <nom>"`, pas de `reply_to_id` car il n'y a pas de message existant à cibler).
+  - **Bug corrigé (2026-09-23)** : le swipe gauche/droite (changer de membre) et le swipe vers le haut (ouvrir la réponse) ne faisaient **rien** en prod. Cause réelle, confirmée par 2 investigations indépendantes : `fsResponder` est un `useRef(PanResponder.create(...)).current`, qui fige ses callbacks sur le tout premier rendu — ils lisaient l'état `todaysPhotos` (encore `[]` à ce moment, chargé de façon async) directement au lieu de passer par une ref, comme `fsIndex`/`fsOpen` le font déjà. Fix : `todaysPhotosRef` (et `widthRef`, même piège trouvé en revue adversariale) mis à jour via `useEffect`, lus à la place dans `fsResponder`/`pagerResponder`/`applyPanel`. Ajout au passage du retour visuel manquant pendant le glissement vers le haut (seul le glissement vers le bas en avait un).
 - Chat de groupe : table `competition_messages` (inchangée dans son rôle), liste **chronologique** (haut→bas, auto-scroll en bas via `onContentSizeChange`) — remplace l'ancienne `FlatList inverted`.
+  - **Interactions par geste, pas par bouton (redesign 2026-09-23)** : les boutons visibles sous chaque message (❤️/🤍 + compteur, "😊+") ont été retirés — ne reste que l'heure. Double-tap sur la bulle → like (`toggle_competition_message_like`, cœur animé façon Instagram qui apparaît puis s'efface, pas de compteur permanent). Swipe vers la droite → répondre (inchangé, voir ci-dessous). Appui long sur la bulle → ouvre le popover de réactions emoji (avant déclenché par le bouton "😊+" séparé) ; pour ses propres messages, ce même popover ajoute une icône de suppression (l'appui long servait avant uniquement à supprimer — rôle repris ici pour ne pas perdre la fonctionnalité).
   - **Swipe-to-reply** : glissement horizontal (droite uniquement, clampé à 64px) sur la ligne d'un message → ouvre la barre de réponse (bandeau au-dessus du champ de saisie), la citation (`reply_to_id`, résolue dynamiquement depuis les messages déjà chargés — jamais dupliquée en dur) s'affiche dans la nouvelle bulle envoyée.
-  - **Likes** (`competition_message_likes`, plusieurs personnes par message, compteur agrégé) via RPC `toggle_competition_message_like` — toggle atomique.
-  - **Réactions emoji** (`competition_message_reactions`, whitelist fermée de 5 emoji verrouillée aussi côté DB) via RPC `add_competition_message_reaction` — ajout uniquement en V1, pas de retrait.
-  - Soft-delete par appui long (RPC `delete_competition_message`, expéditeur uniquement) — inchangé.
+  - **Réactions emoji** (`competition_message_reactions`, whitelist fermée de 5 emoji verrouillée aussi côté DB) via RPC `add_competition_message_reaction` — ajout uniquement en V1, pas de retrait. Affichées avec le like (s'il y en a un) dans une même rangée de chips sous la bulle, purement informative (pas des boutons).
   - **Limitation connue** : likes/réactions ne se synchronisent pas en temps réel entre plusieurs appareils (seul l'auteur de l'action voit la mise à jour immédiate) — seuls les nouveaux messages restent temps réel via le channel Realtime existant.
 - Realtime : **un channel par compétition ouverte** (`competition-chat-<id>`, filtré `competition_id=eq.<id>`) — inchangé, voir Post-mortems.
+- **Tailles augmentées (2026-09-23)** : titre du header, boutons (Ajouter/menu "..."/switcher), texte des messages, zone de saisie — sur toute la partie Photos & chat (la partie Classement n'a pas été touchée).
 - Bouton "Ajouter" dans le header → génère un lien via `create_competition_invite` et l'envoie via `Share.share()` — inchangé (ex-icône, désormais un bouton pilule avec libellé, fidèle à la maquette).
 - **Menu "..." du header** (`menuOpen` state, 2026-09-29, audit des règles métier) : "Quitter la compétition" (RPC `leave_competition`, tous membres, confirmation destructive) et "Supprimer la compétition" (RPC `delete_competition`, affiché uniquement si `created_by === userId`, confirmation destructive) — les deux ferment le menu et font `navigation.goBack()` en cas de succès.
 
@@ -275,16 +278,16 @@ Repris de l'ancien `FlammesScreen.js` (demande/acceptation d'ami), **sans** chat
 ### ShopScreen (`screens/ShopScreen.js`)
 Inchangé fonctionnellement — self-contained (zéro props, propre `fetchData`), monté comme sous-écran de `RecapStack` au lieu d'un onglet dédié. 3 sections :
 
-**1. Premium (Stripe — abonnements récurrents)**
+**1. Premium (Stripe — abonnements récurrents)** — pricing final v2, 2026-09-23
 | Plan | Prix | Avantages |
 |------|------|-----------|
-| OOTD Plus | 2,99€/mois | 20 analyses/jour, badge ⭐, historique complet, personnalité "Styliste bienveillant" |
-| OOTD Elite | 4,99€/mois | Analyses illimitées, tous cosmétiques, badge 💎, toutes les personnalités IA |
+| OOTD Plus | 2,99€/mois | 2 tentatives d'analyse/jour, badge ⭐, historique complet, personnalité "Styliste bienveillant" |
+| OOTD Elite | 4,99€/mois | 5 tentatives d'analyse/jour (plafonné, **jamais illimité** — garde-fou anti pay-to-win, voir AccueilScreen "Actions post-analyse"), tous les thèmes débloqués, badge 💎, toutes les personnalités IA |
 
 Détection de tier via `lib/tier.js` (`getSubActive`/`getActivePlan`, partagé avec RecapScreen/AccueilScreen).
 
 **2. Achats Express (Stripe — one-time, 0,99€)**
-- Gel de Flamme → `create-payment-session` (product='flame_freeze') — **réactivé fonctionnellement le 2026-09-25** (décision D4) : protège désormais la régularité de soumission **par compétition** (`competition_members.streak_count`/`last_submission_date`) via la RPC `restore_competition_streak`, plutôt que l'ancien streak 1-à-1 disparu avec `FlammesScreen`. Le produit shop lui-même (achat/crédit du gel) est inchangé ; seule la consommation change de cible. Pas encore de bouton UI pour déclencher `restore_competition_streak` — la RPC existe et est vérifiée, le branchement dans `CompetitionScreen` reste à faire.
+- ~~Gel de Flamme~~ **retiré du catalogue (2026-09-23, décision pricing #4)** : la moyenne hebdo des classements ignore déjà les jours manqués (`AVG` SQL sur les lignes existantes plutôt que `MAX`, migration `20260930120000`) — plus besoin d'un produit payant pour protéger une série d'un oubli. Retiré aussi : le chip "❄️ Gels de flamme : N" et l'appel `claim_monthly_freezes()` au focus de l'écran (n'affichaient/n'alimentaient plus rien d'utile). La RPC `restore_competition_streak` (protection par compétition, décision D4 du 2026-09-25) et les colonnes `flame_freezes`/`last_freeze_grant` restent en base, inutilisées côté client — non supprimées (hors périmètre de ce changement, RPC déjà non branchée à une UI avant ce nettoyage).
 - Pack 2 000 points → `create-payment-session` (product='points_2000')
 - Crédit posé par webhook `stripe-webhook`, jamais ici
 
@@ -294,10 +297,9 @@ Détection de tier via `lib/tier.js` (`getSubActive`/`getActivePlan`, partagé a
 - Logos App (images réelles) : Bleu Néon/Vert Néon `500 pts`, Sunset `600 pts`, Rose Flashy `650 pts`, Rose Pastel `750 pts`
 - Flux : `buy_cosmetic` RPC → `equip_cosmetic` RPC → `refreshTheme()`
 - Elite : tout gratuit (Équiper direct)
+- ⚠️ **Écart non résolu avec le récap de pricing** : `Output/2026-09-23_pricing-final-tentatives-quotidiennes.md` coche "Logos/icônes de profil supprimés ✅", mais ce catalogue Icônes/Logos existe toujours intégralement dans le code (achat par points, `unlocked_logos`/`active_logo`, favicon web) — aucun prompt reçu à ce jour ne demande de le retirer. Signalé à l'utilisateur plutôt que retiré silencieusement.
 
 > **Bug corrigé (2026-09-17)** : une migration antérieure avait accidentellement réécrasé cette grille de prix par une version bien moins chère (250-500 pts) en se basant sur la mauvaise révision. La grille ci-dessus (1000/1500 thèmes, 150-750 logos) est la valeur active corrigée.
-
-**Gels mensuels** : `claim_monthly_freezes()` RPC (Free=1, Elite=2, idempotente par mois).
 
 ### CustomizationScreen (`screens/CustomizationScreen.js`)
 Modal plein écran post-analyse, appelé depuis AccueilScreen. Props : `visible`, `onClose`, `theme`, `score`, `imageUri`, `caption`, `setCaption`, `selectedMusic`, `setSelectedMusic`, `showStyleHashtag`, `setShowStyleHashtag`, `visibleScores`, `onToggleScore`, **`onContinue`, `continuing`** (remplacent les anciens `onPublish`/`onFlammes`/`onSaveForSelf`/`posting`/`sendingFlammes`/`saving`).
@@ -445,7 +447,7 @@ Proxy CORS-safe vers `api.deezer.com/search`. Auth optionnelle (`--no-verify-jwt
 Mode `subscription`, `{ plan_type: 'plus'|'elite' }` → `{ url }`. **Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_PRICE_PLUS`, `STRIPE_PRICE_ELITE`, `APP_REDIRECT_URL`, `APP_ORIGIN`
 
 ### `create-payment-session`
-Mode `payment` (one-time), `{ product: 'flame_freeze'|'points_2000' }` → `{ url }`. Crédit posé par `stripe-webhook`. **Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_PRICE_FLAME_FREEZE`, `STRIPE_PRICE_POINTS_2000`, `APP_REDIRECT_URL`, `APP_ORIGIN`
+Mode `payment` (one-time), `{ product: 'flame_freeze'|'points_2000' }` → `{ url }`. Crédit posé par `stripe-webhook`. **Secrets** : `STRIPE_SECRET_KEY`, `STRIPE_PRICE_FLAME_FREEZE`, `STRIPE_PRICE_POINTS_2000`, `APP_REDIRECT_URL`, `APP_ORIGIN`. **2026-09-23** : `flame_freeze` retiré du catalogue `ShopScreen.js` (voir section ShopScreen) — la fonction accepte toujours ce product côté serveur (pas modifiée, aucun appelant client ne l'utilise plus), à nettoyer si on retire un jour le produit complètement.
 
 ### `create-portal-session`
 Ouvre le Customer Portal Stripe. **Secrets** : `STRIPE_SECRET_KEY`, `APP_REDIRECT_URL`, `APP_ORIGIN`
@@ -470,6 +472,7 @@ Miroir JS de `lib/utils.js#computeNiveau`.
 
 ### `consume_daily_credit(p_user_id)` / `check_analyze_rate_limit(p_max_per_minute)` — SECURITY DEFINER
 Appelées par `analyze-outfit` uniquement désormais (`contextual-analysis` a disparu). Ordre : rate-limit avant crédit, et crédit consommé seulement après confirmation `photo_complete !== false` (voir Edge Function ci-dessus).
+**Pricing final v2 (2026-09-23, migration `20261001120000`)** : plafonds quotidiens Gratuit 1 / Plus 2 / Elite 5 — Elite reste plafonné, plus de sentinelle "illimité" (`credits=-1`). Garde-fou anti pay-to-win : `AccueilScreen.js` expose désormais un bouton "Retenter" (ré-analyse la même photo, efface le score précédent, consomme une tentative) — payer donne plus de *chances*, jamais un score garanti, puisqu'on ne peut pas garder son meilleur essai en réserve.
 
 ### `award_points_for_ootd(p_ootd_id)` — SECURITY DEFINER
 Lit `score_global` (clampe 0–100 depuis 2026-09-24, `points_earned = ROUND(score * 0.3)`), met à jour `points`/`niveau`. Appelée par `submit_ootd_to_competitions`.
