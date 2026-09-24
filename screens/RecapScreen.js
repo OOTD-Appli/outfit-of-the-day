@@ -22,6 +22,14 @@ import { isPwaStandalone, promptInstall } from '../lib/pwa';
 import { downloadImageToDevice } from '../lib/downloadImage';
 import { resolveTier, isPersonaUnlocked, tierLabel, PERSONA_TIER } from '../lib/tier';
 
+// Accents sémantiques fixes (ne suivent pas le thème choisi par l'utilisateur,
+// contrairement à theme.accent) — mêmes valeurs que C.gold/C.love dans
+// CompetitionScreen.js, réutilisées ici pour la carte "Compte" (refonte Récap) :
+// l'action Abonnement (dorée) et Se déconnecter (rouge/rose) portent un sens
+// qui ne doit pas changer avec le thème cosmétique de l'utilisateur.
+const GOLD = '#FFC94D';
+const DANGER = '#FF5C7A';
+
 // Mapping notes : la DB stocke score_couleurs=harmonie, score_coupe=fit, score_tendance=détails.
 const NOTE_BADGES = [
   { key: 'score_coupe',    label: 'Fit',      icon: 'shirt-outline',         color: '#ED93B1' },
@@ -108,10 +116,16 @@ const LightboxPage = memo(function LightboxPage({ item, ww, wh }) {
 });
 
 const GridItem = memo(function GridItem({ item, index, onPress }) {
+  // Score normalisé sur 100 (même formule que moyenneScore/graphData plus bas)
+  // pour ne pas mélanger les échelles historiques (score_scale=10 vs 100).
+  const score = Math.round((item.score_global / (item.score_scale || 100)) * 100);
   return (
     <AnimatedEntrance style={styles.gridCell} delay={Math.min(index, 12) * 30} distance={10} scaleFrom={0.92}>
       <TouchableOpacity style={{ width: '100%', height: '100%' }} activeOpacity={0.85} onPress={() => onPress(index)}>
         <ExpoImage source={{ uri: item.image_url }} style={styles.gridPhoto} contentFit="cover" recyclingKey={item.id} />
+        <View style={styles.gridScoreBadge}>
+          <Text style={styles.gridScoreText}>{score}</Text>
+        </View>
       </TouchableOpacity>
     </AnimatedEntrance>
   );
@@ -559,37 +573,42 @@ export default function RecapScreen() {
         onEndReached={loadMoreOotds}
         onEndReachedThreshold={0.3}
         getItemLayout={getGridItemLayout}
-        ListFooterComponent={loadingMoreOotds ? (
-          <ActivityIndicator color={theme.accent} style={{ padding: 16 }} />
-        ) : showHistoryLock ? (
-          <TouchableOpacity
-            style={[styles.historyLockCard, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => navigation.navigate('Shop')}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="lock-closed" size={18} color={theme.accent} />
-            <Text style={[styles.historyLockText, { color: theme.textPri }]}>
-              Débloque l'historique complet de tes tenues avec OOTD Plus
-            </Text>
-            <Text style={[styles.historyLockCta, { color: theme.accent }]}>Voir les offres →</Text>
-          </TouchableOpacity>
-        ) : null}
+        ListFooterComponent={
+          <View>
+            {loadingMoreOotds ? (
+              <ActivityIndicator color={theme.accent} style={{ padding: 16 }} />
+            ) : showHistoryLock ? (
+              <TouchableOpacity
+                style={[styles.historyLockCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+                onPress={() => navigation.navigate('Shop')}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="lock-closed" size={18} color={theme.accent} />
+                <Text style={[styles.historyLockText, { color: theme.textPri }]}>
+                  Débloque l'historique complet de tes tenues avec OOTD Plus
+                </Text>
+                <Text style={[styles.historyLockCta, { color: theme.accent }]}>Voir les offres →</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {/* Carte "Niveau" : descend en bas de page, après la galerie (refonte Récap). */}
+            <View style={[styles.niveauCard, { backgroundColor: theme.card }]}>
+              <Text style={[styles.niveauLabel, { color: theme.textPri }]}>Niveau {profile?.niveau || 1}</Text>
+              <View style={[styles.niveauBar, { backgroundColor: theme.border }]}>
+                <View style={[styles.niveauFill, { width: `${levelInfo.percent}%`, backgroundColor: theme.accent }]} />
+              </View>
+              <Text style={[styles.niveauSub, { color: theme.textSub }]}>{levelInfo.progressInLevel} / {levelInfo.threshold} points pour le prochain niveau</Text>
+            </View>
+          </View>
+        }
         ListHeaderComponent={
           <View>
             <View style={styles.header}>
               <View>
                 <Text style={[styles.title, { color: theme.textPri }]}>Récap</Text>
               </View>
-              <View style={styles.headerActions}>
-                <TouchableOpacity
-                  style={[styles.logoutBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                  onPress={handleLogout}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="log-out-outline" size={16} color={theme.accent} />
-                  <Text style={[styles.logoutText, { color: theme.accent }]}>Se déconnecter</Text>
-                </TouchableOpacity>
-                {installable && (
+              {installable && (
+                <View style={styles.headerActions}>
                   <TouchableOpacity
                     style={[styles.installBtn, { backgroundColor: theme.accent }]}
                     onPress={handleInstall}
@@ -598,8 +617,8 @@ export default function RecapScreen() {
                     <Ionicons name="download-outline" size={15} color="#fff" />
                     <Text style={styles.installBtnText}>Télécharger l'application</Text>
                   </TouchableOpacity>
-                )}
-              </View>
+                </View>
+              )}
             </View>
 
             <AnimatedEntrance style={styles.profileCard} distance={16} duration={380}>
@@ -670,41 +689,6 @@ export default function RecapScreen() {
               })()}
             </AnimatedEntrance>
 
-            <View style={[styles.niveauCard, { backgroundColor: theme.card }]}>
-              <Text style={[styles.niveauLabel, { color: theme.textPri }]}>Niveau {profile?.niveau || 1}</Text>
-              <View style={[styles.niveauBar, { backgroundColor: theme.border }]}>
-                <View style={[styles.niveauFill, { width: `${levelInfo.percent}%`, backgroundColor: theme.accent }]} />
-              </View>
-              <Text style={[styles.niveauSub, { color: theme.textSub }]}>{levelInfo.progressInLevel} / {levelInfo.threshold} points pour le prochain niveau</Text>
-            </View>
-
-            <View style={styles.actionsRow}>
-              <TouchableOpacity
-                style={[styles.actionBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                onPress={openSettings}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="settings-outline" size={16} color={theme.accent} />
-                <Text style={[styles.actionBtnText, { color: theme.accent }]}>Réglages</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                onPress={() => navigation.navigate('Shop')}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="star-outline" size={16} color={theme.accent} />
-                <Text style={[styles.actionBtnText, { color: theme.accent }]}>Abonnement</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, { borderColor: theme.accent, backgroundColor: theme.accent + '14' }]}
-                onPress={() => navigation.navigate('Friends')}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="people-outline" size={16} color={theme.accent} />
-                <Text style={[styles.actionBtnText, { color: theme.accent }]}>Mes amis</Text>
-              </TouchableOpacity>
-            </View>
-
             <View style={[styles.graphCard, { backgroundColor: theme.card }]}>
               <View style={styles.graphHeaderRow}>
                 <Text style={[styles.graphTitle, { color: theme.textPri }]}>Mon évolution</Text>
@@ -750,6 +734,57 @@ export default function RecapScreen() {
                   ))}
                 </Svg>
               )}
+            </View>
+
+            {/* Carte "Compte" (refonte Récap) : remplace les 3 anciens boutons
+                Réglages/Abonnement/Mes amis + le bouton "Se déconnecter" du
+                header. Abonnement et Se déconnecter sont traités différemment
+                (icône teintée + libellé) des deux lignes de navigation simple,
+                car ce sont des actions commerciale/terminale, pas de simples liens. */}
+            <View style={[styles.acctCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <TouchableOpacity style={styles.acctRow} onPress={openSettings} activeOpacity={0.7}>
+                <View style={[styles.acctIcon, { backgroundColor: theme.border + '80' }]}>
+                  <Ionicons name="settings-outline" size={17} color={theme.accent} />
+                </View>
+                <Text style={[styles.acctLabel, { color: theme.textPri }]}>Réglages</Text>
+                <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
+              </TouchableOpacity>
+
+              <View style={[styles.acctDivider, { backgroundColor: theme.border }]} />
+
+              <TouchableOpacity style={styles.acctRow} onPress={() => navigation.navigate('Friends')} activeOpacity={0.7}>
+                <View style={[styles.acctIcon, { backgroundColor: theme.border + '80' }]}>
+                  <Ionicons name="people-outline" size={17} color={theme.accent} />
+                </View>
+                <Text style={[styles.acctLabel, { color: theme.textPri }]}>Mes amis</Text>
+                <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
+              </TouchableOpacity>
+
+              <View style={[styles.acctDivider, { backgroundColor: theme.border }]} />
+
+              <TouchableOpacity style={styles.acctRow} onPress={() => navigation.navigate('Shop')} activeOpacity={0.7}>
+                <View style={[styles.acctIcon, { backgroundColor: GOLD + '26' }]}>
+                  <Ionicons name="star" size={17} color={GOLD} />
+                </View>
+                <View style={styles.acctTextWrap}>
+                  <Text style={[styles.acctLabel, { color: theme.textPri }]}>Abonnement</Text>
+                  <Text style={[styles.acctSub, { color: theme.textSub }]}>Débloque plus de looks & personas</Text>
+                </View>
+                <View style={[styles.planChip, { backgroundColor: GOLD + '26' }]}>
+                  <Text style={[styles.planChipText, { color: GOLD }]}>
+                    {tier === 'elite' ? 'Elite' : tier === 'plus' ? 'Plus' : 'Free'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={[styles.acctDivider, { backgroundColor: theme.border }]} />
+
+              <TouchableOpacity style={styles.acctRow} onPress={handleLogout} activeOpacity={0.7}>
+                <View style={[styles.acctIcon, { backgroundColor: DANGER + '24' }]}>
+                  <Ionicons name="log-out-outline" size={17} color={DANGER} />
+                </View>
+                <Text style={[styles.acctLabel, { color: DANGER }]}>Se déconnecter</Text>
+              </TouchableOpacity>
             </View>
 
             <Text style={[styles.galerieTitle, { color: theme.textPri }]}>Mes tenues</Text>
@@ -1018,14 +1053,11 @@ const styles = StyleSheet.create({
   center:         { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, paddingBottom: 10 },
   title:          { fontSize: 24, fontWeight: '700' },
-  logout:         { fontSize: 13 },
   list:           { paddingBottom: 40 },
 
   headerActions:  { flexDirection: 'column', alignItems: 'flex-end', gap: 8 },
   installBtn:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10 },
   installBtnText: { color: '#fff', fontWeight: '800', fontSize: 11.5 },
-  logoutBtn:      { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10, borderWidth: 1.5 },
-  logoutText:     { fontWeight: '800', fontSize: 11.5 },
 
   lbContainer:    { backgroundColor: '#000' },
   lbPage:         { alignItems: 'center', justifyContent: 'center' },
@@ -1075,9 +1107,17 @@ const styles = StyleSheet.create({
   niveauFill:     { height: '100%', borderRadius: 4 },
   niveauSub:      { fontSize: 11 },
 
-  actionsRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginHorizontal: 16, marginBottom: 20 },
-  actionBtn:      { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1.5 },
-  actionBtnText:  { fontWeight: '800', fontSize: 12.5 },
+  /* Carte "Compte" (refonte Récap) : remplace actionsRow + le bouton
+     "Se déconnecter" du header. */
+  acctCard:       { marginHorizontal: 16, marginBottom: 16, borderRadius: 18, borderWidth: 1, paddingHorizontal: 14 },
+  acctRow:        { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13 },
+  acctDivider:    { height: StyleSheet.hairlineWidth },
+  acctIcon:       { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  acctTextWrap:   { flex: 1, minWidth: 0 },
+  acctLabel:      { fontSize: 13.5, fontWeight: '600', flex: 1 },
+  acctSub:        { fontSize: 10.5, fontWeight: '500', marginTop: 1 },
+  planChip:       { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
+  planChipText:   { fontSize: 9.5, fontWeight: '700' },
 
   galerieTitle:   { fontWeight: '700', fontSize: 16, padding: 16, paddingBottom: 8 },
 
@@ -1103,6 +1143,8 @@ const styles = StyleSheet.create({
   privacySub:     { fontSize: 12, lineHeight: 17 },
   gridCell:       { width: '33.33%', aspectRatio: 1, padding: 3 },
   gridPhoto:      { width: '100%', height: '100%', borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(128,128,128,0.28)' },
+  gridScoreBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(10,6,10,0.55)', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
+  gridScoreText:  { color: '#fff', fontWeight: '700', fontSize: 10.5 },
 
   historyLockCard: { alignItems: 'center', gap: 6, borderRadius: 16, borderWidth: 1, padding: 20, margin: 12 },
   historyLockText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
