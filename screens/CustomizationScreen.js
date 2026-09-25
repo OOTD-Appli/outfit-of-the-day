@@ -98,7 +98,7 @@ export default function CustomizationScreen({
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             {/* Aperçu image */}
-            {imageUri ? <ExpoImage source={{ uri: imageUri }} style={styles.preview} contentFit="cover" /> : null}
+            {imageUri ? <ExpoImage source={{ uri: imageUri }} style={styles.preview} contentFit="contain" /> : null}
 
             {/* Notes — sélectionnables pour affichage sur le post */}
             <Text style={[styles.label, { color: theme.textSub, marginTop: 0 }]}>Notes affichées sur le post</Text>
@@ -267,7 +267,10 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   headerTitle: { fontSize: 16, fontWeight: '800' },
   scroll: { padding: 18, paddingBottom: 8 },
-  preview: { width: '100%', height: 280, borderRadius: 18, marginBottom: 14 },
+  // aspectRatio 9/16 : même ratio que CROP_ASPECT dans AccueilScreen.js,
+  // imposé à la capture par MediaCropEditor — la boîte épouse exactement les
+  // proportions de la photo déjà recadrée, donc plus aucun rognage à l'aperçu.
+  preview: { width: '100%', aspectRatio: 9 / 16, borderRadius: 18, marginBottom: 14 },
   notesHint: { fontSize: 11.5, marginBottom: 10, marginTop: -2 },
   chipsRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
   chip:    { flex: 1, borderRadius: 14, borderWidth: 1, paddingVertical: 10, alignItems: 'center' },

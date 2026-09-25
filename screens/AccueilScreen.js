@@ -600,7 +600,7 @@ export default function AccueilScreen({ navigation }) {
             <View style={s.uploadCard}>
               {image ? (
                 <TouchableOpacity onPress={openImageSourcePicker} activeOpacity={0.88}>
-                  <ExpoImage source={{ uri: image.uri }} style={s.previewImg} contentFit="cover" />
+                  <ExpoImage source={{ uri: image.uri }} style={s.previewImg} contentFit="contain" />
                   <View style={s.changeOverlay}>
                     <Text style={s.changeOverlayText}>Changer la photo</Text>
                   </View>
@@ -746,7 +746,7 @@ export default function AccueilScreen({ navigation }) {
 
             {/* Photo analysée — reste visible avec les résultats */}
             {image?.uri && (
-              <ExpoImage source={{ uri: image.uri }} style={s.resultPhoto} contentFit="cover" />
+              <ExpoImage source={{ uri: image.uri }} style={s.resultPhoto} contentFit="contain" />
             )}
 
             {/* 3 cartes critères */}
@@ -984,7 +984,10 @@ function createStyles(theme) {
   dividerLine: { flex: 1, height: 1, backgroundColor: BRD_T },
   dividerText: { marginHorizontal: 14, color: SUB_T, fontSize: 13 },
 
-  previewImg: { width: '100%', height: 300, borderRadius: 16 },
+  // aspectRatio = CROP_ASPECT (9/16, imposé par MediaCropEditor à la capture) :
+  // la boîte épouse exactement les proportions de la photo déjà recadrée, donc
+  // plus aucun rognage (contentFit="contain" en filet de sécurité si jamais).
+  previewImg: { width: '100%', aspectRatio: CROP_ASPECT, borderRadius: 16 },
   changeOverlay: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: 'rgba(0,0,0,0.32)',
@@ -1059,7 +1062,7 @@ function createStyles(theme) {
   },
 
   // Photo analysée (état résultat)
-  resultPhoto: { width: '100%', height: 300, borderRadius: 18, marginBottom: 16, backgroundColor: BRD_T },
+  resultPhoto: { width: '100%', aspectRatio: CROP_ASPECT, borderRadius: 18, marginBottom: 16, backgroundColor: BRD_T },
 
   // Cartes critères
   criterionRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
