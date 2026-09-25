@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Animated,
+  PanResponder,
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,6 +35,54 @@ export default function FeedCommentsModal({
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
 
+  // Poignée de la modale : redimensionnable en glissant vers le haut/bas,
+  // et fermeture complète si on tire suffisamment loin (ou vite) vers le bas.
+  const DEFAULT_H = Math.round(screenH * 0.55);
+  const MIN_H = Math.round(screenH * 0.3);
+  const MAX_H = Math.round(screenH * 0.92);
+  const sheetHeight = useRef(new Animated.Value(DEFAULT_H)).current;
+  const currentHeightRef = useRef(DEFAULT_H);
+  const dragStartHeightRef = useRef(DEFAULT_H);
+  // Ce composant n'est jamais démonté par le parent (seul `visible` bascule),
+  // donc handlePanResponder ci-dessous — un useRef(PanResponder.create(...)).current
+  // — fige ses callbacks au tout premier rendu pour toujours. MIN_H/MAX_H sont
+  // recalculés à chaque rendu depuis screenH : les lire en direct dans ces
+  // callbacks les figerait aussi (même piège que todaysPhotos/width dans
+  // CompetitionScreen.js, déjà rencontré et corrigé cette session) — on passe
+  // donc par des refs tenues à jour à chaque rendu.
+  const minHRef = useRef(MIN_H);
+  const maxHRef = useRef(MAX_H);
+  useEffect(() => { minHRef.current = MIN_H; maxHRef.current = MAX_H; }, [MIN_H, MAX_H]);
+
+  const handlePanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 4,
+      onPanResponderGrant: () => {
+        dragStartHeightRef.current = currentHeightRef.current;
+      },
+      onPanResponderMove: (_, g) => {
+        // Glisser vers le haut (dy négatif) agrandit la modale, vers le bas la réduit.
+        const next = Math.max(0, Math.min(maxHRef.current, dragStartHeightRef.current - g.dy));
+        sheetHeight.setValue(next);
+      },
+      onPanResponderRelease: (_, g) => {
+        const proposed = dragStartHeightRef.current - g.dy;
+        const shouldDismiss = proposed < minHRef.current * 0.55 || (g.dy > 60 && g.vy > 0.9);
+        if (shouldDismiss) {
+          onClose();
+          return;
+        }
+        const clamped = Math.min(maxHRef.current, Math.max(minHRef.current, proposed));
+        currentHeightRef.current = clamped;
+        Animated.spring(sheetHeight, { toValue: clamped, useNativeDriver: false, bounciness: 4 }).start();
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(sheetHeight, { toValue: currentHeightRef.current, useNativeDriver: false, bounciness: 4 }).start();
+      },
+    })
+  ).current;
+
   const load = useCallback(async () => {
     if (!ootdId) return;
     setLoading(true);
@@ -49,8 +99,14 @@ export default function FeedCommentsModal({
   }, [ootdId, onThreadCount]);
 
   useEffect(() => {
-    if (visible && ootdId) { setDraft(''); load(); }
-    else if (!visible) { setRows([]); }
+    if (visible && ootdId) {
+      setDraft('');
+      load();
+      currentHeightRef.current = DEFAULT_H;
+      sheetHeight.setValue(DEFAULT_H);
+    } else if (!visible) {
+      setRows([]);
+    }
   }, [visible, ootdId, load]);
 
   const send = async () => {
@@ -92,8 +148,6 @@ export default function FeedCommentsModal({
     ]);
   };
 
-  const SHEET_H = Math.round(screenH * 0.55);
-
   return (
     <Modal
       visible={visible && !!ootdId}
@@ -110,11 +164,15 @@ export default function FeedCommentsModal({
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={0}
         >
-          <View style={[styles.sheet, { backgroundColor: theme.bg, height: SHEET_H, paddingBottom: insets.bottom + 8 }]}>
+          <Animated.View style={[styles.sheet, { backgroundColor: theme.bg, height: sheetHeight, paddingBottom: insets.bottom + 8 }]}>
 
-            {/* Handle + header */}
+            {/* Handle + header — la poignée seule porte le geste de
+                redimensionnement/fermeture, pas toute la ligne (pour ne pas
+                gêner le tap sur "Fermer"). */}
             <View style={[styles.handleWrap, { borderBottomColor: theme.border }]}>
-              <View style={[styles.handle, { backgroundColor: theme.border }]} />
+              <View style={styles.handleGrip} {...handlePanResponder.panHandlers}>
+                <View style={[styles.handle, { backgroundColor: theme.textSub }]} />
+              </View>
               <View style={styles.header}>
                 <Text style={[styles.title, { color: theme.textPri }]}>Commentaires</Text>
                 <TouchableOpacity onPress={onClose} hitSlop={12}>
@@ -181,7 +239,7 @@ export default function FeedCommentsModal({
               </TouchableOpacity>
             </View>
             {!userId && <Text style={[styles.hint, { color: theme.textSub }]}>Connecte-toi pour commenter.</Text>}
-          </View>
+          </Animated.View>
         </KeyboardAvoidingView>
       </View>
     </Modal>
@@ -197,7 +255,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   handleWrap:  { paddingBottom: 0, borderBottomWidth: StyleSheet.hairlineWidth },
-  handle:      { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 6 },
+  // Zone de préhension plus grande que la barre visible (44px de haut) : porte
+  // le geste de redimensionnement/fermeture, la barre elle-même reste fine.
+  handleGrip:  { alignSelf: 'stretch', alignItems: 'center', paddingTop: 10, paddingBottom: 10 },
+  handle:      { width: 44, height: 5, borderRadius: 3 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

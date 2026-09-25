@@ -335,6 +335,15 @@ export default function FeedScreen() {
   // Évite la race condition où createAsync se termine après un changement
   // d'onglet (le son s'assigne après la cleanup et joue en arrière-plan).
   const audioActiveRef = useRef(false);
+  // Jeton incrémenté à chaque playAudio() : Audio.Sound.createAsync() est
+  // asynchrone (fetch réseau de l'aperçu Deezer), donc un scroll rapide peut
+  // démarrer un 2e appel avant que le 1er ait fini de charger. stopCurrentSound()
+  // vide soundRef immédiatement, mais si l'appel N-1 se termine APRÈS l'appel N,
+  // il réaffecte soundRef sur un son obsolète que plus personne ne surveille ni
+  // n'arrête (fuite + lecture qui se superpose ou "coince" sur un post qu'on a
+  // déjà quitté). Un jeton permet à chaque résolution de vérifier qu'elle est
+  // toujours la plus récente avant de s'assigner — sinon elle se décharge seule.
+  const playTokenRef = useRef(0);
 
   // Init mode audio une fois
   useEffect(() => {
@@ -353,6 +362,7 @@ export default function FeedScreen() {
   }, []);
 
   const playAudio = useCallback(async (previewUrl) => {
+    const myToken = ++playTokenRef.current;
     await stopCurrentSound();
     if (!previewUrl || !audioActiveRef.current) return;
     try {
@@ -364,8 +374,13 @@ export default function FeedScreen() {
         { uri: previewUrl },
         { shouldPlay: true, isLooping: true, volume: 1.0, isMuted: isMutedRef.current },
       );
-      // Vérification post-async : l'onglet a pu perdre le focus pendant le chargement
-      if (!audioActiveRef.current) { sound.unloadAsync().catch(() => {}); return; }
+      // Vérification post-async : l'onglet a pu perdre le focus, OU un appel plus
+      // récent (scroll rapide vers un autre post) a démarré entre-temps — dans les
+      // deux cas ce son est obsolète, il ne doit jamais jouer ni être assigné.
+      if (!audioActiveRef.current || playTokenRef.current !== myToken) {
+        sound.unloadAsync().catch(() => {});
+        return;
+      }
       soundRef.current = sound;
     } catch (_) {}
   }, [stopCurrentSound]);
