@@ -1,9 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Platform,
+  View, Text, StyleSheet, ScrollView,
   TouchableOpacity, ActivityIndicator, Linking, Alert,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +12,8 @@ import { useTheme } from '../lib/themeContext';
 import { getSubActive, getActivePlan } from '../lib/tier';
 
 // ─── Catalogue cosmétiques (économie points, inchangée) ─────────────────────────
+// Icônes de profil et logos d'app retirés du Shop (2026-09-25, nettoyage —
+// simplifier l'expérience d'achat) : seuls les thèmes restent en vente.
 
 const THEMES = [
   { id: 'default',  name: 'Rose Classique', emoji: '🌸', free: true },
@@ -22,28 +23,8 @@ const THEMES = [
   { id: 'sakura',   name: 'Sakura',         emoji: '🌺' },
 ];
 
-// Icônes de profil — badges affichés sur l'avatar et les posts
-const ICONS = [
-  { id: 'default',  name: 'Classic',    emoji: '⭐', free: true },
-  { id: 'diamond',  name: 'Diamond',    emoji: '💎' },
-  { id: 'crown',    name: 'Couronne',   emoji: '👑' },
-  { id: 'fire',     name: 'Flamme',     emoji: '🔥' },
-  { id: 'star',     name: 'Étoile Pro', emoji: '🌟' },
-];
-
-// Logos visuels — changent l'icône de l'app et l'identité visuelle
-const LOGOS = [
-  { id: 'bleu_neon',   name: 'Bleu Neon',   image: require('../assets/logos/bleu_neon.jpg') },
-  { id: 'sunset',      name: 'Sunset',      image: require('../assets/logos/sunset.jpg') },
-  { id: 'vert_neon',   name: 'Vert Neon',   image: require('../assets/logos/vert_neon.jpg') },
-  { id: 'rose_flashy', name: 'Rose Flashy', image: require('../assets/logos/rose_flashy.jpg') },
-  { id: 'rose_pastel', name: 'Rose Pastel', image: require('../assets/logos/rose_pastel.jpg') },
-];
-
 // Prix par rareté — DOIT rester aligné avec buy_cosmetic côté serveur (migration new_logo_variants)
 const THEME_PRICES = { midnight: 1000, emerald: 1000, gold: 1500, sakura: 1500 };
-const ICON_PRICES  = { fire: 150, diamond: 200, star: 200, crown: 200 };
-const LOGO_PRICES  = { bleu_neon: 500, sunset: 600, vert_neon: 500, rose_flashy: 650, rose_pastel: 750 };
 
 // Achats express Stripe (paiement unique en euros, crédit posé par le webhook)
 // Gel de Flamme retiré (pricing final v2, 2026-09-23, décision #4) : la moyenne
@@ -121,7 +102,7 @@ export default function ShopScreen() {
         .select(
           'points, daily_credits, credits_reset_date, ' +
           'has_analysis_pass, has_ootd_plus_pass, ' +
-          'unlocked_themes, unlocked_logos, active_theme, active_logo'
+          'unlocked_themes, active_theme'
         )
         .eq('id', user.id)
         .single(),
@@ -193,11 +174,11 @@ export default function ShopScreen() {
     setBuying(null);
   };
 
-  const buyItem = async (itemType, itemId) => {
+  const buyItem = async (itemId) => {
     if (buying) return;
-    setBuying(itemType + '_' + itemId);
+    setBuying('theme_' + itemId);
     try {
-      const { data, error } = await supabase.rpc('buy_cosmetic', { item_type: itemType, item_id: itemId });
+      const { data, error } = await supabase.rpc('buy_cosmetic', { item_type: 'theme', item_id: itemId });
       if (error) throw error;
       if (!data?.ok) throw new Error(data?.error || 'Erreur achat');
       showToast(`Article débloqué ! (${fmtPts(data.new_points)} restants)`, { type: 'success' });
@@ -209,39 +190,27 @@ export default function ShopScreen() {
   };
 
   // Pop-up de confirmation avant un achat cosmétique en points
-  const confirmBuyItem = (itemType, item, price) => {
+  const confirmBuyItem = (item, price) => {
     if (buying) return;
     Alert.alert(
       'Confirmer l\'achat',
       `Débloquer « ${item.name} » pour ${fmtPts(price)} ?`,
       [
         { text: 'Annuler', style: 'cancel' },
-        { text: 'Acheter', onPress: () => buyItem(itemType, item.id) },
+        { text: 'Acheter', onPress: () => buyItem(item.id) },
       ],
     );
   };
 
-  const equipItem = async (itemType, itemId) => {
+  const equipItem = async (itemId) => {
     if (buying) return;
     setBuying('equip_' + itemId);
     try {
-      const { data, error } = await supabase.rpc('equip_cosmetic', { item_type: itemType, item_id: itemId });
+      const { data, error } = await supabase.rpc('equip_cosmetic', { item_type: 'theme', item_id: itemId });
       if (error) throw error;
       if (!data?.ok) throw new Error(data?.error || 'Équipement impossible');
       showToast('Style appliqué !', { type: 'success' });
       await refreshTheme();
-      // Web : met à jour le favicon avec le nouveau logo
-      if (itemType === 'logo' && Platform.OS === 'web' && typeof document !== 'undefined') {
-        const logoItem = LOGOS.find(l => l.id === itemId);
-        if (logoItem?.image) {
-          try {
-            const { uri } = Image.resolveAssetSource(logoItem.image);
-            let link = document.querySelector('link[rel="icon"]') || document.querySelector('link[rel="shortcut icon"]');
-            if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
-            link.href = uri;
-          } catch (_) {}
-        }
-      }
       fetchData();
     } catch (e) {
       showToast(e.message || 'Erreur', { type: 'error' });
@@ -267,24 +236,19 @@ export default function ShopScreen() {
   const credsToday  = profile?.credits_reset_date < today ? numBaseMax : (profile?.daily_credits ?? 0);
 
   const isThemeOwned = (id) => id === 'default' || isElite || hasPlus || (profile?.unlocked_themes || []).includes(id);
-  const isLogoOwned  = (id) => id === 'default' || isElite || hasPlus || (profile?.unlocked_logos  || []).includes(id);
   const pts          = profile?.points || 0;
 
-  // ── Render cosmétique ──────────────────────────────────────────────────────
-  // priceMap permet de distinguer ICON_PRICES et LOGO_PRICES pour les deux sous-sections logo
-  const renderCosItem = (item, itemType, priceMap) => {
-    const owned     = itemType === 'theme' ? isThemeOwned(item.id) : isLogoOwned(item.id);
-    const isActive  = itemType === 'theme' ? profile?.active_theme === item.id : profile?.active_logo === item.id;
-    const isBuying  = buying === itemType + '_' + item.id;
-    const price     = priceMap ? priceMap[item.id] : (itemType === 'theme' ? THEME_PRICES[item.id] : ICON_PRICES[item.id]);
+  // ── Render cosmétique (thèmes uniquement depuis le 2026-09-25) ──────────────
+  const renderCosItem = (item) => {
+    const owned     = isThemeOwned(item.id);
+    const isActive  = profile?.active_theme === item.id;
+    const isBuying  = buying === 'theme_' + item.id;
+    const price     = THEME_PRICES[item.id];
     const canAfford = pts >= price;
 
     return (
       <View key={item.id} style={[s.cosCard, { backgroundColor: theme.card, borderColor: theme.border }, isActive && { borderColor: theme.accent, borderWidth: 2 }]}>
-        {item.image
-          ? <Image source={item.image} style={s.cosImg} />
-          : <Text style={s.cosEmoji}>{item.emoji}</Text>
-        }
+        <Text style={s.cosEmoji}>{item.emoji}</Text>
         <Text style={[s.cosName, { color: theme.textPri }]} numberOfLines={2}>{item.name}</Text>
         {!item.free && price != null && (
           <Text style={[s.cosPriceLbl, { color: theme.textSub }]}>{fmtPts(price)}</Text>
@@ -293,7 +257,7 @@ export default function ShopScreen() {
         {isActive ? (
           <View style={[s.tag, { backgroundColor: theme.accent }]}><Text style={s.tagTextLight}>Équipé</Text></View>
         ) : owned ? (
-          <TouchableOpacity style={[s.equipBtn, { borderColor: theme.accent }]} onPress={() => equipItem(itemType, item.id)} disabled={!!buying}>
+          <TouchableOpacity style={[s.equipBtn, { borderColor: theme.accent }]} onPress={() => equipItem(item.id)} disabled={!!buying}>
             {buying === 'equip_' + item.id
               ? <ActivityIndicator color={theme.accent} size="small" />
               : <Text style={[s.equipText, { color: theme.accent }]}>Équiper</Text>}
@@ -308,7 +272,7 @@ export default function ShopScreen() {
                 showToast(`Il te manque ${fmtPts(price - pts)} pour débloquer « ${item.name} »`, { type: 'warning' });
                 return;
               }
-              confirmBuyItem(itemType, item, price);
+              confirmBuyItem(item, price);
             }}
             disabled={!!buying}
           >
@@ -462,26 +426,13 @@ export default function ShopScreen() {
           );
         })}
 
-        {/* ── Section 3 : Boutique Points (cosmétiques) ── */}
+        {/* ── Section 3 : Boutique Points (thèmes) ── */}
         <Text style={[s.sectionTitle, { color: theme.textPri, marginTop: 18 }]}>🪙 Boutique Points</Text>
-        <Text style={[s.sectionSub, { color: theme.textSub }]}>Débloque des cosmétiques avec tes points OOTD</Text>
+        <Text style={[s.sectionSub, { color: theme.textSub }]}>Débloque des thèmes avec tes points OOTD</Text>
 
-        {/* 3a — Thèmes */}
         <Text style={[s.subSection, { color: theme.textSub }]}>Thèmes · 1000–1500 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hContent}>
-          {THEMES.map(t => renderCosItem(t, 'theme'))}
-        </ScrollView>
-
-        {/* 3b — Icônes de profil (badges avatar & posts) */}
-        <Text style={[s.subSection, { color: theme.textSub, marginTop: 14 }]}>Icônes · 150–200 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hContent}>
-          {ICONS.map(i => renderCosItem(i, 'logo', ICON_PRICES))}
-        </ScrollView>
-
-        {/* 3c — Logos visuels (icône app + header) */}
-        <Text style={[s.subSection, { color: theme.textSub, marginTop: 14 }]}>Logo App · 500–750 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hContent}>
-          {LOGOS.map(l => renderCosItem(l, 'logo', LOGO_PRICES))}
+          {THEMES.map(t => renderCosItem(t))}
         </ScrollView>
 
         <View style={{ height: 48 }} />
@@ -546,7 +497,6 @@ const s = StyleSheet.create({
   hContent:    { gap: 10, paddingRight: 4, paddingBottom: 4 },
   cosCard:     { borderRadius: 16, borderWidth: 1, width: 120, padding: 14, alignItems: 'center', gap: 6 },
   cosEmoji:    { fontSize: 30 },
-  cosImg:      { width: 72, height: 72, borderRadius: 10 },
   cosName:     { fontSize: 11, fontWeight: '700', textAlign: 'center' },
   cosPriceLbl: { fontSize: 10, fontWeight: '600', textAlign: 'center', marginTop: -2 },
 
