@@ -247,8 +247,6 @@ Reçoit `{ route: { params: { competitionId, competitionName } }, navigation }`.
 - **Classement complet** : tous les membres, rang/avatar/nom (+tag "Toi")/badge 🔥`streak_count` si >0/score ou `—`
 - **2 chips de reconnaissance** sous la liste : 🎯 Régularité (`most_regular`) et ❤️ Coup de cœur (`most_liked`) — `most_improved` (Progression) reste calculé côté RPC mais n'est plus affiché dans cette version de l'écran (la maquette validée ne montre que 2 chips) ; facile à réafficher si redemandé.
 
-`lib/activeChat.js` (`setActiveCompetition`/`getActiveCompetition`) retient la compétition dont le chat est ouvert — inchangé.
-
 ### CreateCompetitionScreen (`screens/CreateCompetitionScreen.js`) — nouveau
 - Nom (1-60 caractères) **et** sélection multiple des membres en une fois, parmi les amis déjà acceptés (`friendships`, mêmes requêtes que `FriendsScreen`) — pas de lien à générer pour démarrer
 - RPC `create_competition_with_members(p_name, p_member_ids[])` : vérifie que chaque membre proposé est un ami accepté avant de l'ajouter, crée la compétition + tous les membres en une transaction
@@ -335,11 +333,8 @@ Modale caméra plein écran custom basée sur `expo-camera`. Props : `visible`, 
 ### `Skeleton` (`components/Skeleton.js`)
 Placeholder de chargement générique (shimmer). Utilisé dans `FeedScreen` et `RecapScreen`.
 
-### `Button` (`components/Button.js`)
-Props : `title`, `variant` (primary/secondary/outline), `loading`, `disabled`, `leftIcon`, `rightIcon`, `onPress`
-
 ### `Avatar` (`components/Avatar.js`)
-Props : `uri`, `size` (défaut 80), `username` (initiale fallback), `loading`, `onPress`, `borderWidth`, `borderColor`. Réutilisé par `FriendsScreen`, `CreateCompetitionScreen`, `CompetitionScreen`, `PalmaresScreen`.
+Props : `uri`, `size` (défaut 80), `username` (initiale fallback), `loading`, `onPress`, `borderWidth`, `borderColor`. Réutilisé par `FriendsScreen`, `CreateCompetitionScreen`, `CompetitionScreen`, `PalmaresScreen`. `memo()` (2026-09-25) : réutilisé dans toutes les listes de l'app, évite un re-rendu quand seul l'état d'un autre élément de la liste change.
 
 ### `FeedCommentsModal` (`components/FeedCommentsModal.js`)
 Props : `visible`, `ootdId`, `userId`, `onClose`, `onThreadCount(ootdId, count)`. Charge `comments` joint `profiles(username, avatar_url)`.
@@ -375,10 +370,9 @@ Client unique exporté comme `supabase`. `AsyncStorage` pour persister la sessio
 - `hasSubmittedTodayForCompetition(supabase, competitionId, userId)` → équivalent "régularité de participation" qui remplace le streak 1-à-1. `ootd_competitions.user_id`/`created_at` sont dénormalisés depuis `ootds` à l'insert (RPC `submit_ootd_to_competitions`), donc aucune jointure n'est nécessaire ici.
 
 ### `lib/pendingOutfit.js` — nouveau
-Singleton hors React (même pattern que `lib/activeChat.js`) : porte la tenue déjà uploadée entre `AccueilScreen` et `ShareToCompetitionScreen` (`setPendingOutfit`/`getPendingOutfit`/`clearPendingOutfit`) — évite de sérialiser l'image dans les route params de navigation.
+Singleton hors React : porte la tenue déjà uploadée entre `AccueilScreen` et `ShareToCompetitionScreen` (`setPendingOutfit`/`getPendingOutfit`/`clearPendingOutfit`) — évite de sérialiser l'image dans les route params de navigation.
 
-### `lib/activeChat.js`
-`setActiveCompetition(competitionId)` / `getActiveCompetition()`. L'équivalent 1-à-1 (`setActiveChat`/`getActiveChat`) a disparu avec `FlammesScreen.js`.
+> **`lib/activeChat.js` supprimé (2026-09-25, nettoyage code mort)** : `setActiveCompetition`/`getActiveCompetition` retenaient la compétition dont le chat était ouvert, pour un usage prévu (suppression d'une bannière de notification quand déjà dans la conversation concernée) jamais branché — `getActiveCompetition()` n'avait aucun appelant, ce qui rendait aussi `setActiveCompetition()` inutile (une écriture que plus rien ne lisait). L'équivalent 1-à-1 (`setActiveChat`/`getActiveChat`) avait déjà disparu avec `FlammesScreen.js`.
 
 ### `lib/competitionFonts.js` — nouveau (2026-09-28)
 `useCompetitionFonts()` (charge 'Baloo 2' 700 + 'Plus Jakarta Sans' 400/500/600/700 via `@expo-google-fonts/*`) + constantes `FONT_DISPLAY`/`FONT_BODY.{regular,medium,semibold,bold}`. Utilisé par `CompetitionScreen.js` et `CompetitionsListScreen.js` (seuls écrans à palette fixe/police dédiée, indépendants de `useTheme()`) — voir leur note en tête de fichier.

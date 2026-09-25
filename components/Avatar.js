@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, memo } from 'react';
+import { Text, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 
-const Avatar = ({
+// memo : réutilisé dans toutes les listes de l'app (messages, classement,
+// podium, carrousel "tenues du jour", amis...) — évite un re-rendu quand
+// seul l'état d'un autre élément de la liste change.
+const Avatar = memo(({
   uri,
   size = 80,
   username,
@@ -38,7 +41,7 @@ const Avatar = ({
       )}
     </TouchableOpacity>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

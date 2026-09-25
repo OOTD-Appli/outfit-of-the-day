@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
   ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Share,
@@ -11,7 +11,6 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../lib/toastContext';
-import { setActiveCompetition } from '../lib/activeChat';
 import { getLocalDayIsoRange } from '../lib/competitionUtils';
 import { useCompetitionFonts, FONT_DISPLAY, FONT_BODY } from '../lib/competitionFonts';
 import Avatar from '../components/Avatar';
@@ -98,7 +97,13 @@ function mapMessageRow(row, userId) {
 // nettement horizontal (|dx|>10 et dominant sur dy) — sinon le scroll vertical
 // natif du parent reste prioritaire, exactement comme dans la maquette.
 // ---------------------------------------------------------------------------
-function MessageRow({ message, isMine, quoteText, popoverOpen, onTogglePopover, onSwipeReply, onToggleLike, onPickReaction, onDelete }) {
+// memo : sans ça, chaque frappe dans le champ de saisie du chat (state `text`
+// sur CompetitionScreen) re-rendait les ~100 messages affichés — voir aussi
+// les callbacks passés en props (toggleLike/pickReaction/confirmDelete/
+// handleSwipeReply/onTogglePopover) désormais stabilisés via useCallback,
+// sans quoi memo() seul n'aurait servi à rien (nouvelle référence à chaque
+// rendu = échec de la comparaison superficielle des props).
+const MessageRow = memo(function MessageRow({ message, isMine, quoteText, popoverOpen, onTogglePopover, onSwipeReply, onToggleLike, onPickReaction, onDelete }) {
   const translateX = useRef(new Animated.Value(0)).current;
   const iconOpacity = useRef(new Animated.Value(0)).current;
   const heartScale = useRef(new Animated.Value(0)).current;
@@ -215,7 +220,7 @@ function MessageRow({ message, isMine, quoteText, popoverOpen, onTogglePopover, 
       </Animated.View>
     </View>
   );
-}
+});
 
 export default function CompetitionScreen({ route, navigation }) {
   const { competitionId, competitionName } = route.params || {};
@@ -293,11 +298,6 @@ export default function CompetitionScreen({ route, navigation }) {
   useEffect(() => {
     supabase.from('competitions').select('created_by').eq('id', competitionId).single()
       .then(({ data }) => setCreatedBy(data?.created_by || null));
-  }, [competitionId]);
-
-  useEffect(() => {
-    setActiveCompetition(competitionId);
-    return () => setActiveCompetition(null);
   }, [competitionId]);
 
   // ================= Tenues du jour (une par membre) =================
@@ -465,7 +465,12 @@ export default function CompetitionScreen({ route, navigation }) {
     if (!result.canceled) await sendPhotoFromUri(result.assets[0].uri);
   };
 
-  const confirmDelete = (msg) => {
+  // useCallback sur ces 4 handlers (+ le toggle du popover plus bas) : ce sont
+  // les props passées à MessageRow, désormais memo() — sans références
+  // stables ici, memo() n'aurait servi à rien (nouvelle fonction à chaque
+  // rendu = échec de la comparaison superficielle des props, donc les ~100
+  // lignes du chat continueraient de se re-rendre à chaque frappe).
+  const confirmDelete = useCallback((msg) => {
     if (msg.sender_id !== userId || msg.is_deleted) return;
     Alert.alert('Supprimer ce message ?', null, [
       { text: 'Annuler', style: 'cancel' },
@@ -482,16 +487,16 @@ export default function CompetitionScreen({ route, navigation }) {
         },
       },
     ]);
-  };
+  }, [userId, showToast]);
 
-  function handleSwipeReply(message) {
+  const handleSwipeReply = useCallback((message) => {
     const label = message.sender_id === userId ? 'Toi' : (message.profiles?.username || '?');
     const snippet = message.is_deleted ? 'Message supprimé' : (message.content || (message.image_url ? '📷 Photo' : ''));
     setReplyTo({ id: message.id, label: `Réponse à ${label}`, snippet });
     setTimeout(() => textInputRef.current?.focus(), 200);
-  }
+  }, [userId]);
 
-  async function toggleLike(message) {
+  const toggleLike = useCallback(async (message) => {
     const wasLiked = message.likedByMe;
     const prevCount = message.likeCount;
     setMessages(prev => prev.map(m => m.id === message.id ? { ...m, likedByMe: !wasLiked, likeCount: m.likeCount + (wasLiked ? -1 : 1) } : m));
@@ -503,9 +508,9 @@ export default function CompetitionScreen({ route, navigation }) {
       setMessages(prev => prev.map(m => m.id === message.id ? { ...m, likedByMe: wasLiked, likeCount: prevCount } : m));
       showToast(e?.message || 'Erreur', { type: 'error' });
     }
-  }
+  }, [showToast]);
 
-  async function pickReaction(message, emoji) {
+  const pickReaction = useCallback(async (message, emoji) => {
     setActivePopoverId(null);
     if (message.myReactionEmojis.has(emoji)) return;
     setMessages(prev => prev.map(m => {
@@ -524,7 +529,11 @@ export default function CompetitionScreen({ route, navigation }) {
       showToast(e?.message || 'Erreur réaction', { type: 'error' });
       loadMessages();
     }
-  }
+  }, [showToast, loadMessages]);
+
+  const toggleMessagePopover = useCallback((id) => {
+    setActivePopoverId(prev => (prev === id ? null : id));
+  }, []);
 
   // ================= Classement =================
   const loadRanking = useCallback(async () => {
@@ -829,7 +838,7 @@ export default function CompetitionScreen({ route, navigation }) {
                       isMine={m.sender_id === userId}
                       quoteText={resolveQuoteText(m)}
                       popoverOpen={activePopoverId === m.id}
-                      onTogglePopover={(id) => setActivePopoverId(prev => (prev === id ? null : id))}
+                      onTogglePopover={toggleMessagePopover}
                       onSwipeReply={handleSwipeReply}
                       onToggleLike={toggleLike}
                       onPickReaction={pickReaction}
@@ -873,68 +882,19 @@ export default function CompetitionScreen({ route, navigation }) {
             </View>
           </KeyboardAvoidingView>
 
-          {/* PANEL 2 : CLASSEMENT */}
-          <ScrollView style={{ width }} contentContainerStyle={styles.clScroll} showsVerticalScrollIndicator={false}>
-            <View style={styles.periodRow}>
-              {RANKING_PERIODS.map(p => (
-                <TouchableOpacity key={p.key} style={[styles.pill, period === p.key && styles.pillActive]} onPress={() => setPeriod(p.key)}>
-                  <Text style={[styles.pillText, period === p.key && styles.pillTextActive]}>{p.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {rankingLoading ? (
-              <ActivityIndicator color={C.accent} style={{ marginTop: 30 }} />
-            ) : (
-              <>
-                <Podium ranking={ranking?.ranking || []} userId={userId} onInvite={shareInvite} />
-
-                <View style={styles.sectionLabelRow}>
-                  <Text style={styles.sectionLabel}>Classement complet</Text>
-                  <Text style={styles.sectionLabelHint}>
-                    {period === 'day' ? 'meilleur score' : 'score moyen'}
-                  </Text>
-                </View>
-                {(ranking?.ranking || []).length === 0 ? (
-                  <Text style={styles.emptyText}>Aucun classement pour l'instant.</Text>
-                ) : (
-                  (ranking?.ranking || []).map((row, i) => (
-                    <View key={row.user_id} style={[styles.row, row.user_id === userId && styles.rowMe]}>
-                      <Text style={styles.rankNum}>{i + 1}</Text>
-                      <Avatar uri={row.avatar_url} username={row.username} size={32} borderWidth={0} />
-                      <View style={styles.rowNameWrap}>
-                        <Text style={styles.rowName} numberOfLines={1}>{row.username}</Text>
-                        {row.user_id === userId && <View style={styles.tag}><Text style={styles.tagText}>Toi</Text></View>}
-                      </View>
-                      {row.streak_count > 0 && (
-                        <View style={styles.streakChip}><Text style={styles.streakChipText}>🔥 {row.streak_count}</Text></View>
-                      )}
-                      <Text style={row.score != null ? styles.rowScore : styles.rowScoreMuted}>
-                        {row.score != null ? Math.round(row.score) : '—'}
-                      </Text>
-                    </View>
-                  ))
-                )}
-
-                {(ranking?.most_regular || ranking?.most_liked) && (
-                  <View style={styles.chipsRow}>
-                    {ranking?.most_regular && (
-                      <View style={styles.achip}>
-                        <View style={[styles.achipIc, { backgroundColor: 'rgba(255,138,76,0.18)' }]}><Text>🎯</Text></View>
-                        <View><Text style={styles.achipTx}>{ranking.most_regular.username}</Text><Text style={styles.achipSub}>Le plus régulier</Text></View>
-                      </View>
-                    )}
-                    {ranking?.most_liked && (
-                      <View style={styles.achip}>
-                        <View style={[styles.achipIc, { backgroundColor: 'rgba(255,92,122,0.18)' }]}><Text>❤️</Text></View>
-                        <View><Text style={styles.achipTx}>{ranking.most_liked.username}</Text><Text style={styles.achipSub}>Coup de cœur</Text></View>
-                      </View>
-                    )}
-                  </View>
-                )}
-              </>
-            )}
-          </ScrollView>
+          {/* PANEL 2 : CLASSEMENT — composant à part, memo() (voir sa définition) :
+              ce panneau reste monté (juste translaté hors écran par le pager)
+              pendant qu'on tape dans le chat du panneau 1 ; sans memo(), il
+              re-rendait sa liste de classement à chaque frappe. */}
+          <RankingPanel
+            width={width}
+            period={period}
+            setPeriod={setPeriod}
+            rankingLoading={rankingLoading}
+            ranking={ranking}
+            userId={userId}
+            onInvite={shareInvite}
+          />
 
         </Animated.View>
       </View>
@@ -1034,7 +994,7 @@ function Gauge({ label, value, max, color }) {
   );
 }
 
-function Podium({ ranking, userId, onInvite }) {
+const Podium = memo(function Podium({ ranking, userId, onInvite }) {
   const top3 = ranking.slice(0, 3);
   const slots = [
     { rank: 2, entry: top3[1], kind: 'silver' },
@@ -1072,7 +1032,77 @@ function Podium({ ranking, userId, onInvite }) {
       ))}
     </View>
   );
-}
+});
+
+// memo : ce panneau reste toujours monté (le pager le translate simplement
+// hors écran, il n'est jamais démonté) — sans memo(), il re-rendait sa liste
+// de classement complète à chaque frappe dans le chat du panneau 1, puisque
+// CompetitionScreen se re-rend entièrement à chaque changement de `text`.
+const RankingPanel = memo(function RankingPanel({ width, period, setPeriod, rankingLoading, ranking, userId, onInvite }) {
+  return (
+    <ScrollView style={{ width }} contentContainerStyle={styles.clScroll} showsVerticalScrollIndicator={false}>
+      <View style={styles.periodRow}>
+        {RANKING_PERIODS.map(p => (
+          <TouchableOpacity key={p.key} style={[styles.pill, period === p.key && styles.pillActive]} onPress={() => setPeriod(p.key)}>
+            <Text style={[styles.pillText, period === p.key && styles.pillTextActive]}>{p.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {rankingLoading ? (
+        <ActivityIndicator color={C.accent} style={{ marginTop: 30 }} />
+      ) : (
+        <>
+          <Podium ranking={ranking?.ranking || []} userId={userId} onInvite={onInvite} />
+
+          <View style={styles.sectionLabelRow}>
+            <Text style={styles.sectionLabel}>Classement complet</Text>
+            <Text style={styles.sectionLabelHint}>
+              {period === 'day' ? 'meilleur score' : 'score moyen'}
+            </Text>
+          </View>
+          {(ranking?.ranking || []).length === 0 ? (
+            <Text style={styles.emptyText}>Aucun classement pour l'instant.</Text>
+          ) : (
+            (ranking?.ranking || []).map((row, i) => (
+              <View key={row.user_id} style={[styles.row, row.user_id === userId && styles.rowMe]}>
+                <Text style={styles.rankNum}>{i + 1}</Text>
+                <Avatar uri={row.avatar_url} username={row.username} size={32} borderWidth={0} />
+                <View style={styles.rowNameWrap}>
+                  <Text style={styles.rowName} numberOfLines={1}>{row.username}</Text>
+                  {row.user_id === userId && <View style={styles.tag}><Text style={styles.tagText}>Toi</Text></View>}
+                </View>
+                {row.streak_count > 0 && (
+                  <View style={styles.streakChip}><Text style={styles.streakChipText}>🔥 {row.streak_count}</Text></View>
+                )}
+                <Text style={row.score != null ? styles.rowScore : styles.rowScoreMuted}>
+                  {row.score != null ? Math.round(row.score) : '—'}
+                </Text>
+              </View>
+            ))
+          )}
+
+          {(ranking?.most_regular || ranking?.most_liked) && (
+            <View style={styles.chipsRow}>
+              {ranking?.most_regular && (
+                <View style={styles.achip}>
+                  <View style={[styles.achipIc, { backgroundColor: 'rgba(255,138,76,0.18)' }]}><Text>🎯</Text></View>
+                  <View><Text style={styles.achipTx}>{ranking.most_regular.username}</Text><Text style={styles.achipSub}>Le plus régulier</Text></View>
+                </View>
+              )}
+              {ranking?.most_liked && (
+                <View style={styles.achip}>
+                  <View style={[styles.achipIc, { backgroundColor: 'rgba(255,92,122,0.18)' }]}><Text>❤️</Text></View>
+                  <View><Text style={styles.achipTx}>{ranking.most_liked.username}</Text><Text style={styles.achipSub}>Coup de cœur</Text></View>
+                </View>
+              )}
+            </View>
+          )}
+        </>
+      )}
+    </ScrollView>
+  );
+});
 
 // ---------------------------------------------------------------------------
 const rs = StyleSheet.create({

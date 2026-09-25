@@ -4,8 +4,8 @@
 //
 // ─── Configuration des secrets (Dashboard Supabase → Edge Functions → Secrets) ───
 //   STRIPE_SECRET_KEY     : clé secrète Stripe (sk_live_… ou sk_test_…)
-//   STRIPE_PRICE_PLUS     : ID du prix récurrent du plan OOTD Plus  (price_…, 4,99€/mois)
-//   STRIPE_PRICE_ELITE    : ID du prix récurrent du plan OOTD Elite (price_…, 9,99€/mois)
+//   STRIPE_PRICE_PLUS     : ID du prix récurrent du plan OOTD Plus  (price_…, 2,99€/mois)
+//   STRIPE_PRICE_ELITE    : ID du prix récurrent du plan OOTD Elite (price_…, 4,99€/mois)
 //   APP_REDIRECT_URL      : (optionnel) URL/scheme de retour. Défaut : ootd://shop
 //   SUPABASE_URL          : injecté automatiquement par Supabase
 //   SUPABASE_ANON_KEY     : injecté automatiquement par Supabase

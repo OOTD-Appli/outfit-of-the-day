@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, memo } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { computeLevelInfo } from '../lib/utils';
 import {
   View, Text, StyleSheet, TouchableOpacity, Switch, Animated,
@@ -490,14 +490,19 @@ export default function RecapScreen() {
     setUploadingAvatar(false);
   };
 
+  // useMemo sur ces 3 stats dérivées : sans ça, elles étaient recalculées à
+  // chaque rendu de RecapScreen — y compris à chaque frappe dans les champs
+  // username/bio de la modale Réglages, qui vit dans ce même composant.
   // Normalise chaque tenue sur 100 avant de moyenner : les tenues antérieures
   // au prompt IA v3 (score_scale=10) ne doivent pas fausser la moyenne face
   // aux nouvelles notées sur 100.
-  const moyenneScore = ootds.length > 0
-    ? Math.round(
-        ootds.reduce((acc, o) => acc + (o.score_global / (o.score_scale || 100)) * 100, 0) / ootds.length,
-      )
-    : '-';
+  const moyenneScore = useMemo(() => (
+    ootds.length > 0
+      ? Math.round(
+          ootds.reduce((acc, o) => acc + (o.score_global / (o.score_scale || 100)) * 100, 0) / ootds.length,
+        )
+      : '-'
+  ), [ootds]);
 
   // Graphique perso "Mon évolution" : dérivé du state `ootds` déjà chargé (jusqu'à 21 tenues
   // les plus récentes), pas de requête réseau dédiée. Peut donc ne pas couvrir 30 jours pleins
@@ -506,7 +511,7 @@ export default function RecapScreen() {
   // historiques (score_scale=10 vs 100).
   const graphWidth = Math.max(0, ww - 64); // largeur carte (marge 16 + padding 16 de chaque côté)
   const graphHeight = 120;
-  const graphData = (() => {
+  const graphData = useMemo(() => {
     const now = Date.now();
     const rangeMs = graphRange * 24 * 60 * 60 * 1000;
     return ootds
@@ -516,8 +521,8 @@ export default function RecapScreen() {
         score: (o.score_global / (o.score_scale || 100)) * 100,
       }))
       .sort((a, b) => a.date - b.date);
-  })();
-  const graphPoints = (() => {
+  }, [ootds, graphRange]);
+  const graphPoints = useMemo(() => {
     if (graphData.length < 2) return [];
     const minDate = graphData[0].date;
     const maxDate = graphData[graphData.length - 1].date;
@@ -526,7 +531,7 @@ export default function RecapScreen() {
       x: ((d.date - minDate) / span) * graphWidth,
       y: graphHeight - (Math.max(0, Math.min(100, d.score)) / 100) * graphHeight,
     }));
-  })();
+  }, [graphData, graphWidth]);
 
   const levelInfo = computeLevelInfo(profile?.points || 0);
   const logoConfig = getLogoConfig(profile?.active_logo);

@@ -24,8 +24,18 @@ export default function CustomizationScreen({
   const [playingPreviewId, setPlayingPreviewId] = useState(null);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const previewSoundRef = useRef(null);
+  // Audio.Sound.createAsync est asynchrone (fetch réseau de l'aperçu Deezer) :
+  // taper vite sur 2 résultats de recherche différents pouvait déclencher un
+  // 2e chargement avant que le 1er ait fini — stopPreview() ne trouvait alors
+  // rien à décharger (previewSoundRef encore vide), et si le 1er se résolvait
+  // APRÈS le 2e, il écrasait la ref avec un son obsolète que plus rien ne
+  // surveillait ni n'arrêtait (2 aperçus superposés, fuite mémoire/audio).
+  // Même classe de bug que FeedScreen.js (déjà corrigé cette session) — un
+  // jeton invalide toute résolution qui n'est plus la plus récente.
+  const previewTokenRef = useRef(0);
 
   const stopPreview = async () => {
+    previewTokenRef.current += 1;
     if (previewSoundRef.current) {
       try { await previewSoundRef.current.unloadAsync(); } catch (_) {}
       previewSoundRef.current = null;
@@ -37,16 +47,22 @@ export default function CustomizationScreen({
   const loadAndPlayPreview = async (track) => {
     if (!track.previewUrl) return;
     await stopPreview();
+    const myToken = previewTokenRef.current;
     try {
       await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false });
       const { sound } = await Audio.Sound.createAsync(
         { uri: track.previewUrl },
         { shouldPlay: true },
         (status) => {
+          if (previewTokenRef.current !== myToken) return; // aperçu déjà remplacé
           if (status.didJustFinish) setIsPreviewPlaying(false);
           else if (status.isLoaded) setIsPreviewPlaying(status.isPlaying);
         }
       );
+      if (previewTokenRef.current !== myToken) {
+        sound.unloadAsync().catch(() => {});
+        return;
+      }
       previewSoundRef.current = sound;
       setPlayingPreviewId(String(track.id));
       setIsPreviewPlaying(true);

@@ -277,12 +277,12 @@ Chaque agent qui prend un ticket doit :
 | Auth & profil | `AuthScreen.js`, `ResetPasswordScreen.js`, `lib/ensureProfile.js`, `lib/notifications.js`, `lib/pwa.js`/`lib/pwa.web.js`, `lib/downloadImage.js` |
 | Feed & social | `FeedScreen.js`, `components/FeedCommentsModal.js`, `components/HeartOverlay.js`/`.web.js`, `components/Skeleton.js` |
 | Analyse IA | `AccueilScreen.js` (capture + analyse), `CustomizationScreen.js`, `supabase/functions/analyze-outfit/`, `supabase/functions/deezer-search/` |
-| Compétitions | `AccueilScreen.js` (capture + bandeau), `CompetitionsListScreen.js`, `CreateCompetitionScreen.js`, `ShareToCompetitionScreen.js`, `CompetitionScreen.js` (classement + galerie + chat), `JoinCompetitionScreen.js`, `PalmaresScreen.js`, `lib/pendingOutfit.js`, `lib/activeChat.js`, `lib/competitionUtils.js`, migrations `2026091*`/`2026092*`/`20260925*` liées aux compétitions |
+| Compétitions | `AccueilScreen.js` (capture + bandeau), `CompetitionsListScreen.js`, `CreateCompetitionScreen.js`, `ShareToCompetitionScreen.js`, `CompetitionScreen.js` (classement + galerie + chat), `JoinCompetitionScreen.js`, `PalmaresScreen.js`, `lib/pendingOutfit.js`, `lib/competitionUtils.js`, migrations `2026091*`/`2026092*`/`20260925*` liées aux compétitions |
 | Amis (indépendant des compétitions) | `FriendsScreen.js`, table `friendships` |
 | Récap & cosmétiques | `RecapScreen.js`, `ShopScreen.js`, `lib/themeContext.js`, `lib/logoConfig.js`, `supabase/functions/create-*`, `supabase/functions/stripe-webhook/` |
 | Notifications | `lib/notifications.js`, `lib/pwa.js`/`lib/pwa.web.js`, `lib/webPush.js`/`lib/webPush.web.js`, `supabase/functions/send-web-push/` |
 | Utilitaires partagés | `lib/utils.js`, `lib/toastContext.js`, `lib/haptics.js`, `components/Bouncy.js`/`.web.js` |
 | Infrastructure | `App.js`, `lib/supabase.js`, `lib/env.js`, `supabase/migrations/` |
-| Composants UI | `components/Button.js`, `components/Avatar.js`, `components/AppHeader.js`, `components/MediaCropEditor.js` |
+| Composants UI | `components/Avatar.js`, `components/AppHeader.js`, `components/MediaCropEditor.js` |
 
 > `AccueilScreen.js` est partagé entre les domaines "Analyse IA" et "Compétitions" — coordonner si modification simultanée. `RecapScreen.js` a absorbé l'ancien `ProfilScreen.js` (Réglages + galerie + Top 3), donc le domaine "Récap & cosmétiques" couvre maintenant aussi tout ce qui touchait l'ancien "Auth & profil" côté affichage profil.
