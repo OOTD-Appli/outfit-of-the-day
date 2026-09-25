@@ -82,6 +82,10 @@ App.js
 
 **Navigation cross-tab** : pour naviguer d'un onglet vers un écran d'une stack sœur, utiliser la forme `navigation.navigate('Récap', { screen: 'Shop' })` (jamais `navigation.navigate('Shop')` seul si l'appelant est dans une autre stack) — **sauf** pour un écran qui est le **premier/racine** d'une stack elle-même nommée comme une route de niveau tab (ex. `navigate('Feed')` cible directement l'onglet Découvrir et affiche son écran initial `Feed` à l'intérieur de `DecouvrirStack`, sans syntaxe imbriquée).
 
+**Swipe latéral entre les 4 onglets** (`useTabSwipeResponder`/`getActiveTabRootInfo`/`TAB_ORDER`) : un seul `PanResponder` posé sur un `View` englobant tout le `Tab.Navigator`. `getActiveTabRootInfo()` lit `navigationRef.getRootState()` et considère l'onglet actif "à la racine" si sa stack interne n'a encore rien empilé par-dessus (`!activeRoute.state || activeRoute.state.index === 0`) — dès qu'un écran est poussé dans n'importe quel onglet (CompetitionScreen, ShopScreen, FriendsScreen, CreateCompetitionScreen, PalmaresScreen, JoinCompetitionScreen...), ce swipe se désactive de lui-même, laissant la priorité totale aux gestes internes de cet écran (même principe que la plupart des apps à onglets + pile de navigation). Seuils volontairement plus élevés que les gestes internes de l'app (36px pour engager le geste, ratio de dominance horizontale 1.4) pour limiter le risque de faux positif contre un petit carrousel horizontal interne à un écran racine.
+- **Bug corrigé (2026-09-25)** : la bascule d'onglet (`navigate()`) et le seuil d'engagement étaient tous deux gérés uniquement dans `onPanResponderRelease` — rien ne se passait avant que le doigt se lève, d'où un délai perçu sur la barre de navigation du bas (pilotée par `state.index`, qui ne changeait qu'à la toute fin du geste). Fix : la bascule se déclenche désormais **pendant** le drag, dès qu'un seuil de distance (70px) OU de vitesse (flick rapide, `vx > 0.55`) est franchi — un verrou par geste (`committedRef`) évite qu'elle ne cascade sur plusieurs onglets d'affilée.
+- **Limite connue, non résolue** : le contenu ne suit pas visuellement le doigt pendant le glissement (pas de pager façon `CompetitionScreen`) — la barre du bas et le contenu des écrans sont rendus par le même composant interne à `react-navigation` (`Tab.Navigator`/`BottomTabView`), sans point d'accroche pour animer l'un sans l'autre via un simple style (un `Animated.Value` ne s'anime en direct que dans un `Animated.View`, jamais via un style plat passé à une `View` ordinaire, ex. `sceneContainerStyle`). Une implémentation "vrai pager" nécessiterait de remplacer `Tab.Navigator` par un système maison et de reconstruire la barre du bas à la main — casserait aussi tous les `navigation.navigate('Onglet', {...})` inter-onglets déjà utilisés ailleurs (Shop, Compétitions, Palmarès). Jugé hors périmètre d'une passe de correction, signalé à l'utilisateur (qui a validé le compromis).
+
 **Auth flow** : `App.useEffect` appelle `supabase.auth.getSession()`, puis écoute `onAuthStateChange`. `syncSession()` enchaîne `ensureUserProfile()`, la consommation d'un éventuel **token d'invitation en attente** (voir ci-dessous), l'enregistrement push (natif) et `registerWebPush()` (PWA). Sur web, les tokens de récupération de mot de passe sont parsés manuellement depuis le hash **et** la query string (`parseAuthParams`) pour fiabiliser Safari iOS/PWA, avec pose de session explicite (`setSession`/`verifyOtp`/`exchangeCodeForSession`).
 
 **Deep link d'invitation compétition** (`?join_competition=<token>`) :
@@ -144,8 +148,9 @@ Reçoit `{ navigation }` de React Navigation. Racine de la stack `AccueilStack`.
 - `openImageSourcePicker()` : Alert.alert avec choix caméra/galerie
 - **Caméra** : `<InAppCamera mode="photo">` (composant custom plein écran, `expo-camera`) — **Galerie** : `expo-image-picker`
 - Compression systématique via `expo-image-manipulator` : max 1280px, JPEG 0.78 pour l'IA, WebP 0.72 pour le stockage (fallback JPEG sur web)
-- Cooldown anti-double-analyse : 5 min sur la même image (`lastAnalyzedRef`)
+- Cooldown anti-double-analyse : 5 min sur la même image (`lastAnalyzedRef`) — sauf retenter explicite (`isRetry`, voir "Actions post-analyse" plus bas) ou photo déjà retentée au moins une fois (`retriedUrisRef`), qui contournent le cooldown pour cette même photo.
 - Recadrage : `CROP_ASPECT = 9/16` (constante locale, reprise de l'ancien `components/StoryMedia.js` supprimé avec les Stories)
+- **Bug corrigé (2026-09-25)** : `previewImg`/`resultPhoto` (aperçu avant analyse + photo réaffichée avec le résultat) utilisaient une boîte à hauteur fixe (300px) + `contentFit="cover"`, qui rognait toute photo (l'image de la tenue étant déjà recadrée à `CROP_ASPECT` par `MediaCropEditor`, mais la boîte d'affichage ne le reflétait pas). Remplacé par `aspectRatio: CROP_ASPECT` (la boîte épouse exactement le ratio déjà imposé à la capture) + `contentFit="contain"` en filet de sécurité — plus aucun rognage. Même correctif appliqué à `CustomizationScreen.js` (`styles.preview`, ratio 9/16 en dur — écran séparé, pas d'accès à la constante `CROP_ASPECT` locale à `AccueilScreen.js`).
 
 **Phase 2 — Crédits** (pricing final v2, 2026-09-23, migration `20261001120000`)
 - Tier Elite (Stripe) → 5/jour (plafonné, plus de sentinelle "illimité" — voir Post-mortems/RPCs)
@@ -204,6 +209,7 @@ Inchangé dans son fonctionnement depuis la refonte Compétitions — reste le f
 - **Recherche** : bouton loupe → overlay `TextInput` — filtrage côté client sur `username`, `caption`, `styles[]`
 - **Toggle "œil" notes**, **hashtags de style**, **flux "Pour toi" spécialisé** (`profiles.specialized_feed`), **musique** auto-play, **double-tap like**, **partage** (vers une compétition ou en message direct — voir CompetitionScreen), **commentaires** (`FeedCommentsModal`) : comportement inchangé, voir le code pour le détail.
 - **Icône Palmarès** (2026-09-25, décision D3) : bouton rond supplémentaire dans la barre d'icônes du haut (`Feather name="award"`, à côté du bouton "notes") → `navigation.navigate('Palmares')` (sibling dans `DecouvrirStack`). Ajout purement additif, aucun comportement existant du Feed modifié.
+- **Bug corrigé (2026-09-25) — musique auto-play** : `playAudio()` (déclenché par `onViewableItemsChanged`, seuil de visibilité 80%) est asynchrone (`Audio.Sound.createAsync` fait un fetch réseau de l'aperçu Deezer). Un scroll rapide entre plusieurs posts pouvait déclencher un nouvel appel avant que le précédent ait fini de charger ; `stopCurrentSound()` vide `soundRef` immédiatement mais si l'appel N-1 se résolvait APRÈS l'appel N, il écrasait `soundRef` avec un son obsolète que plus rien ne surveillait ni n'arrêtait (fuite, lecture superposée ou coincée sur un post déjà quitté). Fix : `playTokenRef` incrémenté à chaque appel de `playAudio`, vérifié à la résolution de `createAsync` avant assignation à `soundRef` — une résolution périmée se décharge seule (`sound.unloadAsync()`) au lieu de s'assigner.
 
 ### CompetitionsListScreen (`screens/CompetitionsListScreen.js`) — nouveau (2026-09-25), refonte visuelle 2026-09-28
 Racine de l'onglet Compétitions. Reprend fidèlement l'ancien fetch d'`AccueilScreen` (liste `competition_members` joint `competitions`, tap → `CompetitionScreen`, bouton "Créer une compétition" → `CreateCompetitionScreen`) — erreurs affichées en toast plutôt qu'avalées silencieusement (c'est l'écran principal de l'onglet), rafraîchi via `useFocusEffect`.
@@ -276,7 +282,7 @@ Repris de l'ancien `FlammesScreen.js` (demande/acceptation d'ami), **sans** chat
 - Actions contextuelles par ligne : Ajouter / Accepter+Refuser / Demandée (annulable) / Amis ✓
 
 ### ShopScreen (`screens/ShopScreen.js`)
-Inchangé fonctionnellement — self-contained (zéro props, propre `fetchData`), monté comme sous-écran de `RecapStack` au lieu d'un onglet dédié. 3 sections :
+Self-contained (zéro props, propre `fetchData`), monté comme sous-écran de `RecapStack` au lieu d'un onglet dédié. 3 sections :
 
 **1. Premium (Stripe — abonnements récurrents)** — pricing final v2, 2026-09-23
 | Plan | Prix | Avantages |
@@ -291,15 +297,13 @@ Détection de tier via `lib/tier.js` (`getSubActive`/`getActivePlan`, partagé a
 - Pack 2 000 points → `create-payment-session` (product='points_2000')
 - Crédit posé par webhook `stripe-webhook`, jamais ici
 
-**3. Boutique Points**
+**3. Boutique Points (thèmes uniquement)**
 - Thèmes : Midnight/Émeraude `1 000 pts`, Or Prestige/Sakura `1 500 pts`
-- Icônes (badges emoji) : Flamme/Défaut `150 pts`, Diamond/Étoile/Couronne `200 pts`
-- Logos App (images réelles) : Bleu Néon/Vert Néon `500 pts`, Sunset `600 pts`, Rose Flashy `650 pts`, Rose Pastel `750 pts`
-- Flux : `buy_cosmetic` RPC → `equip_cosmetic` RPC → `refreshTheme()`
+- Flux : `buy_cosmetic` RPC (`item_type: 'theme'` toujours) → `equip_cosmetic` RPC → `refreshTheme()`
 - Elite : tout gratuit (Équiper direct)
-- ⚠️ **Écart non résolu avec le récap de pricing** : `Output/2026-09-23_pricing-final-tentatives-quotidiennes.md` coche "Logos/icônes de profil supprimés ✅", mais ce catalogue Icônes/Logos existe toujours intégralement dans le code (achat par points, `unlocked_logos`/`active_logo`, favicon web) — aucun prompt reçu à ce jour ne demande de le retirer. Signalé à l'utilisateur plutôt que retiré silencieusement.
+- **Icônes de profil et logos d'app retirés du Shop (2026-09-25)** — résout l'écart signalé le 2026-09-23 entre le récap de pricing ("Logos/icônes de profil supprimés ✅") et le code (qui les proposait encore intégralement à l'achat). Supprimés : catalogues `ICONS`/`LOGOS`, `isLogoOwned`, le bricolage favicon web sur `equipItem` (changeait l'icône de l'app web au moment d'équiper un logo), et les colonnes `unlocked_logos`/`active_logo` du fetch de profil de CET écran. Ces 2 colonnes restent en base et utilisées ailleurs (ex. `RecapScreen.js` via `getLogoConfig(profile?.active_logo)` pour l'affichage d'un logo déjà équipé avant ce retrait) — non touchées, hors périmètre.
 
-> **Bug corrigé (2026-09-17)** : une migration antérieure avait accidentellement réécrasé cette grille de prix par une version bien moins chère (250-500 pts) en se basant sur la mauvaise révision. La grille ci-dessus (1000/1500 thèmes, 150-750 logos) est la valeur active corrigée.
+> **Bug corrigé (2026-09-17)** : une migration antérieure avait accidentellement réécrasé la grille de prix des thèmes par une version bien moins chère (250-500 pts) en se basant sur la mauvaise révision. La grille ci-dessus (1000/1500 pts) est la valeur active corrigée.
 
 ### CustomizationScreen (`screens/CustomizationScreen.js`)
 Modal plein écran post-analyse, appelé depuis AccueilScreen. Props : `visible`, `onClose`, `theme`, `score`, `imageUri`, `caption`, `setCaption`, `selectedMusic`, `setSelectedMusic`, `showStyleHashtag`, `setShowStyleHashtag`, `visibleScores`, `onToggleScore`, **`onContinue`, `continuing`** (remplacent les anciens `onPublish`/`onFlammes`/`onSaveForSelf`/`posting`/`sendingFlammes`/`saving`).
@@ -339,6 +343,7 @@ Props : `uri`, `size` (défaut 80), `username` (initiale fallback), `loading`, `
 
 ### `FeedCommentsModal` (`components/FeedCommentsModal.js`)
 Props : `visible`, `ootdId`, `userId`, `onClose`, `onThreadCount(ootdId, count)`. Charge `comments` joint `profiles(username, avatar_url)`.
+- **Poignée redimensionnable + fermeture par glissement (2026-09-25)** : la barre en haut de la modale était purement décorative (aucun geste attaché). `PanResponder` ajouté sur une zone de préhension élargie (44px de haut, la barre visible reste fine) autour d'elle : glisser vers le haut/bas redimensionne la modale (`sheetHeight` Animated.Value, `height` de la sheet — pas de `useNativeDriver`, propriété de layout non supportée par le driver natif), glisser suffisamment loin ou vite vers le bas ferme entièrement (`onClose()`). `minHRef`/`maxHRef` : ce composant n'est jamais démonté par le parent (seul `visible` bascule) donc le `PanResponder` fige ses callbacks au tout premier rendu — les bornes dérivées de `screenH` sont tenues à jour via des refs plutôt que lues en direct (même précaution que `todaysPhotosRef`/`widthRef` dans `CompetitionScreen.js`).
 
 ### Composants inline (dans les écrans)
 - **Gauge** (`components/Gauge.js`) : arc SVG partiel coloré, prop `max` dynamique (label `/max` affiché, plus de `/10` figé) — 3 critères Analyse

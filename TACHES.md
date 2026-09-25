@@ -1,6 +1,23 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-25 — Refonte visuelle de l'écran Récap (réordonnancement + carte "Compte").
+> Dernière mise à jour : 2026-09-25 — 4 missions correctives (Shop simplifié, son du Feed + poignée commentaires, aperçu photo non rogné, swipe entre onglets sans délai).
+
+---
+
+## 4 missions correctives — 2026-09-25
+
+Quatre demandes ponctuelles traitées à la suite (bugs + simplification), chacune vérifiée séparément (`npm test` + `npx expo export --platform web` après chaque fix, commits distincts).
+
+**1. ShopScreen.js simplifié** — retrait complet des icônes de profil et logos d'app du catalogue (catalogues `ICONS`/`LOGOS`, `isLogoOwned`, bricolage favicon web sur `equipItem`, colonnes `unlocked_logos`/`active_logo` retirées du fetch de cet écran). Ne reste que : abonnements Premium, achat express de points, et les thèmes (cosmétique actif restant). `unlocked_logos`/`active_logo` restent en base et utilisés ailleurs (RecapScreen), non touchés.
+
+**2. Son du Feed cassé + poignée de la modale de commentaires**
+- [x] **Bug réel diagnostiqué** : `playAudio()` (FeedScreen.js) est asynchrone (`Audio.Sound.createAsync` fait un fetch réseau de l'aperçu Deezer). Un scroll rapide pouvait déclencher un 2e appel avant que le 1er ait fini de charger ; si le 1er se résolvait APRÈS le 2e, il écrasait `soundRef` avec un son obsolète que plus rien ne surveillait ni n'arrêtait (fuite, lecture superposée ou coincée sur un post déjà quitté). Fix : jeton incrémenté à chaque appel, vérifié à la résolution avant assignation — une résolution périmée se décharge seule.
+- [x] **FeedCommentsModal.js** : la poignée en haut de la modale était purement décorative (aucun geste attaché). Ajout d'un `PanResponder` dessus (zone de préhension élargie à 44px) : glisser redimensionne la modale, glisser suffisamment loin ou vite vers le bas la ferme entièrement.
+
+**3. Aperçu photo rogné (AccueilScreen.js + CustomizationScreen.js)** — `previewImg`/`resultPhoto`/`preview` utilisaient une boîte à hauteur fixe (280-300px) + `contentFit="cover"`, qui rognait toute photo. Or `MediaCropEditor` impose déjà un recadrage 9/16 (`CROP_ASPECT`) à la capture — la boîte épouse désormais exactement ce ratio (`aspectRatio` au lieu d'une hauteur fixe) + `contentFit="contain"` en filet de sécurité. Plus aucun rognage.
+
+**4. Swipe entre onglets sans délai (App.js)** — avant, le seuil d'engagement (60px) ET la décision de changer d'onglet étaient tous deux gérés uniquement à la relâche du doigt (`onPanResponderRelease`) : rien ne se passait avant que le doigt se lève, d'où l'impression de délai sur la barre de navigation du bas (pilotée par `state.index`, qui ne changeait qu'à la toute fin). Fix : seuil d'engagement abaissé (36px), et la bascule réelle (`navigate()`) se déclenche désormais PENDANT le drag dès qu'un seuil de distance OU de vitesse (flick rapide) est franchi.
+- [ ] **Non fait, signalé à l'utilisateur** : un vrai glissement visuel du contenu suivant le doigt (pager complet, façon CompetitionScreen) nécessiterait de remplacer `Tab.Navigator` par un système maison — la barre du bas et le contenu des écrans sont rendus par le même composant interne à react-navigation, sans point d'accroche pour animer l'un sans l'autre via un style plat. Casserait aussi tous les `navigation.navigate('Onglet', {...})` inter-onglets déjà utilisés ailleurs (Shop, Compétitions, Palmarès). Le choix (fix sûr vs version complète) a été posé à l'utilisateur, qui a validé le fix sûr après explication du risque.
 
 ---
 
