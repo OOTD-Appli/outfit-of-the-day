@@ -236,6 +236,7 @@ Reçoit `{ route: { params: { competitionId, competitionName } }, navigation }`.
   - **Réactions emoji** (`competition_message_reactions`, whitelist fermée de 5 emoji verrouillée aussi côté DB) via RPC `add_competition_message_reaction` — ajout uniquement en V1, pas de retrait. Affichées avec le like (s'il y en a un) dans une même rangée de chips sous la bulle, purement informative (pas des boutons).
   - **Limitation connue** : likes/réactions ne se synchronisent pas en temps réel entre plusieurs appareils (seul l'auteur de l'action voit la mise à jour immédiate) — seuls les nouveaux messages restent temps réel via le channel Realtime existant.
 - Realtime : **un channel par compétition ouverte** (`competition-chat-<id>`, filtré `competition_id=eq.<id>`) — inchangé, voir Post-mortems.
+- **Perf (2026-09-25)** : `MessageRow` en `memo()` + ses 5 callbacks (`toggleLike`/`pickReaction`/`confirmDelete`/`handleSwipeReply`/toggle du popover) stabilisés via `useCallback` — sans quoi chaque frappe dans le champ de saisie du chat (state `text`, local à `CompetitionScreen`) re-rendait jusqu'à 100 `MessageRow` (`MESSAGES_LIMIT`). Le panneau "Classement" a aussi été extrait en composant `RankingPanel` `memo()` à part : comme il reste toujours monté (le pager le translate simplement hors écran, il n'est jamais démonté), il se re-rendait lui aussi à chaque frappe du chat avant ce découplage.
 - **Tailles augmentées (2026-09-23)** : titre du header, boutons (Ajouter/menu "..."/switcher), texte des messages, zone de saisie — sur toute la partie Photos & chat (la partie Classement n'a pas été touchée).
 - Bouton "Ajouter" dans le header → génère un lien via `create_competition_invite` et l'envoie via `Share.share()` — inchangé (ex-icône, désormais un bouton pilule avec libellé, fidèle à la maquette).
 - **Menu "..." du header** (`menuOpen` state, 2026-09-29, audit des règles métier) : "Quitter la compétition" (RPC `leave_competition`, tous membres, confirmation destructive) et "Supprimer la compétition" (RPC `delete_competition`, affiché uniquement si `created_by === userId`, confirmation destructive) — les deux ferment le menu et font `navigation.goBack()` en cas de succès.
@@ -310,6 +311,7 @@ Modal plein écran post-analyse, appelé depuis AccueilScreen. Props : `visible`
 - Recherche musique Deezer inline, autoplay preview au tap
 - Toggle hashtags de style, sélection notes visibles
 - **1 seul bouton "Continuer"** → `onContinue()` (voir AccueilScreen Phase 4/5)
+- **Fuite mémoire corrigée (2026-09-25)** : `loadAndPlayPreview()` (aperçu musical au tap sur un résultat de recherche) a la même race condition que celle déjà corrigée dans `FeedScreen.js` — `Audio.Sound.createAsync` est asynchrone, taper vite sur 2 résultats différents pouvait laisser un aperçu obsolète jouer indéfiniment sans référence nulle part (fuite + aperçus superposés). Fix : `previewTokenRef`, même pattern que `playTokenRef` dans `FeedScreen.js`.
 
 ---
 

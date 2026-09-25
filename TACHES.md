@@ -1,6 +1,32 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-25 — 4 missions correctives (Shop simplifié, son du Feed + poignée commentaires, aperçu photo non rogné, swipe entre onglets sans délai).
+> Dernière mise à jour : 2026-09-25 — Optimisation globale (perf + nettoyage code mort) après un audit en 3 volets (dead code, fuites mémoire, perf des listes).
+
+---
+
+## Optimisation globale : perf + code mort — 2026-09-25
+
+Audit en 3 investigations parallèles (dead code / fuites mémoire / perf FlatList) sur l'ensemble du projet, puis correctifs sur les points confirmés uniquement (rien touché sur la base d'une simple suspicion).
+
+**Fuite mémoire confirmée et corrigée**
+- [x] `CustomizationScreen.js` (`loadAndPlayPreview`, aperçu musical Deezer dans la modale "Personnaliser") : même classe de bug que le son du Feed déjà corrigé — `Audio.Sound.createAsync` est asynchrone, taper vite sur 2 résultats de recherche pouvait laisser un son obsolète jouer indéfiniment sans référence nulle part (fuite + aperçus superposés). Fix : jeton de génération, même pattern que `FeedScreen.js`.
+
+**Perf — pire cas trouvé (CompetitionScreen.js : chaque frappe dans le chat re-rendait jusqu'à 100 messages)**
+- [x] `MessageRow` enveloppé dans `memo()`.
+- [x] `toggleLike`/`pickReaction`/`confirmDelete`/`handleSwipeReply`/le toggle du popover stabilisés via `useCallback` (sans ça, `memo()` seul n'aurait servi à rien).
+- [x] Panneau "Classement" extrait en composant `RankingPanel` `memo()` à part — il reste monté (juste translaté hors écran par le pager interne), donc se re-rendait aussi à chaque frappe du chat sans ce découplage.
+- [x] `components/Avatar.js` enveloppé dans `memo()` (réutilisé dans toutes les listes : messages, classement, podium, carrousel, amis).
+- [x] `RecapScreen.js` : `moyenneScore`/`graphData`/`graphPoints` passés en `useMemo` (recalculés à chaque rendu avant, y compris à chaque frappe dans les champs Réglages qui vivent dans le même composant).
+- [ ] **Non fait, priorité jugée trop faible** : mémoïser l'en-tête de `RecapScreen.js` (composant séparé) et les lignes de `FeedCommentsModal.js` — l'audit les a classés "minor-inefficiency", sans jank visible vu la taille des listes concernées.
+
+**Code mort supprimé** (vérifié par grep avant suppression — zéro appelant à chaque fois)
+- [x] `lib/toast.js` (ancien système de toast, remplacé depuis longtemps par `lib/toastContext.js`) et `components/Button.js` (jamais utilisé, aucune trace de `<Button` dans le code) — fichiers entiers supprimés.
+- [x] `lib/activeChat.js` : `getActiveCompetition()` n'avait aucun appelant, ce qui rendait aussi `setActiveCompetition()` inutile (une écriture que plus rien ne lisait) — fichier entier + son unique point d'appel dans `CompetitionScreen.js` retirés.
+- [x] Exports jamais appelés : `sendPushNotification` (`lib/notifications.js`), `unsubscribeWebPush`/`dismissChatNotifications` (`lib/webPush.js`/`.web.js`), `canInstallPwa` (`lib/pwa.js`/`.web.js`), `DEFAULT_PERSONA` (`lib/tier.js`).
+- [x] Imports inutilisés retirés : `Video`/`ResizeMode`/`ENV` dans `AccueilScreen.js`, `View` dans `Avatar.js`.
+- [ ] **Signalé, non touché** : `lib/utils.js#computeNiveau()` n'a plus d'appelant que dans `__tests__/utils.test.js` — probablement un test de contrat pour son miroir SQL (`compute_niveau()` en base). Laissé en l'état, à clarifier avec l'utilisateur avant suppression éventuelle.
+
+**Vérifications** : `npm test` (56/56) + `npx expo export --platform web` après chaque lot de changements.
 
 ---
 
