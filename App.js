@@ -141,7 +141,17 @@ function RecapStack() {
 // risque de faux positif contre un petit carrousel horizontal interne à un
 // écran racine.
 const TAB_ORDER = ['Accueil', 'Compétitions', 'Feed', 'Récap'];
-const TAB_SWIPE_THRESHOLD = 60;
+// Seuil abaissé (36 au lieu de 60) : engager le geste plus tôt élimine la
+// "zone morte" qui donnait l'impression que rien ne se passait au début du
+// swipe. La dominance horizontale (1.4) reste le vrai garde-fou contre les
+// faux positifs (scroll vertical, petit carrousel interne à un écran racine).
+const TAB_SWIPE_CLAIM_THRESHOLD = 36;
+// Seuil de bascule effective (navigate() déclenché PENDANT le drag, pas à la
+// relâche) : légèrement au-dessus du seuil d'engagement pour laisser un court
+// aperçu du glissement avant de s'engager, mais bien avant la relâche —
+// c'est ce qui supprime le délai perçu sur la barre de navigation du bas.
+const TAB_SWIPE_COMMIT_THRESHOLD = 70;
+const TAB_SWIPE_COMMIT_VELOCITY = 0.55;
 const TAB_SWIPE_DOMINANCE = 1.4;
 
 function getActiveTabRootInfo() {
@@ -155,19 +165,43 @@ function getActiveTabRootInfo() {
   return { activeIndex: state.index, isAtRoot };
 }
 
+// La bascule réelle (navigate()) se déclenche PENDANT le drag, dès que le
+// seuil de distance OU de vitesse est franchi — pas à la relâche comme avant.
+// C'est ce qui supprime le délai perçu : la barre de navigation (pilotée par
+// `state.index`) réagit donc dans le même mouvement que le geste, sans
+// attendre que le doigt se lève.
+//
+// Un vrai glissement visuel du CONTENU (suivant le doigt en direct, façon
+// pager) a été envisagé mais nécessiterait de remplacer Tab.Navigator par un
+// système maison : la barre du bas et le contenu des écrans sont rendus par
+// le même composant interne à react-navigation, sans point d'accroche pour
+// animer l'un sans l'autre via un style plat (un Animated.Value ne s'anime
+// en direct que dans un Animated.View, pas via un simple style prop). Un tel
+// remplacement casserait aussi tous les `navigation.navigate('Onglet', {...})`
+// inter-onglets déjà utilisés ailleurs (Shop, Compétitions, Palmarès) — hors
+// périmètre raisonnable de cette passe.
 function useTabSwipeResponder() {
+  // Un seul changement d'onglet par geste : sans ce verrou, chaque event de
+  // déplacement après franchissement du seuil relirait l'index déjà mis à
+  // jour et ferait cascader plusieurs onglets d'affilée pendant un seul drag.
+  const committedRef = useRef(false);
   return useRef(
     PanResponder.create({
       onStartShouldSetPanResponderCapture: () => false,
       onMoveShouldSetPanResponderCapture: (_, g) => {
-        if (Math.abs(g.dx) < TAB_SWIPE_THRESHOLD || Math.abs(g.dx) < Math.abs(g.dy) * TAB_SWIPE_DOMINANCE) return false;
+        if (Math.abs(g.dx) < TAB_SWIPE_CLAIM_THRESHOLD || Math.abs(g.dx) < Math.abs(g.dy) * TAB_SWIPE_DOMINANCE) return false;
         return !!getActiveTabRootInfo()?.isAtRoot;
       },
-      onPanResponderRelease: (_, g) => {
+      onPanResponderGrant: () => { committedRef.current = false; },
+      onPanResponderMove: (_, g) => {
+        if (committedRef.current) return;
+        if (Math.abs(g.dx) < TAB_SWIPE_COMMIT_THRESHOLD && Math.abs(g.vx) < TAB_SWIPE_COMMIT_VELOCITY) return;
         const info = getActiveTabRootInfo();
         if (!info?.isAtRoot) return;
-        const nextIndex = info.activeIndex + (g.dx < 0 ? 1 : -1);
+        const dir = g.dx < 0 ? 1 : -1;
+        const nextIndex = info.activeIndex + dir;
         if (nextIndex < 0 || nextIndex >= TAB_ORDER.length) return;
+        committedRef.current = true;
         navigationRef.navigate(TAB_ORDER[nextIndex]);
       },
     })
