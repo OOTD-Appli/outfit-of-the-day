@@ -1,6 +1,44 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-25 — Optimisation globale (perf + nettoyage code mort) après un audit en 3 volets (dead code, fuites mémoire, perf des listes).
+> Dernière mise à jour : 2026-09-27 — Audit de sécurité complet (DB/RLS/RPC, Edge Functions, client) en 3 investigations parallèles.
+
+---
+
+## Audit de sécurité complet — 2026-09-27
+
+Audit en 3 investigations parallèles (base de données/RLS/RPC, Edge Functions, client React Native/web) sur l'ensemble de l'application. Voir aussi `Sécurité — Audit 2026-05-28` plus bas pour l'historique.
+
+**Critique — fuite de clé API Groq dans le bundle web de production**
+- [x] `lib/env.js` exposait un champ `groqApiKey: process.env.EXPO_PUBLIC_GROQ_API_KEY` jamais consommé nulle part dans l'app — mais `babel-preset-expo` inline la valeur littérale de tout accès direct `process.env.EXPO_PUBLIC_*`, même mort, dès qu'il apparaît dans le code source. Résultat : la vraie clé Groq était en clair dans le bundle web servi en production. Champ supprimé + doc `EXPO_PUBLIC_GROQ_API_KEY` retirée de `.env.example` (Groq reste un secret 100% serveur, lu par `supabase/functions/analyze-outfit` via `GROQ_API_KEY` sans préfixe `EXPO_PUBLIC_`).
+- [x] Variable `EXPO_PUBLIC_GROQ_API_KEY` supprimée de la config Vercel production (`vercel env rm`).
+- [ ] **Action manuelle requise, pas encore faite** : régénérer la clé sur console.groq.com et mettre à jour le secret `GROQ_API_KEY` (`npx supabase secrets set GROQ_API_KEY=...`) — l'ancienne clé a circulé publiquement, elle doit être considérée compromise.
+
+**Critique — RLS `USING (true)` sur `ootds`/`likes`/`comments` : tenues et interactions privées lisibles par tout utilisateur authentifié**
+- [x] Un appel REST direct (`GET /rest/v1/ootds?select=*`) contournait entièrement le filtre `is_public`/`is_private` — celui-ci n'existait que côté client dans `FeedScreen.js`, jamais dans la policy RLS elle-même (bug introduit dès `20260510120000_initial_schema.sql`, jamais corrigé quand `is_public`/`is_private` ont été ajoutés plus tard). Policies resserrées dans `20261005120000_security_audit_fixes.sql` pour matcher la visibilité voulue (propriétaire, ou public + pas de compte privé sans amitié acceptée), en préservant explicitement l'accès des membres de compétition aux tenues soumises avec `is_public=false` (carrousel "tenues du jour").
+
+**Haute — `friendships_update_recipient` permettait de forger une amitié jamais consentie**
+- [x] La policy `UPDATE` ne figeait jamais `user_id`/`friend_id` : le destinataire d'une demande pouvait techniquement réécrire ces colonnes vers un tiers arbitraire. Corrigé par un trigger `friendships_guard_identity` qui fige les deux colonnes sur `UPDATE` (vérifié sans impact : `FriendsScreen.js` ne modifie jamais que `status`).
+
+**Moyenne — hygiène RPC/trigger**
+- [x] `profiles_guard_sensitive` ne protégeait pas `analysis_personality` (colonne ajoutée après la dernière mise à jour du trigger) — ajouté à la liste protégée + nouvelle RPC `set_analysis_personality` qui revérifie le tier serveur (miroir exact du gating de `analyze-outfit`) avant d'écrire. `RecapScreen.js` appelle désormais cette RPC au lieu d'un `.update()` direct.
+- [x] `is_elite(p_uid uuid)` n'avait jamais reçu de `REVOKE` (appelable par `anon`) et acceptait n'importe quel `p_uid` — restreint à `p_uid = auth.uid()` + `REVOKE ALL FROM PUBLIC`.
+- [x] ~15 RPCs plus anciennes (`consume_daily_credit`, `buy_pass`, `buy_cosmetic`, `equip_cosmetic`, `buy_pass_24h`, `buy_flame_freeze`, `use_flame_freeze`, `restore_flamme`, `claim_monthly_freezes`, `toggle_message_like`, `delete_message`, `mark_messages_read`, `increment_style_stats`, `check_analyze_rate_limit`, `award_points_for_ootd`) n'avaient jamais reçu le `REVOKE ALL FROM PUBLIC` devenu convention depuis le 2026-05-31 — retrofit fait (chacune vérifie déjà `auth.uid()` en interne, donc pas d'escalade de privilège possible aujourd'hui, mais surface de sondage anonyme inutile).
+
+**Basse — nettoyage**
+- [x] Policy `flammes_mutate_involved` (`FOR ALL`) supprimée — fonctionnalité morte (`FlammesScreen.js` déjà supprimé), `flammes_select_involved` reste en place pour l'historique.
+
+**Pas encore traité (priorité plus faible, à planifier)**
+- [ ] `App.js` (`parseAuthParams`/`isRecoveryHref`) : le parsing de récupération de mot de passe accepte les tokens en query string en plus du hash — resserrer à hash-only + ajouter une confirmation de compte cible avant `setSession`/`verifyOtp`.
+- [ ] `AuthScreen.js` (lignes ~36, 40, 49) : `console.log`/`console.error` qui loguent l'email en clair + l'objet de réponse/erreur Supabase complet — à nettoyer.
+- [ ] CORS wildcard (`Access-Control-Allow-Origin: '*'`) en repli sur les 7 Edge Functions quand `APP_ORIGIN` n'est pas défini — durcir le repli.
+- [ ] Aucun rate limiting sur `create-checkout-session`/`create-payment-session`/`create-portal-session`/`send-web-push`.
+- [ ] `apply_subscription_change` (webhook Stripe) : simple upsert sans comparaison d'ordre d'événement/timestamp — un événement Stripe en retard pourrait écraser un état plus récent.
+- [ ] Passage brut des messages d'erreur upstream dans les blocs `catch` des Edge Functions — à mapper vers des messages génériques côté client, détail loggé serveur uniquement.
+- [ ] Limites `file_size_limit`/`allowed_mime_types` des buckets Storage (`ootds`/`avatars`) — probablement une config Dashboard self-hosted, pas une migration SQL ; à vérifier.
+
+**Vérifications** : `npm test` (56/56) + `npx expo export --platform web`, confirmé zéro occurrence de `GROQ`/`gsk_` dans le nouveau bundle web.
+
+**⚠️ Migration `20261005120000_security_audit_fixes.sql` écrite et testée localement, mais PAS ENCORE appliquée à la base de production** (nécessite une validation manuelle — action bloquante côté opérateur, pas côté BOS).
 
 ---
 

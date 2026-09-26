@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Référence technique OOTD
 
-> Dernière mise à jour : 2026-09-28 (corrections post-lancement écran Compétition v4 : 2 bugs d'embed PostgREST, police de la maquette, refonte visuelle de la liste des compétitions)
+> Dernière mise à jour : 2026-09-28 (corrections post-lancement écran Compétition v4 : 2 bugs d'embed PostgREST, police de la maquette, refonte visuelle de la liste des compétitions) · 2026-09-27 : audit de sécurité complet (RLS ootds/likes/comments, forge friendships, hygiène RPC, fuite clé Groq côté client — voir TACHES.md et section RLS ci-dessous)
 
 ## Vue d'ensemble
 
@@ -466,7 +466,13 @@ Signature Stripe (`whsec_...`) — déployer `--no-verify-jwt`. Événements : `
 ## Fonctions PostgreSQL (RPCs)
 
 ### Trigger `profiles_guard_sensitive_trigger`
-`BEFORE UPDATE` sur `profiles`. Colonnes protégées : `points`, `niveau`, `has_analysis_pass`, `has_ootd_plus_pass`, `daily_credits`, `credits_reset_date`, `unlocked_themes`, `unlocked_logos`, `active_theme`, `active_logo`, `flame_freezes`, `last_freeze_grant`. RPCs SECURITY DEFINER contournent via `set_config('app.bypass_profile_guard', 'on', true)`.
+`BEFORE UPDATE` sur `profiles`. Colonnes protégées : `points`, `niveau`, `has_analysis_pass`, `has_ootd_plus_pass`, `daily_credits`, `credits_reset_date`, `unlocked_themes`, `unlocked_logos`, `active_theme`, `active_logo`, `flame_freezes`, `last_freeze_grant`, `analysis_personality` (ajoutée le 2026-09-27, audit sécurité — la colonne existait depuis un moment sans jamais avoir été ajoutée à la liste protégée). RPCs SECURITY DEFINER contournent via `set_config('app.bypass_profile_guard', 'on', true)`.
+
+### `set_analysis_personality(p_key text)` — SECURITY DEFINER (2026-09-27)
+Seule voie autorisée pour changer `profiles.analysis_personality` — revérifie le tier serveur (miroir exact du gating `PERSONA_TIER` de `analyze-outfit`/`lib/tier.js`) avant d'écrire. Appelée par `RecapScreen.js#changePersonality`.
+
+### `is_elite(p_uid uuid)` — STABLE SECURITY DEFINER
+Restreinte le 2026-09-27 à `p_uid = auth.uid()` (n'acceptait auparavant aucune vérification d'identité — un appel RPC direct pouvait sonder le statut Elite de n'importe quel autre utilisateur). `REVOKE ALL FROM PUBLIC` + `GRANT ... TO authenticated`.
 
 ### `compute_niveau(p_pts integer)` — IMMUTABLE
 Miroir JS de `lib/utils.js#computeNiveau`.
@@ -485,7 +491,7 @@ Incrémente `profiles.style_stats` (jsonb). Appelée par `submit_ootd_to_competi
 Voir ShopScreen ci-dessus pour la grille de prix corrigée (2026-09-17).
 
 ### `restore_flamme(p_flamme_id)` / `claim_monthly_freezes()` — SECURITY DEFINER
-Inchangées. `flammes`/`snaps` restent en base (non purgées) mais plus aucun code client n'écrit dedans depuis la refonte Compétitions.
+Inchangées. `flammes`/`snaps` restent en base (non purgées) mais plus aucun code client n'écrit dedans depuis la refonte Compétitions. Policy `flammes_mutate_involved` (écriture directe par les deux parties) supprimée le 2026-09-27 (audit sécurité) — `flammes_select_involved` reste seule à gérer l'accès à cette table désormais lecture seule côté client.
 
 ### `restore_competition_streak(p_competition_id)` — SECURITY DEFINER (nouveau, 2026-09-25)
 Équivalent de `restore_flamme` pour le streak par compétition (décision D4). Restaure uniquement un oubli d'**exactement** 1 jour (`last_submission_date = aujourd'hui - 2`), consomme 1 `flame_freezes` (même contournement `app.bypass_profile_guard` que `restore_flamme`/`claim_monthly_freezes`), ne touche pas `streak_count` — seule la "couverture" de la veille est restaurée, le compteur reprend sa progression normale à la prochaine soumission.
@@ -602,13 +608,15 @@ Table, bucket Storage, trigger de nettoyage et job pg_cron `cleanup-expired-stor
 
 ## Politiques RLS (résumé)
 
+> **2026-09-27 (audit sécurité)** : `ootds`/`likes`/`comments` étaient en réalité `USING (true)` en base (aucune vérification `is_private`/ami malgré ce que ce tableau documentait comme intention) — un appel REST direct contournait totalement le filtre appliqué côté client dans `FeedScreen.js`. Corrigé dans `20261005120000_security_audit_fixes.sql` pour que la policy corresponde enfin à cette colonne "SELECT".
+
 | Table | SELECT | INSERT | UPDATE | DELETE |
 |-------|--------|--------|--------|--------|
 | profiles | tous auth | soi (trigger annule colonnes sensibles) | soi (trigger) | — |
 | profiles_private | soi | soi | soi | — |
-| ootds | auth + is_private/ami | soi | — | soi |
-| likes / comments | tous auth | soi | — | soi |
-| friendships | impliqué | demandeur (`pending`) | destinataire (`pending→accepted/declined`) | les deux |
+| ootds | auth + is_private/ami + membre compétition | soi | — | soi |
+| likes / comments | auth + visibilité de l'ootd liée | soi | — | soi |
+| friendships | impliqué | demandeur (`pending`) | destinataire (`pending→accepted/declined`, identité figée par trigger) | les deux |
 | flammes / snaps | impliqué | — (plus écrit) | — | — |
 | messages | impliqué | sender + amitié acceptée | — | sender |
 | subscriptions | soi | — | — | — |
