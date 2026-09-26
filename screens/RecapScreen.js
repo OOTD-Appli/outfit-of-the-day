@@ -328,15 +328,21 @@ export default function RecapScreen() {
     }
   };
 
+  // RPC (pas un .update() direct) : set_analysis_personality revérifie le
+  // tier côté serveur avant d'écrire — profiles_guard_sensitive protège
+  // désormais analysis_personality comme les autres colonnes sensibles
+  // (2026-09-27, audit sécurité). Un modifiable de la personnalité par
+  // .update() direct n'aurait plus eu aucun effet (le trigger l'aurait
+  // silencieusement réinitialisée à l'ancienne valeur).
   const changePersonality = async (key, unlocked) => {
     if (!unlocked) { navigation.navigate('Shop'); return; }
     const prevKey = profile?.analysis_personality || 'coach';
     if (prevKey === key) return;
     setProfile(prev => ({ ...prev, analysis_personality: key }));
-    const { error } = await supabase.from('profiles').update({ analysis_personality: key }).eq('id', profile.id);
-    if (error) {
+    const { data, error } = await supabase.rpc('set_analysis_personality', { p_key: key });
+    if (error || !data?.ok) {
       setProfile(prev => ({ ...prev, analysis_personality: prevKey }));
-      showToast('Erreur mise à jour', { type: 'error' });
+      showToast(error?.message || data?.error || 'Erreur mise à jour', { type: 'error' });
     }
   };
 
