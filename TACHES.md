@@ -11,10 +11,12 @@ Audit en 3 investigations parallèles (base de données/RLS/RPC, Edge Functions,
 **Critique — fuite de clé API Groq dans le bundle web de production**
 - [x] `lib/env.js` exposait un champ `groqApiKey: process.env.EXPO_PUBLIC_GROQ_API_KEY` jamais consommé nulle part dans l'app — mais `babel-preset-expo` inline la valeur littérale de tout accès direct `process.env.EXPO_PUBLIC_*`, même mort, dès qu'il apparaît dans le code source. Résultat : la vraie clé Groq était en clair dans le bundle web servi en production. Champ supprimé + doc `EXPO_PUBLIC_GROQ_API_KEY` retirée de `.env.example` (Groq reste un secret 100% serveur, lu par `supabase/functions/analyze-outfit` via `GROQ_API_KEY` sans préfixe `EXPO_PUBLIC_`).
 - [x] Variable `EXPO_PUBLIC_GROQ_API_KEY` supprimée de la config Vercel production (`vercel env rm`).
-- [ ] **Action manuelle requise, pas encore faite** : régénérer la clé sur console.groq.com et mettre à jour le secret `GROQ_API_KEY` (`npx supabase secrets set GROQ_API_KEY=...`) — l'ancienne clé a circulé publiquement, elle doit être considérée compromise.
+- [x] **Clé régénérée et déployée (2026-09-27)** : nouvelle clé Groq créée sur console.groq.com, mise à jour dans `/srv/supabase/supabase-project/.env` sur le serveur self-host (ancienne sauvegardée dans `.env.bak_2026-09-27_post_groq_rotation`), service `functions` redémarré (`docker compose up -d functions`). Vérifié : l'ancienne clé compromise n'apparaît plus nulle part (env conteneur + bundle web), pipeline `analyze-outfit` re-testé en production (statut 200, provider `gemini`, aucun crédit consommé).
 
 **Critique — RLS `USING (true)` sur `ootds`/`likes`/`comments` : tenues et interactions privées lisibles par tout utilisateur authentifié**
 - [x] Un appel REST direct (`GET /rest/v1/ootds?select=*`) contournait entièrement le filtre `is_public`/`is_private` — celui-ci n'existait que côté client dans `FeedScreen.js`, jamais dans la policy RLS elle-même (bug introduit dès `20260510120000_initial_schema.sql`, jamais corrigé quand `is_public`/`is_private` ont été ajoutés plus tard). Policies resserrées dans `20261005120000_security_audit_fixes.sql` pour matcher la visibilité voulue (propriétaire, ou public + pas de compte privé sans amitié acceptée), en préservant explicitement l'accès des membres de compétition aux tenues soumises avec `is_public=false` (carrousel "tenues du jour").
+- [x] **Découvert en vérifiant le fix en conditions réelles** : deux policies héritées du Dashboard Cloud (`"Lecture publique ootds"`, `"Lecture publique likes"`, jamais dans aucune migration versionnée) coexistaient avec le nouveau fix et le rendaient inopérant. Supprimées dans `20261005130000_security_audit_fixes_legacy_policies.sql`. Re-testé : 16/16 vérifications passent (`scripts/verify-security-migration.js`).
+- [x] **Migration appliquée en production (2026-09-27)** : sauvegarde complète prise avant (`backups/2026-09-27_191955/`, hors dépôt), migration + correctif poussés via `supabase db push`, aucune restauration nécessaire.
 
 **Haute — `friendships_update_recipient` permettait de forger une amitié jamais consentie**
 - [x] La policy `UPDATE` ne figeait jamais `user_id`/`friend_id` : le destinataire d'une demande pouvait techniquement réécrire ces colonnes vers un tiers arbitraire. Corrigé par un trigger `friendships_guard_identity` qui fige les deux colonnes sur `UPDATE` (vérifié sans impact : `FriendsScreen.js` ne modifie jamais que `status`).
@@ -36,9 +38,9 @@ Audit en 3 investigations parallèles (base de données/RLS/RPC, Edge Functions,
 - [ ] Passage brut des messages d'erreur upstream dans les blocs `catch` des Edge Functions — à mapper vers des messages génériques côté client, détail loggé serveur uniquement.
 - [ ] Limites `file_size_limit`/`allowed_mime_types` des buckets Storage (`ootds`/`avatars`) — probablement une config Dashboard self-hosted, pas une migration SQL ; à vérifier.
 
-**Vérifications** : `npm test` (56/56) + `npx expo export --platform web`, confirmé zéro occurrence de `GROQ`/`gsk_` dans le nouveau bundle web.
+**Vérifications** : `npm test` (56/56) + `npx expo export --platform web`, confirmé zéro occurrence de `GROQ`/`gsk_` dans le nouveau bundle web (local et bundle en ligne après redéploiement).
 
-**⚠️ Migration `20261005120000_security_audit_fixes.sql` écrite et testée localement, mais PAS ENCORE appliquée à la base de production** (nécessite une validation manuelle — action bloquante côté opérateur, pas côté BOS).
+**Les 2 points critiques sont clos et en production (2026-09-27).** Le reste de la liste "pas encore traité" ci-dessus reste à faire après le lancement, comme convenu.
 
 ---
 
