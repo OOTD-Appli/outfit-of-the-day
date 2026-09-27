@@ -1,6 +1,41 @@
 # Suivi des tâches — OOTD
 
-> Dernière mise à jour : 2026-09-27 — Audit de sécurité complet (DB/RLS/RPC, Edge Functions, client) en 3 investigations parallèles.
+> Dernière mise à jour : 2026-09-27 — Renommage de marque OOTD → FitLigue (nouveau domaine fitligue.vercel.app en plus de l'ancien, CORS/Auth multi-domaines, retour Stripe dynamique).
+
+---
+
+## Renommage de marque : OOTD → FitLigue — 2026-09-27
+
+Renommage de la marque affichée uniquement — aucun identifiant interne touché (table/bucket `ootds`, RPCs, colonnes, slug/scheme Expo `ootd`, bundle identifiers `com.medifreymann.ootd`, repo GitHub, projet Vercel `outfit-of-the-day`, projet Supabase).
+
+**Source unique de la marque**
+- [x] `lib/brand.js` créé : `APP_NAME` ('FitLigue'), `APP_TAGLINE` ('Monte dans le rank'), `APP_URL` ('https://fitligue.vercel.app'). Importé partout où le nom s'affiche — un futur renommage tient dans ce seul fichier (sauf `scripts/inject-pwa.js` et `public/sw.js`, voir note ci-dessous).
+- [ ] **Limite technique à connaître** : `scripts/inject-pwa.js` (script Node CommonJS pur, hors Metro/Babel) ne peut pas faire un `require()` direct sur `lib/brand.js` (module ESM `export`) — les 3 valeurs y sont dupliquées en dur avec un commentaire renvoyant à `lib/brand.js`. Idem pour le titre par défaut dans `public/sw.js` (fichier servi tel quel au navigateur, pas de bundler). À resynchroniser manuellement si la marque change à nouveau.
+
+**Textes remplacés** (composants/écrans, PWA, notifications, Edge Function) : `components/AppHeader.js`, `screens/AccueilScreen.js`, `screens/FeedScreen.js` (badge + onglet "TENUES"), `screens/ShopScreen.js` (plans `${APP_NAME} Plus/Elite`), `screens/RecapScreen.js`, `screens/CompetitionScreen.js` (message d'invitation), `app.json` (`expo.web.name/shortName/description`, permission galerie), `public/manifest.webmanifest`, `public/sw.js` (titre notif par défaut), `lib/notifications.js` (rappel quotidien natif), `lib/pwa.web.js` (bannière d'installation ×2 + meta iOS), `supabase/functions/send-web-push/index.ts` (titre par défaut).
+- Note sémantique : certaines occurrences de "OOTD" désignaient la marque (remplacées par `APP_NAME`), d'autres le terme générique "outfit of the day" (remplacées par "tenue(s)" en français plutôt que forcer la marque dans une phrase où ça ne collait pas — ex. "Analyse ton OOTD" → "Analyse ta tenue").
+
+**Open Graph / Twitter Card — n'existaient pas du tout avant, créées ex nihilo**
+- [x] `scripts/inject-pwa.js` étendu : injecte désormais `og:title`, `og:site_name`, `og:description` (avec le slogan), `og:image` (pointe vers `/icon-512.png` — voir limite ci-dessous), `og:type`, `og:url`, `twitter:card`, `twitter:title`, `twitter:description` dans `dist/index.html` au build.
+
+**⚠️ Logo et icônes NON modifiés — contiennent le texte "OOTD" en dur dans l'image**
+- [ ] `assets/logo.jpg`, `assets/icon.png`, `assets/adaptive-icon.png`, `assets/splash-icon.png`, `assets/favicon.png`, `public/icon-192.png`, `public/icon-512.png`, `public/icon-maskable-512.png` : toutes ces images contiennent un logo néon "OOTD" dessiné. Conformément à la consigne, aucune n'a été touchée — **à régénérer avec la nouvelle identité visuelle** (nécessite un vrai travail de design, hors périmètre de ce renommage de code). Tant que ce n'est pas fait, l'app affiche "FitLigue" en texte partout mais garde le logo "OOTD" — et l'aperçu de lien (`og:image`) pointe vers une icône qui affiche encore l'ancien logo.
+
+**Domaines — les deux coexistent, l'ancien continue de marcher**
+- [x] `fitligue.vercel.app` ajouté comme alias du projet Vercel `outfit-of-the-day` (en plus de `ootd-fr.vercel.app`, qui reste actif).
+- [x] CORS Edge Functions (les 7 fonctions) : `APP_ORIGIN` accepte désormais une **liste** d'origines séparées par des virgules (`https://ootd-fr.vercel.app,https://fitligue.vercel.app,http://localhost:8081,http://localhost:19006`) — chaque fonction renvoie l'origine de la requête si elle figure dans la liste, jamais un domaine unique en dur. Mis à jour côté serveur self-host + `functions` redémarré.
+- [x] Auth self-host : `ADDITIONAL_REDIRECT_URLS` (→ `GOTRUE_URI_ALLOW_LIST`) mis à jour avec les deux domaines (`/**`) + localhost — confirmation d'email et mot de passe oublié fonctionnent depuis les deux. `auth` redémarré.
+- [x] `screens/AuthScreen.js` (fallback natif reset password) et `screens/CompetitionScreen.js` (fallback natif lien d'invitation) : remplacé le domaine en dur par `APP_URL` (nouveau domaine par défaut) — le web utilise toujours `window.location.origin` (s'adapte automatiquement au domaine réellement utilisé, ancien ou nouveau).
+- [x] Stripe (`create-checkout-session`, `create-payment-session`, `create-portal-session`) : `success_url`/`cancel_url`/`return_url` renvoient désormais vers l'origine web réelle de l'appelant (validée contre la liste `APP_ORIGIN`) au lieu d'un domaine unique en dur — fonctionne pour les deux domaines. Fallback natif (`ootd://shop`) inchangé.
+- [x] Email d'authentification (self-host) : `SMTP_SENDER_NAME` était encore un placeholder `fake_sender` (jamais "OOTD" en fait) — mis à jour en `FitLigue`. Les sujets/contenus des emails eux-mêmes sont les gabarits par défaut de GoTrue (anglais générique, jamais personnalisés, ne mentionnaient déjà pas "OOTD") — rien à renommer là, mais à envisager de personnaliser un jour.
+
+**Stripe — Dashboard (action manuelle, pas de mutation directe possible depuis le code)**
+- [ ] Renommer le produit `OOTD Plus` (`prod_UcPVCW1sqwDvhH`) → `FitLigue Plus`.
+- [ ] Renommer le produit `OOTD Elite` (`prod_UcPWHgLY2gendR`) → `FitLigue Elite`.
+- [ ] Mettre à jour le libellé de relevé bancaire (Dashboard → Settings → Public details → Statement descriptor).
+- Le produit "Gel de Flamme" (`prod_UcSUKm3ybJvjl7`) ne mentionne pas "OOTD", rien à changer.
+
+**Vérifications** : `npm test` (56/56) + `npx expo export --platform web` + `inject-pwa.js`, `<title>`/OG/Twitter confirmés dans `dist/index.html`, déployé sur les deux domaines et testé en conditions réelles (voir résumé de fin de session).
 
 ---
 

@@ -5,6 +5,7 @@ import {
   RefreshControl, Modal, FlatList, useWindowDimensions, Platform,
 } from 'react-native';
 import HeartOverlay from '../components/HeartOverlay';
+import { APP_NAME } from '../lib/brand';
 import { Image as ExpoImage } from 'expo-image';
 import { Audio } from 'expo-av';
 import { BlurView } from 'expo-blur';
@@ -117,9 +118,9 @@ const FeedPost = memo(function FeedPost({ item, userId, pageH, ww, insets, theme
         locations={[0.38, 0.62, 1]}
         style={[styles.postGradient, { paddingBottom: infoPadBottom }]}
       >
-        {/* Badge OOTD */}
+        {/* Badge marque */}
         <View style={styles.ootdBadge}>
-          <Text style={styles.ootdBadgeText}>OOTD</Text>
+          <Text style={styles.ootdBadgeText}>{APP_NAME}</Text>
         </View>
 
         {/* Username + vérif + badge logo */}
@@ -703,7 +704,7 @@ export default function FeedScreen() {
         <BlurView intensity={28} tint="dark" style={{ backgroundColor: 'rgba(0,0,0,0.15)', overflow: 'hidden' }}>
           <View style={[styles.topBarRow, { paddingTop: tabTop }]}>
             <TouchableOpacity onPress={() => setFeedTab('ootd')} style={styles.tabBtn}>
-              <Text style={[styles.tabText, feedTab === 'ootd' && styles.tabTextActive, feedTab === 'ootd' && { color: theme.accent }]}>OOTD</Text>
+              <Text style={[styles.tabText, feedTab === 'ootd' && styles.tabTextActive, feedTab === 'ootd' && { color: theme.accent }]}>TENUES</Text>
               {feedTab === 'ootd' && <View style={[styles.tabUnderline, { backgroundColor: theme.accent }]} />}
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setFeedTab('pourtoi')} style={styles.tabBtn}>

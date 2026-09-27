@@ -2,6 +2,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { useTheme } from '../lib/themeContext';
 import { LOGO_CONFIG } from '../lib/logoConfig';
+import { APP_NAME } from '../lib/brand';
 
 const DEFAULT_LOGO = require('../assets/logo.jpg');
 
@@ -14,7 +15,7 @@ export default function AppHeader({ title }) {
     <View style={[s.bar, { backgroundColor: theme.bg, borderBottomColor: theme.border }]}>
       <Image source={logoSrc} style={s.logo} />
       <Text style={[s.brand, { color: theme.textPri }]}>
-        {title || 'OOTD'}
+        {title || APP_NAME}
       </Text>
     </View>
   );

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
+import { APP_NAME, APP_URL } from '../lib/brand';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
   ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Share,
@@ -552,8 +553,8 @@ export default function CompetitionScreen({ route, navigation }) {
     try {
       const { data, error } = await supabase.rpc('create_competition_invite', { p_competition_id: competitionId });
       if (error || !data?.ok) throw new Error(error?.message || data?.error);
-      const base = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : 'https://ootd-fr.vercel.app';
-      await Share.share({ message: `Rejoins "${competitionName}" sur OOTD : ${base}/?join_competition=${data.token}` });
+      const base = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : APP_URL;
+      await Share.share({ message: `Rejoins "${competitionName}" sur ${APP_NAME} : ${base}/?join_competition=${data.token}` });
     } catch (e) {
       showToast(e?.message || 'Erreur invitation', { type: 'error' });
     }

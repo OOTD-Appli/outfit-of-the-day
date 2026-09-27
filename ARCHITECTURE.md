@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Référence technique OOTD
 
-> Dernière mise à jour : 2026-09-28 (corrections post-lancement écran Compétition v4 : 2 bugs d'embed PostgREST, police de la maquette, refonte visuelle de la liste des compétitions) · 2026-09-27 : audit de sécurité complet (RLS ootds/likes/comments, forge friendships, hygiène RPC, fuite clé Groq côté client — voir TACHES.md et section RLS ci-dessous)
+> Dernière mise à jour : 2026-09-28 (corrections post-lancement écran Compétition v4 : 2 bugs d'embed PostgREST, police de la maquette, refonte visuelle de la liste des compétitions) · 2026-09-27 : audit de sécurité complet (RLS ootds/likes/comments, forge friendships, hygiène RPC, fuite clé Groq côté client — voir TACHES.md et section RLS ci-dessous) · 2026-09-27 : renommage de marque OOTD → FitLigue (voir `lib/brand.js`, TACHES.md, et section "Multi-domaines" ci-dessous) — aucun identifiant interne renommé (table/bucket `ootds`, slug/scheme Expo, projet Vercel `outfit-of-the-day`)
 
 ## Vue d'ensemble
 
@@ -459,7 +459,9 @@ Signature Stripe (`whsec_...`) — déployer `--no-verify-jwt`. Événements : `
 ### `send-web-push`
 `{ recipient_id, title, body, url, tag? }` → `{ sent, removed }`. Vérifie amitié acceptée. **Secrets** : `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `APP_ORIGIN`
 
-> **CORS** : toutes les Edge Functions lisent `APP_ORIGIN` (`Deno.env.get('APP_ORIGIN') ?? '*'`).
+> **CORS multi-domaines (2026-09-27)** : `APP_ORIGIN` est une liste d'origines séparées par des virgules (`https://ootd-fr.vercel.app,https://fitligue.vercel.app,http://localhost:8081,http://localhost:19006`), pas une seule valeur. Chaque Edge Function calcule ses headers CORS par requête via `corsHeadersFor(req)` : renvoie l'origine de la requête (`req.headers.get('Origin')`) si elle figure dans la liste, sinon la première de la liste (jamais `'*'` en présence d'`Authorization`). `json()` est redéfini en closure locale à l'intérieur de chaque `serve(async (req) => {...})` pour capturer les bons headers — évite une race condition entre requêtes concurrentes qu'une constante module-level partagée aurait introduite.
+>
+> **Retour Stripe multi-domaines** : `create-checkout-session`/`create-payment-session`/`create-portal-session` renvoient l'utilisateur web vers `req.headers.get('Origin')` (validé contre `APP_ORIGIN`) plutôt qu'un domaine unique en dur — fonctionne pour l'ancien ET le nouveau domaine. Fallback natif (pas d'en-tête `Origin`) : `APP_REDIRECT_URL` (`ootd://shop`, scheme technique, inchangé par le renommage de marque).
 
 ---
 
@@ -688,7 +690,7 @@ Rate-limit indépendant : 5 req/min par user (table `analyze_rate_limit`), déso
 
 - **Backend** : Supabase **self-hosted** sur `supabase.myback.fr` (stack officielle `supabase/supabase` docker-compose) — migré depuis Supabase Cloud le 2026-08-12 (voir `docs/MIGRATION_SUPABASE_SELFHOST.md`). Migrations appliquées via `supabase db push --db-url ... --yes` (`PGSSLMODE=disable`, le port 5432 exposé route vers Supavisor, utilisateur `postgres.your-tenant-id`).
 - **Edge Functions** : déployées via bind-mount + téléchargement manuel depuis GitHub (pas de `supabase functions deploy` classique sur ce self-host) — **ne se resynchronisent jamais automatiquement au `git push`**, voir avertissement dans la section Edge Functions.
-- **Web/PWA** : Vercel, projet `outfit-of-the-day` (⚠️ pas `ootd-fr` malgré le nom de domaine `ootd-fr.vercel.app`), déployé via `vercel --prod`.
+- **Web/PWA** : Vercel, projet `outfit-of-the-day` (⚠️ pas `ootd-fr` malgré le nom de domaine `ootd-fr.vercel.app`), déployé via `vercel --prod`. **Deux domaines actifs depuis le renommage FitLigue (2026-09-27)** : `ootd-fr.vercel.app` (historique, conservé) et `fitligue.vercel.app` (nouveau, alias du même projet/déploiement).
 - **Paiements** : Stripe en mode **Live** depuis 2026-08-19.
 
 ---

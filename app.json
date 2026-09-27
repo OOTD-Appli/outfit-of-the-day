@@ -37,9 +37,9 @@
       "favicon": "./assets/favicon.png",
       "bundler": "metro",
       "output": "single",
-      "name": "OOTD",
-      "shortName": "OOTD",
-      "description": "Outfit of the Day — partage et analyse tes tenues",
+      "name": "FitLigue",
+      "shortName": "FitLigue",
+      "description": "FitLigue — Monte dans le rank. Partage et analyse tes tenues.",
       "themeColor": "#ED93B1",
       "backgroundColor": "#0a0a0a",
       "display": "standalone"
@@ -60,7 +60,7 @@
       [
         "expo-media-library",
         {
-          "savePhotosPermission": "OOTD a besoin d'enregistrer tes tenues dans ta galerie photo.",
+          "savePhotosPermission": "FitLigue a besoin d'enregistrer tes tenues dans ta galerie photo.",
           "isAccessMediaLocationEnabled": false
         }
       ]

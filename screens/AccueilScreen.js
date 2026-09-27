@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { APP_NAME } from '../lib/brand';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -587,7 +588,7 @@ export default function AccueilScreen({ navigation }) {
           <AnimatedEntrance distance={16} duration={360}>
             {/* En-tête */}
             <View style={s.beforeHeader}>
-              <Text style={s.title}>Analyse ton OOTD ✨</Text>
+              <Text style={s.title}>Analyse ta tenue ✨</Text>
               <Ionicons name="notifications-outline" size={22} color={theme.textSub} style={s.bellIcon} />
             </View>
             <Text style={s.subtitle}>
@@ -667,7 +668,7 @@ export default function AccueilScreen({ navigation }) {
               <View style={s.noCreditsCard}>
                 <Text style={s.noCreditsTitle}>⚡ Dernière analyse du jour !</Text>
                 <Text style={s.noCreditsText}>
-                  Passe à OOTD Plus pour ne jamais être à court d'analyses.
+                  Passe à {APP_NAME} Plus pour ne jamais être à court d'analyses.
                 </Text>
                 <TouchableOpacity
                   style={s.noCreditsBtn}
@@ -734,7 +735,7 @@ export default function AccueilScreen({ navigation }) {
             {/* En-tête */}
             <View style={s.afterHeader}>
               <View style={s.afterHeaderLeft}>
-                <Text style={s.titleLeft}>Analyse de tes OOTD ✨</Text>
+                <Text style={s.titleLeft}>Analyse de tes tenues ✨</Text>
                 <Text style={s.subtitleLeft}>Tes statistiques sur 30 derniers jours</Text>
               </View>
               <TouchableOpacity style={s.searchBtn} onPress={openImageSourcePicker}>
@@ -793,7 +794,7 @@ export default function AccueilScreen({ navigation }) {
             {topOotds.length > 0 && (
               <View style={s.topSection}>
                 <View style={s.topHeader}>
-                  <Text style={s.topTitle}>Tes OOTD les plus performants</Text>
+                  <Text style={s.topTitle}>Tes tenues les plus performantes</Text>
                   <Text style={s.topSeeAll}>Voir tout</Text>
                 </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -818,7 +819,7 @@ export default function AccueilScreen({ navigation }) {
               <View style={s.noCreditsCard}>
                 <Text style={s.noCreditsTitle}>🔥 {highScoreReminder.note}/100, sérieux !</Text>
                 <Text style={s.noCreditsText}>
-                  Débloque le mode IA Sévère et plus d'analyses comme celle-ci avec OOTD Plus.
+                  Débloque le mode IA Sévère et plus d'analyses comme celle-ci avec {APP_NAME} Plus.
                 </Text>
                 <TouchableOpacity
                   style={s.noCreditsBtn}

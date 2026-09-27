@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
+import { APP_URL } from '../lib/brand';
 import { ensureUserProfile } from '../lib/ensureProfile';
 import { useToast } from '../lib/toastContext';
 import { useTheme } from '../lib/themeContext';
@@ -32,7 +33,7 @@ export default function AuthScreen() {
     try {
       const redirectTo = (Platform.OS === 'web' && typeof window !== 'undefined')
         ? `${window.location.origin}/reset-password`
-        : 'https://ootd-fr.vercel.app/reset-password';
+        : `${APP_URL}/reset-password`;
       console.log('[resetPassword] envoi à', target, '· redirectTo:', redirectTo);
       const { data, error } = await supabase.auth.resetPasswordForEmail(target, { redirectTo });
       if (error) {

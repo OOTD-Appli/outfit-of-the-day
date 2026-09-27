@@ -1,7 +1,7 @@
 {
-  "name": "OOTD — Outfit of the Day",
-  "short_name": "OOTD",
-  "description": "Partage et analyse tes tenues, envoie des flammes à tes amis.",
+  "name": "FitLigue — Monte dans le rank",
+  "short_name": "FitLigue",
+  "description": "Partage et analyse tes tenues, monte dans le classement.",
   "lang": "fr",
   "start_url": "/",
   "scope": "/",

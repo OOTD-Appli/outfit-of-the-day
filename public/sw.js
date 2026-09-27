@@ -53,7 +53,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (_) { data = { body: event.data && event.data.text() }; }
-  const title = data.title || 'OOTD';
+  const title = data.title || 'FitLigue';
   const options = {
     body: data.body || '',
     icon: '/icon-192.png',

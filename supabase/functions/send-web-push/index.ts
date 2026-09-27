@@ -13,20 +13,27 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
 
-const ORIGIN = Deno.env.get('APP_ORIGIN') ?? '*';
-const CORS = {
-  'Access-Control-Allow-Origin': ORIGIN,
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// APP_ORIGIN accepte une liste d'origines séparées par des virgules (multi-domaines :
+// ancien + nouveau nom de marque, + localhost en dev) — on renvoie l'origine de la
+// requête si elle y figure, jamais '*' en présence d'Authorization.
+const ALLOWED_ORIGINS = (Deno.env.get('APP_ORIGIN') ?? '')
+  .split(',').map((o) => o.trim()).filter(Boolean);
 
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...CORS, 'Content-Type': 'application/json' },
-  });
+function corsHeadersFor(req: Request): Record<string, string> {
+  const origin = req.headers.get('Origin') ?? '';
+  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : (ALLOWED_ORIGINS[0] ?? '*');
+  return {
+    'Access-Control-Allow-Origin': allow,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Vary': 'Origin',
+  };
 }
 
 serve(async (req: Request) => {
+  const CORS = corsHeadersFor(req);
+  const json = (body: unknown, status: number) =>
+    new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
   const authHeader = req.headers.get('Authorization');
@@ -40,7 +47,7 @@ serve(async (req: Request) => {
   try {
     const body = await req.json().catch(() => null);
     const recipientId = body?.recipient_id;
-    const title = (body?.title ?? 'OOTD').toString().slice(0, 100);
+    const title = (body?.title ?? 'FitLigue').toString().slice(0, 100);
     const message = (body?.body ?? '').toString().slice(0, 240);
     const url = (body?.url ?? '/').toString();
     const tag = body?.tag ? body.tag.toString().slice(0, 100) : undefined;

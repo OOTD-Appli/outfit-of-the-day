@@ -17,17 +17,20 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import Stripe from 'https://esm.sh/stripe@14.21.0?target=deno';
 
-const ORIGIN = Deno.env.get('APP_ORIGIN') ?? '*';
-const CORS = {
-  'Access-Control-Allow-Origin': ORIGIN,
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// APP_ORIGIN accepte une liste d'origines séparées par des virgules (multi-domaines :
+// ancien + nouveau nom de marque, + localhost en dev) — on renvoie l'origine de la
+// requête si elle y figure, jamais '*' en présence d'Authorization.
+const ALLOWED_ORIGINS = (Deno.env.get('APP_ORIGIN') ?? '')
+  .split(',').map((o) => o.trim()).filter(Boolean);
 
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...CORS, 'Content-Type': 'application/json' },
-  });
+function corsHeadersFor(req: Request): Record<string, string> {
+  const origin = req.headers.get('Origin') ?? '';
+  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : (ALLOWED_ORIGINS[0] ?? '*');
+  return {
+    'Access-Control-Allow-Origin': allow,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Vary': 'Origin',
+  };
 }
 
 const PLAN_PRICE_ENV: Record<string, string> = {
@@ -36,6 +39,10 @@ const PLAN_PRICE_ENV: Record<string, string> = {
 };
 
 serve(async (req: Request) => {
+  const CORS = corsHeadersFor(req);
+  const json = (body: unknown, status: number) =>
+    new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
   const authHeader = req.headers.get('Authorization');
@@ -95,7 +102,12 @@ serve(async (req: Request) => {
       );
     }
 
-    const redirectBase = Deno.env.get('APP_REDIRECT_URL') ?? 'ootd://shop';
+    // Web : retour sur le domaine d'origine de l'appelant (validé contre la liste
+    // ALLOWED_ORIGINS) plutôt qu'un domaine unique en dur — marche pour l'ancien ET le
+    // nouveau nom de marque. Natif (pas d'en-tête Origin) : deep link ootd:// inchangé.
+    const callerOrigin = req.headers.get('Origin') ?? '';
+    const webReturnBase = ALLOWED_ORIGINS.includes(callerOrigin) ? callerOrigin : null;
+    const redirectBase = webReturnBase ?? (Deno.env.get('APP_REDIRECT_URL') ?? 'ootd://shop');
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',

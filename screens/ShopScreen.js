@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { APP_NAME } from '../lib/brand';
 import {
   View, Text, StyleSheet, ScrollView,
   TouchableOpacity, ActivityIndicator, Linking, Alert,
@@ -40,19 +41,19 @@ const EXPRESS = [
 const PLANS = [
   {
     id: 'plus',
-    name: 'OOTD Plus',
+    name: `${APP_NAME} Plus`,
     price: '2,99€',
     icon: 'star',
     perks: [
       '2 tentatives d\'analyse par jour',
       'Badge premium sur ton profil',
-      'Historique complet de tes OOTD',
+      'Historique complet de tes tenues',
       'Personnalité IA "Styliste bienveillant"',
     ],
   },
   {
     id: 'elite',
-    name: 'OOTD Elite',
+    name: `${APP_NAME} Elite`,
     price: '4,99€',
     icon: 'diamond',
     highlight: true,
@@ -380,7 +381,7 @@ export default function ShopScreen() {
         <View style={[s.statsCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <View style={s.statCol}>
             <Text style={[s.statVal, { color: theme.textPri }]}>{fmtPts(pts)}</Text>
-            <Text style={[s.statLbl, { color: theme.textSub }]}>Points OOTD</Text>
+            <Text style={[s.statLbl, { color: theme.textSub }]}>Points</Text>
           </View>
           <View style={[s.statDiv, { backgroundColor: theme.border }]} />
           <View style={s.statCol}>
@@ -390,7 +391,7 @@ export default function ShopScreen() {
           <View style={[s.statDiv, { backgroundColor: theme.border }]} />
           <View style={s.statCol}>
             <Text style={[s.statVal, { color: hasAnyPass ? theme.accent : theme.textPri }]}>
-              {isElite ? 'Elite' : activePlan === 'plus' ? 'Plus' : hasPlus ? 'OOTD+' : hasAnalysis ? 'Analyse' : 'Gratuit'}
+              {isElite ? 'Elite' : activePlan === 'plus' ? 'Plus' : hasPlus ? `${APP_NAME}+` : hasAnalysis ? 'Analyse' : 'Gratuit'}
             </Text>
             <Text style={[s.statLbl, { color: theme.textSub }]}>Formule</Text>
           </View>
@@ -428,7 +429,7 @@ export default function ShopScreen() {
 
         {/* ── Section 3 : Boutique Points (thèmes) ── */}
         <Text style={[s.sectionTitle, { color: theme.textPri, marginTop: 18 }]}>🪙 Boutique Points</Text>
-        <Text style={[s.sectionSub, { color: theme.textSub }]}>Débloque des thèmes avec tes points OOTD</Text>
+        <Text style={[s.sectionSub, { color: theme.textSub }]}>Débloque des thèmes avec tes points</Text>
 
         <Text style={[s.subSection, { color: theme.textSub }]}>Thèmes · 1000–1500 pts {isElite ? '(offerts avec Elite)' : ''}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.hContent}>

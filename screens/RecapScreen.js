@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { computeLevelInfo } from '../lib/utils';
+import { APP_NAME } from '../lib/brand';
 import {
   View, Text, StyleSheet, TouchableOpacity, Switch, Animated,
   FlatList, ActivityIndicator, TextInput, ScrollView, PanResponder,
@@ -596,7 +597,7 @@ export default function RecapScreen() {
               >
                 <Ionicons name="lock-closed" size={18} color={theme.accent} />
                 <Text style={[styles.historyLockText, { color: theme.textPri }]}>
-                  Débloque l'historique complet de tes tenues avec OOTD Plus
+                  Débloque l'historique complet de tes tenues avec {APP_NAME} Plus
                 </Text>
                 <Text style={[styles.historyLockCta, { color: theme.accent }]}>Voir les offres →</Text>
               </TouchableOpacity>
