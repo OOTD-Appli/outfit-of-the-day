@@ -112,7 +112,7 @@ BEGIN
     'SELECT public.cleanup_expired_stories()'
   );
   RAISE NOTICE 'pg_cron job "cleanup-expired-stories" planifié (toutes les heures à :05).';
-EXCEPTION WHEN undefined_schema OR undefined_table THEN
+EXCEPTION WHEN invalid_schema_name OR undefined_table THEN
   RAISE NOTICE 'pg_cron non activé — activer l''extension dans Dashboard > Extensions, puis relancer la partie 4.';
 WHEN OTHERS THEN
   RAISE NOTICE 'Erreur pg_cron : %. Activer l''extension et réessayer.', SQLERRM;
