@@ -46,6 +46,9 @@ yarn-error.*
 skills-lock.json
 supabase/.temp/
 
+# Sauvegardes de base de données (contiennent des données réelles : emails, hash de mdp, etc.)
+backups/
+
 # typescript
 *.tsbuildinfo
 
